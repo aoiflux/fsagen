@@ -5,11 +5,15 @@ Deterministic generator for creating diverse file-system artifacts to test foren
 ## Features
 
 - Deterministic output with `--seed`
-- Manifest mode: simple, declarative file operations (create/update/append/delete/mace/rename/truncate/rotate/ads/motw)
+- Manifest mode: simple, declarative file operations (create/update/append/delete/mace/rename/copy/truncate/rotate/ads/motw/email/ansible-vault)
 - Playbook mode: complex timelines with actors, timed steps, and templating
 - Bulk mode: super-simple synthetic corpus generation with `--bulk` and `--depth`
+- Author content in real files with `content_file`, shared across scenarios with `--vars-file`
+- Real RFC 5322 email: MIME multipart, threading headers, base64 attachments, `.eml` and `.mbox`
+- Real PDFs from Markdown, with full control of document metadata
+- Real `$ANSIBLE_VAULT;1.1;AES256` files that `ansible-vault` can decrypt
 - Extensive file type support: documents, logs, archives, media, emails, Windows artifacts
-- MACE (atime/mtime) timestamp control
+- MACE (atime/mtime) timestamp control and octal file permissions
 - Windows-specific: NTFS ADS and Mark-of-the-Web (MoTW)
 
 ## Install
@@ -37,6 +41,8 @@ fsagen [OPTIONS] <output-path>
 - `--bulk N` - Super-simple bulk generation: N items per level (no YAML)
 - `--depth D` - Bulk generation depth (default: 1)
 - `--timeline FILE` - Generate forensic timeline after execution (formats: csv, txt, bodyfile, macb)
+- `--vars-file FILE` - YAML map of variables exposed to templates as `${VAR:name}`
+- `--var k=v` - Set one template variable (repeatable; overrides `--vars-file`)
 
 **Examples:**
 
@@ -78,16 +84,28 @@ fsagen --seed 7 --bulk 3 --depth 2 ./quick-bulk
 
 YAML with a sequence of operations:
 
-- action: `create|update|append|truncate|rotate|delete|mace|rename|ads|motw`
+- action: `create|update|append|truncate|rotate|delete|mace|rename|copy|ads|motw|email|ansible-vault`
 - path: target path relative to output root
 - type: `file|dir` (for create)
 - ext: file extension to append if `path` has no extension
 - content: literal content (optional)
-- content_len: size of deterministic random content (fallback when content not provided)
+- content_file: load content from a file, resolved relative to the manifest (optional)
+- content_len: size of deterministic random content (fallback when neither is provided)
+- render: run `${...}` substitution over the content. Defaults to `true` for inline
+  `content` and `false` for `content_file`, because scripts and PEM keys contain
+  `${...}` sequences of their own that must survive verbatim
+- mode: octal file permissions, e.g. `"0600"` (default 0644 files, 0755 directories)
+- format: `raw` (default) or `pdf`; for the `email` action, `eml` or `mbox`
+- pdf: document metadata for `format: pdf` — see below
+- email: message definition for the `email` action — see below
+- vault: password, vault_id and salt for the `ansible-vault` action
 - atime/mtime: RFC3339 timestamps for MACE control
-- new_path: new location for `rename` or `rotate`
+- new_path: new location for `rename`, `rotate` or `copy`
 - stream: ADS stream name (for `ads` action, Windows-only)
 - zone_id, host_url, referrer_url: for `motw` action (Windows-only)
+
+A manifest may also carry a top-level `variables:` map. Unknown keys are a hard
+error: a silently dropped typo produces artifacts that look right and are not.
 
 **Examples:**
 - `examples/manifest-basic.yaml` - Basic create/update/delete operations
@@ -116,7 +134,10 @@ YAML with a timeline and actors:
 		- template: Predefined content template ("email", "log", "script", "doc")
 		- All standard manifest fields (action, path, content, etc.)
 
-Operations supported: `create|update|append|truncate|rotate|delete|mace|rename|ads|motw` (all operations work in both manifest and playbook). `ads` and `motw` are Windows-only. Timestamps are computed from the timeline unless explicitly provided in the action.
+Operations supported: `create|update|append|truncate|rotate|delete|mace|rename|copy|ads|motw|email|ansible-vault` (all operations work in both manifest and playbook). `ads` and `motw` are Windows-only. Timestamps are computed from the timeline unless explicitly provided in the action.
+
+Durations accept `d` and `w` in addition to Go's own units, so a step can be
+`offset: 2d6h` rather than `54h`.
 
 **Playbook templating:**
 - `${SEQ}` - Monotonic sequence counter
@@ -190,9 +211,139 @@ Available templates: `email`, `log`, `script`, `doc`
 - `examples/playbook-insider-threat-exfil.yaml` - **Advanced**: 7-day insider threat scenario with repeated access patterns
 - `examples/playbook-malware-lifecycle.yaml` - **Advanced**: 48-hour malware infection lifecycle with beaconing and anti-forensics
 
+## Email, PDF and Ansible vault
+
+### `email` action
+
+Builds a real RFC 5322 message: CRLF throughout, quoted-printable bodies,
+base64 attachments, and a MIME shape chosen to fit the content
+(`multipart/mixed` wrapping a `multipart/alternative` when there are both
+bodies and attachments). Writes a `.eml`, or appends to a `.mbox` with mboxrd
+`>From ` escaping.
+
+```yaml
+- action: email
+  path: Users/priyan/Mail/Inbox/0003.eml
+  format: eml                    # or mbox (appends); inferred from the extension
+  email:
+    from: "Dana Reyes <d.reyes@aperture-talent.example>"
+    to: ["Priyan N <priyan.nair@northwindlogistics.example>"]
+    cc: ["scheduling@aperture-talent.example"]
+    return_path: "bounces+0188@aperture-talent.example"
+    subject: "Re: technical assessment"
+    date: "2026-02-25T10:05:00+05:30"     # RFC3339; also the default file mtime
+    message_id: "<c3f1a97b@aperture-talent.example>"
+    in_reply_to: "<b2e0d8f1@northwindlogistics.example>"
+    references: ["<CAF9a2c1e@aperture-talent.example>", "<b2e0d8f1@northwindlogistics.example>"]
+    headers:                     # an ordered LIST, so Received: can repeat
+      - name: Received
+        value: "from mx01... ; Wed, 25 Feb 2026 10:05:14 +0530"
+      - name: Authentication-Results
+        value: "spf=pass; dkim=pass; dmarc=pass"
+    body_text_file: content/msg-03.txt
+    body_html_file: content/msg-03.html
+    attachments:
+      - source_file: content/brief.pdf    # relative to the manifest/playbook
+        name: "Technical_Assessment_Brief.pdf"
+      - source_root: reports/review.pdf   # relative to the output root, for
+                                          # attaching an artifact an earlier
+                                          # step generated
+```
+
+Author-supplied `headers` are emitted first, in order, then the structured
+fields — so a `Received:` chain and `Authentication-Results` land where a real
+MTA would have written them. A header value that already contains newlines
+keeps the author's folding.
+
+MIME boundaries are drawn from the seeded PRNG, so `--seed` reproducibility
+holds across the message body too.
+
+### `format: pdf`
+
+Renders a Markdown subset (`#`/`##`/`###` headings, `-` bullets, `|a|b|` tables
+with wrapping cells and repeating headers, ``` fenced blocks, `---` rules) into
+a paginated PDF, with full control of the document metadata.
+
+```yaml
+- action: create
+  path: reports/configuration-review.pdf
+  format: pdf
+  content_file: content/report.md
+  render: true
+  pdf:
+    title: "Configuration Review"
+    author: "svc-agent@example.local"
+    subject: "Automated assessment"
+    keywords: "secrets; review"
+    creator: "SentinelIQ Threat Agent 2.1.4"
+    producer: "SentinelIQ Report Engine 2.1.4"
+    created: "2026-03-14T02:33:12+05:30"   # RFC3339; pin these for
+    modified: "2026-03-14T02:33:12+05:30"  # byte-identical output
+    page_size: A4                          # A4 (default), A3, A5, Letter
+```
+
+Inline markers are **not** interpreted or stripped. A report body carrying
+`Wint3r-R0t****-2026` keeps its asterisks; silently rewriting a redaction mask
+into something that reads like a real password would be worse than showing a
+literal asterisk.
+
+With `created` and `modified` pinned, two renders of the same input produce
+byte-identical files. That is what lets one artifact be attached to a message
+and land with the same SHA256 as its copy on disk.
+
+### `ansible-vault` action
+
+Produces a genuine `$ANSIBLE_VAULT;1.1;AES256` payload — PBKDF2-HMAC-SHA256
+(10,000 iterations), AES-256-CTR, HMAC-SHA256 — that the real `ansible-vault`
+decrypts.
+
+```yaml
+- action: ansible-vault
+  path: infra/group_vars/prod/vault.yml
+  content_file: content/vault-plaintext.yml
+  mode: "0640"
+  vault:
+    password: "${VAR:vault_password}"
+    vault_id: ""     # non-empty selects the 1.2 header form
+    salt: ""         # optional 32-byte hex; pin it for byte-stable output
+```
+
+```bash
+printf '%s' 'the-password' > /tmp/vpw
+ansible-vault view --vault-password-file /tmp/vpw out/infra/group_vars/prod/vault.yml
+```
+
+## Sharing values across scenarios
+
+`--vars-file` takes a flat YAML map and exposes every key as `${VAR:name}` in
+paths, content and timestamps. One persona file can drive a whole set of
+separate manifests, so a hostname or a date is defined once.
+
+```yaml
+# personas.yaml
+org: "Northwind Logistics"
+victim_host: "NWL-WKS-0417"
+t_report_generated: "2026-03-14T02:33:12+05:30"
+```
+
+```pwsh
+fsagen --seed 1414 --vars-file personas.yaml --manifest evidence-02.yaml ./out/02
+fsagen --seed 1414 --vars-file personas.yaml --var org="Acme" --manifest evidence-03.yaml ./out/03
+```
+
+Precedence is `--var` > `--vars-file` > actor variables > playbook/manifest
+variables. An unknown `${VAR:name}` is left verbatim rather than blanked, so a
+typo shows up in the output instead of silently emptying a field.
+
+A worked example using all of the above is in
+[`ctf/priyan-rogue-agent/`](ctf/priyan-rogue-agent/): six interlocking evidence
+items for a CTF scenario.
+
 ## Notes on timestamps
 
 - Sets mtime/atime via `os.Chtimes`. ctime is not directly settable on most systems and will reflect metadata change time.
+- `mode` is applied before the timestamps, because chmod itself touches ctime.
+  Windows honours only the write bit; the field matters on Linux output.
 - To emulate directory timestamp skew on deletion, `delete` can include `atime/mtime` which will be applied to the parent directory after removal.
 
 ## Reproducibility

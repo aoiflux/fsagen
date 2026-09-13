@@ -41,6 +41,23 @@
           "if": {
             "properties": {
               "action": {
+                "const": "copy"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "required": [
+              "new_path"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
                 "const": "ads"
               }
             },
@@ -51,6 +68,69 @@
           "then": {
             "required": [
               "stream"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "email"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "required": [
+              "email"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "ansible-vault"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "required": [
+              "vault"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "motw"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "properties": {
+              "zone_id": {
+                "maximum": 4,
+                "minimum": 0,
+                "type": "integer"
+              }
+            }
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "content",
+              "content_file"
             ]
           }
         }
@@ -68,13 +148,34 @@
         "content": {
           "type": "string"
         },
+        "content_file": {
+          "type": "string"
+        },
         "content_len": {
           "type": "integer"
+        },
+        "email": {
+          "$ref": "#/$defs/EmailSpec"
         },
         "ext": {
           "type": "string"
         },
+        "format": {
+          "enum": [
+            "raw",
+            "text",
+            "pdf",
+            "eml",
+            "mbox"
+          ],
+          "type": "string"
+        },
         "host_url": {
+          "type": "string"
+        },
+        "mode": {
+          "description": "Octal file permissions, for example 0600",
+          "pattern": "^0?[0-7]{3,4}$",
           "type": "string"
         },
         "mtime": {
@@ -90,8 +191,14 @@
         "path": {
           "type": "string"
         },
+        "pdf": {
+          "$ref": "#/$defs/PdfSpec"
+        },
         "referrer_url": {
           "type": "string"
+        },
+        "render": {
+          "type": "boolean"
         },
         "stream": {
           "type": "string"
@@ -105,6 +212,9 @@
             "dir"
           ],
           "type": "string"
+        },
+        "vault": {
+          "$ref": "#/$defs/VaultSpec"
         },
         "zone_id": {
           "maximum": 4,
@@ -139,6 +249,37 @@
       ],
       "type": "object"
     },
+    "Attachment": {
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "content_id": {
+          "type": "string"
+        },
+        "content_type": {
+          "type": "string"
+        },
+        "disposition": {
+          "enum": [
+            "attachment",
+            "inline"
+          ],
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "source_file": {
+          "type": "string"
+        },
+        "source_root": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "Condition": {
       "enum": [
         "",
@@ -149,6 +290,96 @@
       ],
       "type": "string"
     },
+    "EmailSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "attachments": {
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "type": "array"
+        },
+        "bcc": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "body_html": {
+          "type": "string"
+        },
+        "body_html_file": {
+          "type": "string"
+        },
+        "body_text": {
+          "type": "string"
+        },
+        "body_text_file": {
+          "type": "string"
+        },
+        "cc": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "date": {
+          "$ref": "#/$defs/Rfc3339Time"
+        },
+        "from": {
+          "type": "string"
+        },
+        "headers": {
+          "items": {
+            "$ref": "#/$defs/Header"
+          },
+          "type": "array"
+        },
+        "in_reply_to": {
+          "type": "string"
+        },
+        "message_id": {
+          "type": "string"
+        },
+        "references": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "reply_to": {
+          "type": "string"
+        },
+        "return_path": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "to": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "Header": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
     "OperationAction": {
       "enum": [
         "create",
@@ -157,12 +388,54 @@
         "delete",
         "mace",
         "rename",
+        "copy",
         "truncate",
         "rotate",
         "ads",
-        "motw"
+        "motw",
+        "email",
+        "ansible-vault"
       ],
       "type": "string"
+    },
+    "PdfSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "author": {
+          "type": "string"
+        },
+        "created": {
+          "$ref": "#/$defs/Rfc3339Time"
+        },
+        "creator": {
+          "type": "string"
+        },
+        "keywords": {
+          "type": "string"
+        },
+        "modified": {
+          "$ref": "#/$defs/Rfc3339Time"
+        },
+        "page_size": {
+          "enum": [
+            "A4",
+            "A3",
+            "A5",
+            "Letter"
+          ],
+          "type": "string"
+        },
+        "producer": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "type": "object"
     },
     "Rfc3339Time": {
       "description": "Timestamp in RFC3339 format",
@@ -215,6 +488,24 @@
         "doc"
       ],
       "type": "string"
+    },
+    "VaultSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "password": {
+          "type": "string"
+        },
+        "salt": {
+          "type": "string"
+        },
+        "vault_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "password"
+      ],
+      "type": "object"
     }
   },
   "$id": "https://generator.local/playbook-schema.json",

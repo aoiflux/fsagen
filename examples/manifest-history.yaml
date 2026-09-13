@@ -1,14 +1,33 @@
+# Browser-history artifacts.
+#
+# NOTE: real Chrome/Firefox SQLite databases (populated urls/visits and
+# moz_places/moz_historyvisits tables) are produced by the bulk generator only:
+#
+#     fsagen --seed 7 --bulk 2 --depth 1 ./out
+#
+# Manifests and playbooks write file content verbatim, so the operations below
+# place the profile files where a forensic tool expects them and fill them with
+# authored content. Use content_file to supply a real .sqlite you captured or
+# built elsewhere.
 operations:
+  - action: create
+    type: dir
+    path: Chrome/Default
+
   - action: create
     path: Chrome/Default/History
     ext: .sqlite
-    content_template: history
+    content_len: 4096
     mtime: "2023-10-30T14:00:00Z"
     atime: "2023-10-30T14:30:00Z"
 
   - action: create
+    type: dir
+    path: Firefox/Profiles/default
+
+  - action: create
     path: Firefox/Profiles/default/places
     ext: .sqlite
-    content_template: history
+    content_len: 4096
     mtime: "2023-10-30T15:00:00Z"
     atime: "2023-10-30T15:30:00Z"

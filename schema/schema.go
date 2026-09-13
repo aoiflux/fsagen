@@ -17,34 +17,16 @@ func BuildManifestSchema() ([]byte, error) {
 		},
 		"OperationAction": map[string]any{
 			"type": "string",
-			"enum": []string{"create", "update", "append", "delete", "mace", "rename", "truncate", "rotate", "ads", "motw"},
+			"enum": []string{"create", "update", "append", "delete", "mace", "rename", "copy", "truncate", "rotate", "ads", "motw", "email", "ansible-vault"},
 		},
 	}
 
+	nestedDefs(defs)
+
 	operation := objectSchemaFromStruct(spec.Operation{}, nil)
-	opProps := operation["properties"].(map[string]any)
-	opProps["action"] = map[string]any{"$ref": "#/$defs/OperationAction"}
-	opProps["type"] = map[string]any{"type": "string", "enum": []string{"file", "dir"}}
-	opProps["atime"] = map[string]any{"$ref": "#/$defs/Rfc3339Time"}
-	opProps["mtime"] = map[string]any{"$ref": "#/$defs/Rfc3339Time"}
-	opProps["zone_id"] = map[string]any{"type": "integer", "minimum": 0, "maximum": 4}
+	commonOperationProps(operation["properties"].(map[string]any))
 	operation["required"] = []string{"action", "path"}
-	operation["allOf"] = []any{
-		conditionalRequire("action", "rename", "new_path"),
-		conditionalRequire("action", "rotate", "new_path"),
-		conditionalRequire("action", "ads", "stream"),
-		map[string]any{
-			"if": map[string]any{
-				"properties": map[string]any{"action": map[string]any{"const": "motw"}},
-				"required":   []string{"action"},
-			},
-			"then": map[string]any{
-				"properties": map[string]any{
-					"zone_id": map[string]any{"type": "integer", "minimum": 0, "maximum": 4},
-				},
-			},
-		},
-	}
+	operation["allOf"] = operationConditionals()
 	defs["Operation"] = operation
 
 	root := map[string]any{
@@ -54,6 +36,10 @@ func BuildManifestSchema() ([]byte, error) {
 		"description": "Validates fsagen manifest input files.",
 		"type":        "object",
 		"properties": map[string]any{
+			"variables": map[string]any{
+				"type":                 "object",
+				"additionalProperties": map[string]any{"type": "string"},
+			},
 			"operations": map[string]any{
 				"type":  "array",
 				"items": map[string]any{"$ref": "#/$defs/Operation"},
@@ -80,7 +66,7 @@ func BuildPlaybookSchema() ([]byte, error) {
 		},
 		"OperationAction": map[string]any{
 			"type": "string",
-			"enum": []string{"create", "update", "append", "delete", "mace", "rename", "truncate", "rotate", "ads", "motw"},
+			"enum": []string{"create", "update", "append", "delete", "mace", "rename", "copy", "truncate", "rotate", "ads", "motw", "email", "ansible-vault"},
 		},
 		"Template": map[string]any{
 			"type": "string",
@@ -91,21 +77,15 @@ func BuildPlaybookSchema() ([]byte, error) {
 	actor := objectSchemaFromStruct(spec.Actor{}, []string{"name"})
 	defs["Actor"] = actor
 
+	nestedDefs(defs)
+
 	action := objectSchemaFromStruct(spec.Action{}, []string{"action", "path"})
 	actionProps := action["properties"].(map[string]any)
-	actionProps["action"] = map[string]any{"$ref": "#/$defs/OperationAction"}
-	actionProps["type"] = map[string]any{"type": "string", "enum": []string{"file", "dir"}}
+	commonOperationProps(actionProps)
 	actionProps["template"] = map[string]any{"$ref": "#/$defs/Template"}
 	actionProps["condition"] = map[string]any{"$ref": "#/$defs/Condition"}
 	actionProps["offset"] = map[string]any{"type": "string", "description": "Go duration string (for example: 15m, 2h, 30s)"}
-	actionProps["atime"] = map[string]any{"$ref": "#/$defs/Rfc3339Time"}
-	actionProps["mtime"] = map[string]any{"$ref": "#/$defs/Rfc3339Time"}
-	actionProps["zone_id"] = map[string]any{"type": "integer", "minimum": 0, "maximum": 4}
-	action["allOf"] = []any{
-		conditionalRequire("action", "rename", "new_path"),
-		conditionalRequire("action", "rotate", "new_path"),
-		conditionalRequire("action", "ads", "stream"),
-	}
+	action["allOf"] = operationConditionals()
 	defs["Action"] = action
 
 	step := objectSchemaFromStruct(spec.Step{}, []string{"actor", "actions"})
@@ -252,4 +232,69 @@ func marshalSchema(v any) ([]byte, error) {
 		return nil, err
 	}
 	return append(b, '\n'), nil
+}
+
+// nestedDefs registers the schemas for the structs that Operation and Action
+// reference by pointer. typeToSchema emits a $ref for each, so every one needs
+// a matching entry in $defs.
+func nestedDefs(defs map[string]any) {
+	defs["PdfSpec"] = objectSchemaFromStruct(spec.PdfSpec{}, nil)
+	defs["Header"] = objectSchemaFromStruct(spec.Header{}, []string{"name"})
+	defs["Attachment"] = objectSchemaFromStruct(spec.Attachment{}, nil)
+	defs["EmailSpec"] = objectSchemaFromStruct(spec.EmailSpec{}, nil)
+	defs["VaultSpec"] = objectSchemaFromStruct(spec.VaultSpec{}, []string{"password"})
+
+	pdf := defs["PdfSpec"].(map[string]any)["properties"].(map[string]any)
+	pdf["created"] = map[string]any{"$ref": "#/$defs/Rfc3339Time"}
+	pdf["modified"] = map[string]any{"$ref": "#/$defs/Rfc3339Time"}
+	pdf["page_size"] = map[string]any{"type": "string", "enum": []string{"A4", "A3", "A5", "Letter"}}
+
+	em := defs["EmailSpec"].(map[string]any)["properties"].(map[string]any)
+	em["date"] = map[string]any{"$ref": "#/$defs/Rfc3339Time"}
+
+	att := defs["Attachment"].(map[string]any)["properties"].(map[string]any)
+	att["disposition"] = map[string]any{"type": "string", "enum": []string{"attachment", "inline"}}
+}
+
+// commonOperationProps applies the constraints shared by manifest Operations
+// and playbook Actions.
+func commonOperationProps(props map[string]any) {
+	props["action"] = map[string]any{"$ref": "#/$defs/OperationAction"}
+	props["type"] = map[string]any{"type": "string", "enum": []string{"file", "dir"}}
+	props["atime"] = map[string]any{"$ref": "#/$defs/Rfc3339Time"}
+	props["mtime"] = map[string]any{"$ref": "#/$defs/Rfc3339Time"}
+	props["zone_id"] = map[string]any{"type": "integer", "minimum": 0, "maximum": 4}
+	props["format"] = map[string]any{"type": "string", "enum": []string{"raw", "text", "pdf", "eml", "mbox"}}
+	props["mode"] = map[string]any{
+		"type":        "string",
+		"pattern":     "^0?[0-7]{3,4}$",
+		"description": "Octal file permissions, for example 0600",
+	}
+}
+
+// operationConditionals lists the per-action required fields.
+func operationConditionals() []any {
+	return []any{
+		conditionalRequire("action", "rename", "new_path"),
+		conditionalRequire("action", "rotate", "new_path"),
+		conditionalRequire("action", "copy", "new_path"),
+		conditionalRequire("action", "ads", "stream"),
+		conditionalRequire("action", "email", "email"),
+		conditionalRequire("action", "ansible-vault", "vault"),
+		map[string]any{
+			"if": map[string]any{
+				"properties": map[string]any{"action": map[string]any{"const": "motw"}},
+				"required":   []string{"action"},
+			},
+			"then": map[string]any{
+				"properties": map[string]any{
+					"zone_id": map[string]any{"type": "integer", "minimum": 0, "maximum": 4},
+				},
+			},
+		},
+		// content and content_file are two ways to say the same thing.
+		map[string]any{
+			"not": map[string]any{"required": []string{"content", "content_file"}},
+		},
+	}
 }

@@ -6,13 +6,15 @@ import (
 	libgenpkg "fsagen/libgen"
 	manifestpkg "fsagen/manifest"
 	playbookpkg "fsagen/playbook"
+	"fsagen/render"
 	schemapkg "fsagen/schema"
 	timelinepkg "fsagen/timeline"
 	"fsagen/util"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+
+	yaml "gopkg.in/yaml.v2"
 )
 
 func main() {
@@ -25,6 +27,9 @@ func main() {
 	bulkLimit := flag.Int("bulk", 0, "Bulk generation: number of items per level (no manifest/playbook)")
 	bulkDepth := flag.Int("depth", 1, "Bulk generation: directory depth (default 1)")
 	timelineOutput := flag.String("timeline", "", "Generate forensic timeline after execution (formats: csv, txt, bodyfile, macb)")
+	varsFile := flag.String("vars-file", "", "YAML file of key: value variables available to manifests and playbooks as ${VAR:name}")
+	var varFlags varList
+	flag.Var(&varFlags, "var", "Set a template variable as key=value (repeatable; overrides --vars-file)")
 	flag.Parse()
 
 	if *generateSchema {
@@ -45,6 +50,9 @@ func main() {
 
 	// Initialize deterministic RNG
 	util.Seed(*seed)
+
+	vars, err := loadVariables(*varsFile, varFlags)
+	handle(err)
 
 	path := args[0]
 	absPath, err := getRootPath(path)
@@ -67,11 +75,11 @@ func main() {
 		fmt.Println("Generating artifacts...")
 
 		if *playbookPath != "" {
-			if err := playbookpkg.ExecutePlaybook(absPath, *playbookPath); err != nil {
+			if err := playbookpkg.ExecutePlaybook(absPath, *playbookPath, vars); err != nil {
 				handle(err)
 			}
 		} else if *manifestPath != "" {
-			if err := manifestpkg.ExecuteManifest(absPath, *manifestPath); err != nil {
+			if err := manifestpkg.ExecuteManifest(absPath, *manifestPath, vars); err != nil {
 				handle(err)
 			}
 		} else if *bulkLimit > 0 {
@@ -112,6 +120,8 @@ func printUsage() {
 	fmt.Println("  --bulk N           Super-simple bulk generation: N items per level (no manifest/playbook)")
 	fmt.Println("  --depth D          Bulk generation depth (default: 1)")
 	fmt.Println("  --timeline FILE    Generate forensic timeline after execution")
+	fmt.Println("  --vars-file FILE   YAML map of variables exposed to templates as ${VAR:name}")
+	fmt.Println("  --var k=v          Set one template variable (repeatable; overrides --vars-file)")
 	fmt.Println()
 	fmt.Println("Timeline-only mode:")
 	fmt.Println("  If --timeline is specified without --manifest/--playbook/--bulk, fsagen will")
@@ -173,8 +183,9 @@ func generateTimeline(root string, outputPath string) error {
 func getRootPath(path string) (string, error) {
 	finfo, err := os.Stat(path)
 	if os.IsNotExist(err) {
-		err = os.Mkdir(path, fs.ModePerm)
-		if err != nil {
+		// MkdirAll, not Mkdir: an output path several levels deep is normal
+		// when each evidence item writes to its own directory.
+		if err := os.MkdirAll(path, 0o755); err != nil {
 			return "", err
 		}
 	}
@@ -230,4 +241,43 @@ func writeInputSchemas(outputDir string) (string, string, error) {
 		return "", "", fmt.Errorf("write playbook schema: %w", err)
 	}
 	return manifestPath, playbookPath, nil
+}
+
+// varList collects repeated --var key=value flags.
+type varList []string
+
+func (v *varList) String() string { return strings.Join(*v, ",") }
+
+func (v *varList) Set(s string) error {
+	if _, _, err := render.ParseVarAssignment(s); err != nil {
+		return err
+	}
+	*v = append(*v, s)
+	return nil
+}
+
+// loadVariables merges a --vars-file with any --var overrides. Command-line
+// values win, so one persona file can drive every scenario while a single value
+// is overridden per run.
+func loadVariables(varsFile string, overrides varList) (map[string]string, error) {
+	vars := map[string]string{}
+
+	if strings.TrimSpace(varsFile) != "" {
+		data, err := os.ReadFile(varsFile)
+		if err != nil {
+			return nil, fmt.Errorf("read vars file: %w", err)
+		}
+		if err := yaml.UnmarshalStrict(data, &vars); err != nil {
+			return nil, fmt.Errorf("parse vars file %s (expected a flat map of key: value): %w", varsFile, err)
+		}
+	}
+
+	for _, assignment := range overrides {
+		k, val, err := render.ParseVarAssignment(assignment)
+		if err != nil {
+			return nil, err
+		}
+		vars[k] = val
+	}
+	return vars, nil
 }

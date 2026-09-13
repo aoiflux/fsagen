@@ -17,10 +17,7 @@ steps:
       - action: create
         path: Default/History
         ext: .sqlite
-        content_template: history
-        variables:
-          domain: example.com
-          search: product research
+        content_len: 4096
 
   - actor: user2
     offset: 2h
@@ -28,7 +25,4 @@ steps:
       - action: create
         path: default/places
         ext: .sqlite
-        content_template: history
-        variables:
-          domain: mozilla.org
-          search: developer docs
+        content_len: 4096

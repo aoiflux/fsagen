@@ -1,1 +1,5 @@
+.codegraph/
 *.exe
+
+# Generated CTF evidence. Rebuild with the commands in ctf/*/README.md.
+ctf/
