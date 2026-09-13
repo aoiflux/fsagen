@@ -207,6 +207,7 @@ Available templates: `email`, `log`, `script`, `doc`
 - `examples/playbook-email-and-archive.yaml` - Creates emails/images, archives, deletes originals
 - `examples/playbook-log-rotate-and-truncate.yaml` - Demonstrates log rotation and truncation
 - `examples/playbook-windows-ads-motw.yaml` - Adds NTFS ADS and Mark-of-the-Web (Windows-only)
+- `examples/playbook-email-thread.yaml` - Four-message RFC 5322 thread as `.eml` and `.mbox`, with a generated PDF attachment
 - `examples/playbook-comprehensive-ransomware.yaml` - **Advanced**: Full ransomware attack with variables, batching, conditions, and templates
 - `examples/playbook-insider-threat-exfil.yaml` - **Advanced**: 7-day insider threat scenario with repeated access patterns
 - `examples/playbook-malware-lifecycle.yaml` - **Advanced**: 48-hour malware infection lifecycle with beaconing and anti-forensics
@@ -257,6 +258,9 @@ keeps the author's folding.
 
 MIME boundaries are drawn from the seeded PRNG, so `--seed` reproducibility
 holds across the message body too.
+
+`examples/playbook-email-thread.yaml` is a worked four-message thread using
+all of the above.
 
 ### `format: pdf`
 

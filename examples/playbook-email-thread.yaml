@@ -1,0 +1,247 @@
+# A four-message mail thread that actually threads.
+#
+#   fsagen --seed 7 --playbook examples/playbook-email-thread.yaml ./out/thread
+#
+# Demonstrates the email action end to end: RFC 5322 headers in author order,
+# multipart/alternative bodies, a generated PDF attached by path, threading via
+# Message-ID -> In-Reply-To -> References, and the same four messages written
+# both as individual .eml files and appended to one .mbox.
+#
+# Note that no times are set on the email actions. A message carries its own
+# timestamp in the Date header, so the writer uses that for atime and mtime -
+# which is what a mail store would show. An explicit atime/mtime still wins.
+#
+# The .mbox action APPENDS, so a thread accumulates across steps. Delete the
+# output directory before re-running or the file grows each time.
+
+variables:
+  candidate:      "Priyan Nair"
+  candidate_mail: "priyan.nair@northwindlogistics.example"
+  recruiter:      "Dana Reyes"
+  recruiter_mail: "d.reyes@meridian-talent.example"
+  role:           "Senior Threat Detection Engineer"
+
+start: "2026-03-02T09:14:01+05:30"
+
+actors:
+  - name: mailbox
+    base: Users/priyan.nair/AppData/Local/Microsoft/Outlook
+
+steps:
+  # === The attachment, rendered as a real PDF ================================
+  #
+  # Written into the mailbox attachment cache first so the email action can
+  # reference it by source_root. Mundane Word-like metadata on purpose: it is
+  # the contrast against a machine-generated report that carries a clue.
+  - actor: mailbox
+    offset: 0s
+    actions:
+      - action: create
+        path: Attachments/JD_Senior_Threat_Detection_Engineer.pdf
+        format: pdf
+        mtime: "2026-02-27T16:05:00Z"
+        pdf:
+          title: "${VAR:role}"
+          author: "${VAR:recruiter}"
+          creator: "Microsoft Word for Microsoft 365"
+          producer: "Microsoft Word for Microsoft 365"
+          created: "2026-02-27T16:05:00Z"
+          modified: "2026-02-27T16:05:00Z"
+        content: |
+          # ${VAR:role}
+
+          ## About the role
+
+          You will own detection engineering across endpoint and network
+          telemetry, working directly with the incident response function.
+
+          ## Requirements
+
+          - 5+ years in a detection or IR role
+          - Sigma, YARA and KQL in daily use
+          - Comfortable reading code you did not write
+
+          | Item | Detail |
+          |---|---|
+          | Location | Hybrid, 2 days on site |
+          | Level | Senior |
+          | Reports to | Head of Security Operations |
+
+  # === 09:14 - the approach ==================================================
+  - actor: mailbox
+    offset: 0s
+    actions:
+      - action: email
+        path: Inbox/0001-intro.eml
+        email: &msg1
+          from: "${VAR:recruiter} <${VAR:recruiter_mail}>"
+          to: ["${VAR:candidate} <${VAR:candidate_mail}>"]
+          subject: "${VAR:role} - Northwind"
+          date: "2026-03-02T09:14:01+05:30"
+          message_id: "<a1f4c2e8-0001@meridian-talent.example>"
+          headers:
+            # Author-supplied headers are emitted first, in order, so a
+            # Received: chain lands where an MTA would have written it.
+            - name: Received
+              value: >-
+                from mx01.northwindlogistics.example ([203.0.113.24])
+                by mbx03.northwindlogistics.example;
+                Mon, 2 Mar 2026 09:14:03 +0530
+            - name: Received
+              value: >-
+                from smtp-out.meridian-talent.example ([198.51.100.7])
+                by mx01.northwindlogistics.example;
+                Mon, 2 Mar 2026 09:14:01 +0530
+            - name: Authentication-Results
+              value: >-
+                mx01.northwindlogistics.example;
+                spf=pass smtp.mailfrom=meridian-talent.example;
+                dkim=pass header.d=meridian-talent.example header.s=mt2026;
+                dmarc=pass header.from=meridian-talent.example
+            - name: X-Mailer
+              value: "Microsoft Outlook 16.0"
+          body_text: |
+            Hi Priyan,
+
+            I am recruiting for a ${VAR:role} position and your background in
+            detection engineering looks like a strong match. The job
+            description is attached.
+
+            Would you have twenty minutes this week?
+
+            Dana Reyes
+            Meridian Talent
+          body_html: |
+            <html><body>
+            <p>Hi Priyan,</p>
+            <p>I am recruiting for a <b>${VAR:role}</b> position and your
+            background in detection engineering looks like a strong match.
+            The job description is attached.</p>
+            <p>Would you have twenty minutes this week?</p>
+            <p>Dana Reyes<br>Meridian Talent</p>
+            </body></html>
+          attachments:
+            # source_root resolves against the OUTPUT root, so an attachment
+            # can be a file an earlier action generated. Use source_file for a
+            # path relative to this playbook instead.
+            - source_root: Users/priyan.nair/AppData/Local/Microsoft/Outlook/Attachments/JD_Senior_Threat_Detection_Engineer.pdf
+              name: "JD_Senior_Threat_Detection_Engineer.pdf"
+
+      # The same message appended to the thread mbox. The mboxrd "From " line
+      # and >From escaping are handled by the writer.
+      - action: email
+        path: thread.mbox
+        email: *msg1
+
+  # === 11:02 - the reply =====================================================
+  - actor: mailbox
+    offset: 1h48m
+    actions:
+      - action: email
+        path: Sent/0002-reply.eml
+        email: &msg2
+          from: "${VAR:candidate} <${VAR:candidate_mail}>"
+          to: ["${VAR:recruiter} <${VAR:recruiter_mail}>"]
+          subject: "Re: ${VAR:role} - Northwind"
+          date: "2026-03-02T11:02:44+05:30"
+          message_id: "<b7d0e913-0002@northwindlogistics.example>"
+          in_reply_to: "<a1f4c2e8-0001@meridian-talent.example>"
+          references:
+            - "<a1f4c2e8-0001@meridian-talent.example>"
+          headers:
+            - name: X-Mailer
+              value: "Microsoft Outlook 16.0"
+          body_text: |
+            Dana,
+
+            Thanks for reaching out. Thursday after 16:00 works.
+
+            Priyan
+
+            On Mon, 2 Mar 2026 at 09:14, Dana Reyes wrote:
+            > I am recruiting for a ${VAR:role} position and your background
+            > in detection engineering looks like a strong match.
+
+      - action: email
+        path: thread.mbox
+        email: *msg2
+
+  # === Next day, 10:05 - the "technical assessment" ==========================
+  - actor: mailbox
+    offset: 1d55m
+    actions:
+      - action: email
+        path: Inbox/0003-assessment.eml
+        email: &msg3
+          from: "${VAR:recruiter} <${VAR:recruiter_mail}>"
+          to: ["${VAR:candidate} <${VAR:candidate_mail}>"]
+          reply_to: "assessments@meridian-talent.example"
+          subject: "Re: ${VAR:role} - technical assessment"
+          date: "2026-03-03T10:05:12+05:30"
+          message_id: "<c3a81f57-0003@meridian-talent.example>"
+          in_reply_to: "<b7d0e913-0002@northwindlogistics.example>"
+          references:
+            - "<a1f4c2e8-0001@meridian-talent.example>"
+            - "<b7d0e913-0002@northwindlogistics.example>"
+          headers:
+            - name: Received
+              value: >-
+                from smtp-out.meridian-talent.example ([198.51.100.7])
+                by mx01.northwindlogistics.example;
+                Tue, 3 Mar 2026 10:05:14 +0530
+            - name: X-Mailer
+              value: "Microsoft Outlook 16.0"
+          body_text: |
+            Priyan,
+
+            Stage two is a practical exercise rather than a whiteboard. The
+            client would like you to evaluate a signed security agent in an
+            environment you control and write up what you find.
+
+            Instructions are in the attached brief.
+
+            Dana
+          attachments:
+            # An attachment can also be inline literal content.
+            - name: "assessment-instructions.txt"
+              content_type: "text/plain"
+              content: |
+                Technical assessment - ${VAR:role}
+
+                1. Download the agent installer from the vendor portal.
+                2. Install it on a workstation you control.
+                3. Grant the integrations it requests during setup.
+                4. Write up its findings and your assessment of the tool.
+
+                Return your write-up within five working days.
+
+      - action: email
+        path: thread.mbox
+        email: *msg3
+
+  # === Same day, 10:31 - confirmation ========================================
+  - actor: mailbox
+    offset: 1d1h21m
+    actions:
+      - action: email
+        path: Sent/0004-confirm.eml
+        email: &msg4
+          from: "${VAR:candidate} <${VAR:candidate_mail}>"
+          to: ["assessments@meridian-talent.example"]
+          cc: ["${VAR:recruiter} <${VAR:recruiter_mail}>"]
+          subject: "Re: ${VAR:role} - technical assessment"
+          date: "2026-03-03T10:31:07+05:30"
+          message_id: "<d9c62b04-0004@northwindlogistics.example>"
+          in_reply_to: "<c3a81f57-0003@meridian-talent.example>"
+          references:
+            - "<a1f4c2e8-0001@meridian-talent.example>"
+            - "<b7d0e913-0002@northwindlogistics.example>"
+            - "<c3a81f57-0003@meridian-talent.example>"
+          body_text: |
+            Received, thanks. I will run it this week and send the write-up.
+
+            Priyan
+
+      - action: email
+        path: thread.mbox
+        email: *msg4
