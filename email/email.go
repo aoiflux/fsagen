@@ -7,11 +7,10 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
-	"fsagen/spec"
+	"github.com/aoiflux/fsagen/spec"
 	"mime"
 	"mime/quotedprintable"
 	"net/mail"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -22,12 +21,14 @@ const crlf = "\r\n"
 // Options carries everything Build needs beyond the message itself.
 type Options struct {
 	Spec spec.EmailSpec
-	// BaseDir resolves body_text_file, body_html_file and attachment
-	// source_file, all relative to the manifest or playbook.
-	BaseDir string
-	// Root resolves attachment source_root, relative to the output root, so a
-	// message can attach an artifact an earlier step generated.
-	Root string
+	// ReadSource reads body_text_file, body_html_file and attachment
+	// source_file, as written in the manifest or playbook. fsagen passes a
+	// reader confined to the YAML file's directory.
+	ReadSource func(string) ([]byte, error)
+	// ReadOutput reads attachment source_root, a path in the output tree, so a
+	// message can attach an artifact an earlier step generated. fsagen passes a
+	// reader confined to the output root.
+	ReadOutput func(string) ([]byte, error)
 	// Boundary must be deterministic for a given seed. multipart's own
 	// randomBoundary draws from crypto/rand and would break reproducibility.
 	Boundary func() string
@@ -47,19 +48,15 @@ func Build(opts Options) ([]byte, time.Time, error) {
 		date = t
 	}
 
-	text, err := loadBody(s.BodyText, s.BodyTextFile, opts.BaseDir)
+	text, err := loadBody(s.BodyText, s.BodyTextFile, opts.ReadSource)
 	if err != nil {
 		return nil, date, fmt.Errorf("body_text_file: %w", err)
 	}
-	html, err := loadBody(s.BodyHTML, s.BodyHTMLFile, opts.BaseDir)
+	html, err := loadBody(s.BodyHTML, s.BodyHTMLFile, opts.ReadSource)
 	if err != nil {
 		return nil, date, fmt.Errorf("body_html_file: %w", err)
 	}
-	if text == "" && html == "" {
-		text = ""
-	}
-
-	attachments, err := loadAttachments(s.Attachments, opts.BaseDir, opts.Root)
+	attachments, err := loadAttachments(s.Attachments, opts.ReadSource, opts.ReadOutput)
 	if err != nil {
 		return nil, date, err
 	}
@@ -273,7 +270,7 @@ type loadedAttachment struct {
 	Data        []byte
 }
 
-func loadAttachments(specs []spec.Attachment, baseDir, root string) ([]loadedAttachment, error) {
+func loadAttachments(specs []spec.Attachment, readSource, readOutput func(string) ([]byte, error)) ([]loadedAttachment, error) {
 	out := make([]loadedAttachment, 0, len(specs))
 	for i, a := range specs {
 		var (
@@ -284,10 +281,10 @@ func loadAttachments(specs []spec.Attachment, baseDir, root string) ([]loadedAtt
 		switch {
 		case a.SourceFile != "":
 			origin = a.SourceFile
-			data, err = os.ReadFile(resolve(baseDir, a.SourceFile))
+			data, err = read(readSource, a.SourceFile)
 		case a.SourceRoot != "":
 			origin = a.SourceRoot
-			data, err = os.ReadFile(resolve(root, a.SourceRoot))
+			data, err = read(readOutput, a.SourceRoot)
 		case a.Content != "":
 			origin = a.Name
 			data = []byte(a.Content)
@@ -325,26 +322,25 @@ func loadAttachments(specs []spec.Attachment, baseDir, root string) ([]loadedAtt
 	return out, nil
 }
 
-func loadBody(inline, file, baseDir string) (string, error) {
+func loadBody(inline, file string, readSource func(string) ([]byte, error)) (string, error) {
 	if file == "" {
 		return inline, nil
 	}
 	if inline != "" {
 		return "", fmt.Errorf("inline body and body file are mutually exclusive")
 	}
-	data, err := os.ReadFile(resolve(baseDir, file))
+	data, err := read(readSource, file)
 	if err != nil {
 		return "", err
 	}
 	return string(data), nil
 }
 
-func resolve(baseDir, p string) string {
-	p = filepath.FromSlash(p)
-	if filepath.IsAbs(p) || baseDir == "" {
-		return p
+func read(reader func(string) ([]byte, error), p string) ([]byte, error) {
+	if reader == nil {
+		return nil, fmt.Errorf("no reader for %q", p)
 	}
-	return filepath.Join(baseDir, p)
+	return reader(p)
 }
 
 // formatAddressList re-emits addresses, RFC 2047-encoding a display name that

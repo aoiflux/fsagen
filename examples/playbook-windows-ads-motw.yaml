@@ -9,6 +9,7 @@ steps:
     actions:
       - action: create
         path: downloads/installer.exe
+        format: text   # placeholder text, not a real file of this type
         content_len: 256
 
   # Add ADS streams and Mark-of-the-Web (Windows only)

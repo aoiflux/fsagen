@@ -12,12 +12,11 @@ steps:
     repeat: 2
     actions:
       - action: create
-        path: docs/report-${SEQ}.txt
+        path: docs/report-${ITER}.txt
         content: "Quarterly report ${SEQ} - ${RND:16}"
-        content_len: 0
         offset: 0s
       - action: update
-        path: docs/report-${SEQ}.txt
+        path: docs/report-${ITER}.txt   # the report this iteration created
         content_len: 64
         offset: 5m
 
@@ -29,8 +28,10 @@ steps:
         path: media/photos
       - action: create
         path: media/photos/pic-${SEQ}.jpg
+        id: photo
+        format: text   # placeholder text, not a real file of this type
         content_len: 256
         offset: 2m
       - action: delete
-        path: media/photos/pic-${SEQ}.jpg
+        ref: photo   # ${SEQ} has moved on by now, so name the file by its id
         offset: 10m

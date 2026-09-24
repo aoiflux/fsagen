@@ -2,8 +2,8 @@ package manifest
 
 import (
 	"bytes"
-	"fsagen/render"
-	"fsagen/util"
+	"github.com/aoiflux/fsagen/sandbox"
+	"github.com/aoiflux/fsagen/util"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -179,8 +179,8 @@ operations:
 `, nil)
 
 	info, _ := os.Stat(filepath.Join(root, "plain.txt"))
-	if got := info.Mode().Perm(); got != defaultFileMode {
-		t.Errorf("default mode = %o, want %o", got, defaultFileMode)
+	if got := info.Mode().Perm(); got != sandbox.FileMode {
+		t.Errorf("default mode = %o, want %o", got, sandbox.FileMode)
 	}
 }
 
@@ -215,22 +215,24 @@ operations:
 	}
 }
 
-// update used to skip MkdirAll, so it failed against a directory that did not
-// exist yet.
-func TestUpdateCreatesParentDirectory(t *testing.T) {
-	root, _ := runManifest(t, `
+// update of a file that does not exist used to create it, directories and all,
+// so a typo in an update path silently produced a new file. It is now refused
+// before anything is written, pointing at create.
+func TestUpdateMissingIsError(t *testing.T) {
+	baseDir := t.TempDir()
+	root := t.TempDir()
+	writeFile(t, baseDir, "manifest.yaml", `
 operations:
   - action: update
     path: deep/nested/file.txt
     content: "written"
-`, nil)
-
-	got, err := os.ReadFile(filepath.Join(root, "deep", "nested", "file.txt"))
-	if err != nil {
-		t.Fatalf("update should have created the parent directory: %v", err)
+`)
+	err := ExecuteManifest(root, filepath.Join(baseDir, "manifest.yaml"), nil)
+	if err == nil || !strings.Contains(err.Error(), "does not exist; use create") {
+		t.Fatalf("err = %v, want an update-of-missing-file error pointing at create", err)
 	}
-	if string(got) != "written" {
-		t.Errorf("got %q", got)
+	if entries, _ := os.ReadDir(root); len(entries) != 0 {
+		t.Errorf("nothing should be written, found %v", entries)
 	}
 }
 
@@ -448,58 +450,23 @@ operations:
 	}
 }
 
-func TestPrepareOperationRendersNestedSpecs(t *testing.T) {
-	op := Operation{
-		Action: "email",
-		Path:   "mail/${VAR:box}/msg.eml",
-		Email: &EmailSpec{
-			From:    "a@${VAR:domain}",
-			To:      []string{"b@${VAR:domain}"},
-			Subject: "Hello ${VAR:who}",
-			Headers: []Header{{Name: "X-Origin", Value: "${VAR:domain}"}},
-			Attachments: []Attachment{
-				{SourceFile: "content/${VAR:who}.pdf", Name: "${VAR:who}.pdf"},
-			},
-		},
-	}
-
-	got, err := PrepareOperation(op, "", render.Context{
-		Variables: map[string]string{"box": "Inbox", "domain": "acme.example", "who": "priyan"},
-	})
-	if err != nil {
-		t.Fatalf("prepare: %v", err)
-	}
-
-	if got.Path != "mail/Inbox/msg.eml" {
-		t.Errorf("Path = %q", got.Path)
-	}
-	if got.Email.From != "a@acme.example" || got.Email.To[0] != "b@acme.example" {
-		t.Errorf("addresses not templated: %+v", got.Email)
-	}
-	if got.Email.Subject != "Hello priyan" {
-		t.Errorf("Subject = %q", got.Email.Subject)
-	}
-	if got.Email.Headers[0].Value != "acme.example" {
-		t.Errorf("header value not templated: %q", got.Email.Headers[0].Value)
-	}
-	if got.Email.Attachments[0].SourceFile != "content/priyan.pdf" {
-		t.Errorf("attachment path not templated: %q", got.Email.Attachments[0].SourceFile)
-	}
-}
-
-// An unknown variable stays verbatim so a typo is visible in the output rather
-// than silently blanking a field.
-func TestUnknownVariableIsLeftIntact(t *testing.T) {
-	root, _ := runManifest(t, `
+// An undefined variable used to be left in the output verbatim, where a ':' in
+// "${VAR:x}" could even create an NTFS stream. It is now an error.
+func TestUndefinedVariableIsError(t *testing.T) {
+	baseDir := t.TempDir()
+	root := t.TempDir()
+	writeFile(t, baseDir, "manifest.yaml", `
 operations:
   - action: create
     path: out.txt
     content: "value=${VAR:missing}"
-`, nil)
-
-	got, _ := os.ReadFile(filepath.Join(root, "out.txt"))
-	if string(got) != "value=${VAR:missing}" {
-		t.Errorf("got %q", got)
+`)
+	err := ExecuteManifest(root, filepath.Join(baseDir, "manifest.yaml"), nil)
+	if err == nil || !strings.Contains(err.Error(), `undefined variable "missing"`) {
+		t.Fatalf("err = %v, want an undefined-variable error", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "out.txt")); !os.IsNotExist(statErr) {
+		t.Error("out.txt should not have been written")
 	}
 }
 

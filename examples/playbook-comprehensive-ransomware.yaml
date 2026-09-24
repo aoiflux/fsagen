@@ -48,9 +48,11 @@ steps:
     actions:
       - action: create
         path: AppData/Local/staging/doc-${ITER}-${BATCH}.docx
+        format: text   # placeholder text, not a real file of this type
         content_len: 4096
       - action: create
         path: AppData/Local/staging/spreadsheet-${UUID}.xlsx
+        format: text   # placeholder text, not a real file of this type
         content_len: 8192
 
   # Compress staged data
@@ -59,6 +61,7 @@ steps:
     actions:
       - action: create
         path: AppData/Local/staging/archive-${VAR:campaign_id}.zip
+        format: text   # placeholder text, not a real file of this type
         content_len: 32768
         mtime: "2024-03-15T02:35:00Z"
 

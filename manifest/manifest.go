@@ -1,152 +1,132 @@
+// Package manifest executes compiled operations. Every write goes through a
+// sandbox.FS confined to the output root; compile has already proved each
+// operation's preconditions against a model of the tree, so a failure here is
+// an I/O problem, never an input mistake.
 package manifest
 
 import (
 	"fmt"
-	"fsagen/email"
-	"fsagen/libgen"
-	"fsagen/render"
-	"fsagen/spec"
-	"fsagen/util"
 	"io"
-	"io/fs"
 	"os"
-	"path/filepath"
+	"path"
 	"strings"
 	"time"
 
-	yaml "gopkg.in/yaml.v2"
-)
-
-type Manifest = spec.Manifest
-type Operation = spec.Operation
-type Attachment = spec.Attachment
-type EmailSpec = spec.EmailSpec
-type Header = spec.Header
-type PdfSpec = spec.PdfSpec
-type VaultSpec = spec.VaultSpec
-
-// Files land at 0644 and directories at 0755 unless an operation sets mode.
-// The generator previously wrote everything 0777, which is not a permission set
-// any real file carries.
-const (
-	defaultFileMode = os.FileMode(0o644)
-	defaultDirMode  = os.FileMode(0o755)
+	"github.com/aoiflux/fsagen/compile"
+	"github.com/aoiflux/fsagen/email"
+	"github.com/aoiflux/fsagen/libgen"
+	"github.com/aoiflux/fsagen/sandbox"
+	"github.com/aoiflux/fsagen/spec"
+	"github.com/aoiflux/fsagen/util"
 )
 
 // ExecContext carries the state every operation needs beyond its own fields.
 type ExecContext struct {
-	// Root is the output directory all paths are relative to.
-	Root string
-	// BaseDir is the directory holding the manifest or playbook, used to
-	// resolve content_file, email bodies and attachment sources.
-	BaseDir string
+	// FS is the confined output root.
+	FS *sandbox.FS
+	// Sources reads email bodies and attachments from the YAML's directory.
+	Sources *sandbox.Sources
 	// Boundary supplies deterministic MIME boundaries.
 	Boundary func() string
 }
 
 func defaultBoundary() string { return "----=_fsagen_" + util.GetRandomHex(24) }
 
-// ExecuteManifest reads a YAML manifest file and applies operations under root.
-func ExecuteManifest(root string, manifestPath string, vars map[string]string) error {
-	data, err := os.ReadFile(manifestPath)
+// ExecuteManifest compiles a manifest and applies it under root with default
+// options. It is the library entry point; the CLI adds root checks, the
+// capability pre-flight and the run manifest around the same steps.
+func ExecuteManifest(root, manifestPath string, vars map[string]string) error {
+	return executeFile(compile.ModeManifest, root, manifestPath, vars)
+}
+
+// ExecutePlaybook compiles a playbook and applies it under root with default
+// options.
+func ExecutePlaybook(root, playbookPath string, vars map[string]string) error {
+	return executeFile(compile.ModePlaybook, root, playbookPath, vars)
+}
+
+func executeFile(mode compile.Mode, root, file string, vars map[string]string) error {
+	prog, err := compile.Load(mode, file, compile.Options{Vars: vars})
 	if err != nil {
 		return err
 	}
-	var m Manifest
-	// Strict: an unrecognised key is a typo, and silently dropping it produces
-	// plausible-looking but wrong artifacts.
-	if err := yaml.UnmarshalStrict(data, &m); err != nil {
-		return fmt.Errorf("parse manifest: %w", err)
-	}
+	defer prog.Close()
 
-	baseDir := filepath.Dir(manifestPath)
-	merged := render.MergeVariables(m.Variables, vars)
-
-	ops, err := prepareManifestOperations(m.Operations, baseDir, merged)
+	fsys, err := sandbox.Open(root)
 	if err != nil {
 		return err
 	}
+	defer fsys.Close()
 
-	return ExecuteOperations(ExecContext{Root: root, BaseDir: baseDir}, ops)
-}
-
-// prepareManifestOperations renders templates and loads external content.
-// Sequence is 1-based and increments per operation in the provided order.
-func prepareManifestOperations(ops []Operation, baseDir string, vars map[string]string) ([]Operation, error) {
-	out := make([]Operation, 0, len(ops))
-	for i, op := range ops {
-		// ${DATE:...} in a manifest resolves against that operation's own
-		// mtime, falling back to now when it has none.
-		refTime := time.Now().UTC()
-		if t, err := time.Parse(time.RFC3339, strings.TrimSpace(op.Mtime)); err == nil {
-			refTime = t
-		}
-
-		prepared, err := PrepareOperation(op, baseDir, render.Context{
-			Seq:       i + 1,
-			Timestamp: refTime,
-			Variables: vars,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("op %d (%s %s): %w", i+1, op.Action, op.Path, err)
-		}
-		out = append(out, prepared)
+	if err := compile.Preflight(prog, compile.Caps{NamedStreams: fsys.SupportsStreams()}, false); err != nil {
+		return err
 	}
-	return out, nil
+	return Execute(ExecContext{FS: fsys, Sources: prog.Sources}, prog.Ops)
 }
 
-// ExecuteOperations applies the provided operations under the given root,
-// sequentially. Operations are expected to already be prepared.
-func ExecuteOperations(ctx ExecContext, ops []Operation) error {
+// Execute applies the operations in order. An operation marked NoOp is
+// skipped; one marked Skip (unsupported here) still makes the random draws
+// it would have made, so every other file's bytes match a platform that
+// performs it.
+func Execute(ctx ExecContext, ops []compile.Op) error {
 	if ctx.Boundary == nil {
 		ctx.Boundary = defaultBoundary
 	}
-	for idx, op := range ops {
+	for _, op := range ops {
+		switch {
+		case op.NoOp != "":
+			continue
+		case op.Skip != "":
+			drawOnly(op)
+			continue
+		}
 		if err := executeOp(ctx, op); err != nil {
-			return fmt.Errorf("op %d (%s %s): %w", idx+1, op.Action, op.Path, err)
+			return fmt.Errorf("%s: %s %s: %w", op.Src, op.Action, op.Path, err)
 		}
 	}
 	return nil
 }
 
-func executeOp(ctx ExecContext, op Operation) error {
-	action := strings.ToLower(strings.TrimSpace(op.Action))
-	target := filepath.Join(ctx.Root, filepath.FromSlash(op.Path))
+// drawOnly consumes the random draws a skipped operation would have made.
+func drawOnly(op compile.Op) {
+	if op.Action == "ads" {
+		_ = contentOrRandom(op.Operation, 128)
+	}
+}
 
-	switch action {
+func executeOp(ctx ExecContext, c compile.Op) error {
+	op := c.Operation
+	fs := ctx.FS
+	target := op.Path
+
+	switch op.Action {
 	case "create":
-		if strings.ToLower(op.Type) == "dir" || (op.Ext == "" && strings.HasSuffix(op.Path, "/")) {
-			if err := os.MkdirAll(target, dirModeFor(op)); err != nil {
+		if c.Dir {
+			// The mode is given to MkdirAll; a directory's times are stamped
+			// without a separate chmod.
+			if err := fs.MkdirAll(target, dirModeFor(op)); err != nil {
 				return err
 			}
-			return applyTimes(op, target)
-		}
-		if op.Ext != "" && filepath.Ext(target) == "" {
-			target += op.Ext
+			return applyTimes(fs, op, target)
 		}
 		content, err := renderContent(op, contentOrRandom(op, 1024))
 		if err != nil {
 			return err
 		}
-		return writeArtifact(op, target, content)
+		return writeArtifact(fs, op, target, content)
 
 	case "update":
-		// create MkdirAll's its parent; update used not to, which made an
-		// update to a not-yet-existing directory fail on a fresh tree.
-		if err := os.MkdirAll(filepath.Dir(target), defaultDirMode); err != nil {
-			return err
-		}
 		content, err := renderContent(op, contentOrRandom(op, 1024))
 		if err != nil {
 			return err
 		}
-		return writeArtifact(op, target, content)
+		return writeArtifact(fs, op, target, content)
 
 	case "append":
-		if err := os.MkdirAll(filepath.Dir(target), defaultDirMode); err != nil {
+		if err := fs.MkdirParent(target); err != nil {
 			return err
 		}
-		f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_APPEND, fileModeFor(op))
+		f, err := fs.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_APPEND, fileModeFor(op))
 		if err != nil {
 			return err
 		}
@@ -157,83 +137,55 @@ func executeOp(ctx ExecContext, op Operation) error {
 		if err := f.Close(); err != nil {
 			return err
 		}
-		return applyModeAndTimes(op, target)
+		return applyModeAndTimes(fs, op, target)
 
 	case "delete":
-		var dirAt, dirMt *time.Time
-		if at, mt, ok := parseTimes(op.Atime, op.Mtime); ok {
-			dirAt, dirMt = &at, &mt
+		if err := fs.Remove(target); err != nil {
+			return err
 		}
-		return util.RemoveFile(target, dirAt, dirMt)
+		// A delete's times, when given, describe the parent directory after
+		// the removal.
+		if at, mt, ok := parseTimes(op.Atime, op.Mtime); ok {
+			return fs.Chtimes(path.Dir(target), at, mt)
+		}
+		return nil
 
 	case "mace":
-		at, mt, _ := parseTimes(op.Atime, op.Mtime)
-		if at.IsZero() && mt.IsZero() {
-			return fmt.Errorf("mace requires at least one of atime/mtime")
-		}
-		if at.IsZero() {
-			at = mt
-		}
-		if mt.IsZero() {
-			mt = at
-		}
-		if mode, ok, err := util.ParseFileMode(op.Mode); err != nil {
+		if err := applyMode(fs, op, target); err != nil {
 			return err
-		} else if ok {
-			if err := os.Chmod(target, mode); err != nil {
-				return err
-			}
 		}
-		return util.SetTimes(target, at, mt)
+		return applyTimes(fs, op, target)
 
 	case "rename":
-		if strings.TrimSpace(op.NewPath) == "" {
-			return fmt.Errorf("rename requires new_path")
-		}
-		newTarget := filepath.Join(ctx.Root, filepath.FromSlash(op.NewPath))
-		if err := os.MkdirAll(filepath.Dir(newTarget), defaultDirMode); err != nil {
+		if err := fs.MkdirParent(op.NewPath); err != nil {
 			return err
 		}
-		return os.Rename(target, newTarget)
+		return fs.Rename(target, op.NewPath)
 
 	case "copy":
-		if strings.TrimSpace(op.NewPath) == "" {
-			return fmt.Errorf("copy requires new_path")
-		}
-		newTarget := filepath.Join(ctx.Root, filepath.FromSlash(op.NewPath))
-		if err := copyFile(target, newTarget, fileModeFor(op)); err != nil {
+		if err := copyFile(fs, target, op.NewPath, fileModeFor(op)); err != nil {
 			return err
 		}
-		return applyModeAndTimes(op, newTarget)
+		return applyModeAndTimes(fs, op, op.NewPath)
 
 	case "truncate":
-		if err := os.MkdirAll(filepath.Dir(target), defaultDirMode); err != nil {
-			return err
-		}
-		f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fileModeFor(op))
+		f, err := fs.OpenFile(target, os.O_WRONLY|os.O_TRUNC, fileModeFor(op))
 		if err != nil {
 			return err
 		}
 		if err := f.Close(); err != nil {
 			return err
 		}
-		return applyModeAndTimes(op, target)
+		return applyModeAndTimes(fs, op, target)
 
 	case "rotate":
-		if strings.TrimSpace(op.NewPath) == "" {
-			return fmt.Errorf("rotate requires new_path")
-		}
-		newTarget := filepath.Join(ctx.Root, filepath.FromSlash(op.NewPath))
-		if err := os.MkdirAll(filepath.Dir(newTarget), defaultDirMode); err != nil {
+		if err := fs.MkdirParent(op.NewPath); err != nil {
 			return err
 		}
-		if err := os.Rename(target, newTarget); err != nil {
+		if err := fs.Rename(target, op.NewPath); err != nil {
 			return err
 		}
-		if err := os.MkdirAll(filepath.Dir(target), defaultDirMode); err != nil {
-			return err
-		}
-		f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY, fileModeFor(op))
+		f, err := fs.OpenFile(target, os.O_CREATE|os.O_WRONLY, fileModeFor(op))
 		if err != nil {
 			return err
 		}
@@ -241,66 +193,53 @@ func executeOp(ctx ExecContext, op Operation) error {
 			return err
 		}
 		if at, mt, ok := parseTimes(op.Atime, op.Mtime); ok {
-			_ = util.SetTimes(newTarget, at, mt)
-			_ = util.SetTimes(target, at, mt)
+			if err := fs.Chtimes(op.NewPath, at, mt); err != nil {
+				return err
+			}
+			if err := fs.Chtimes(target, at, mt); err != nil {
+				return err
+			}
 		}
 		return nil
 
 	case "email":
 		return writeEmail(ctx, op, target)
 
-	case "ansible-vault", "ansible_vault":
-		if op.Vault == nil {
-			return fmt.Errorf("ansible-vault requires a vault block")
-		}
+	case "ansible-vault":
 		encrypted, err := util.AnsibleVaultEncrypt([]byte(op.Content), op.Vault.Password, op.Vault.VaultID, op.Vault.Salt)
 		if err != nil {
 			return err
 		}
-		return writeArtifact(op, target, encrypted)
+		return writeArtifact(fs, op, target, encrypted)
 
 	case "ads":
-		if !util.IsWindows() {
-			return fmt.Errorf("ads action is only supported on Windows")
-		}
-		if strings.TrimSpace(op.Stream) == "" {
-			return fmt.Errorf("ads requires stream name")
-		}
-		if err := os.MkdirAll(filepath.Dir(target), defaultDirMode); err != nil {
-			return err
-		}
-		if err := util.WriteADS(target, op.Stream, contentOrRandom(op, 128)); err != nil {
+		if err := fs.WriteStream(target, op.Stream, contentOrRandom(op, 128)); err != nil {
 			return err
 		}
 		// Writing a stream updates the base file's mtime, so restore the times
 		// the operation asked for.
-		return applyTimes(op, target)
+		return applyTimes(fs, op, target)
 
 	case "motw":
-		if !util.IsWindows() {
-			return fmt.Errorf("motw action is only supported on Windows")
+		content := "[ZoneTransfer]\r\n" + fmt.Sprintf("ZoneId=%d\r\n", op.ZoneID)
+		if op.ReferrerURL != "" {
+			content += fmt.Sprintf("ReferrerUrl=%s\r\n", op.ReferrerURL)
 		}
-		zone := op.ZoneID
-		if zone < 0 || zone > 4 {
-			zone = 3
+		if op.HostURL != "" {
+			content += fmt.Sprintf("HostUrl=%s\r\n", op.HostURL)
 		}
-		if err := os.MkdirAll(filepath.Dir(target), defaultDirMode); err != nil {
+		if err := fs.WriteStream(target, "Zone.Identifier", []byte(content)); err != nil {
 			return err
 		}
-		if err := util.WriteMOTW(target, zone, op.HostURL, op.ReferrerURL); err != nil {
-			return err
-		}
-		return applyTimes(op, target)
-
-	default:
-		return fmt.Errorf("unknown action: %s", op.Action)
+		return applyTimes(fs, op, target)
 	}
+	return fmt.Errorf("unknown action %q", op.Action)
 }
 
 // renderContent applies the typed generator selected by format. Without one,
 // content is written through unchanged.
-func renderContent(op Operation, raw []byte) ([]byte, error) {
-	switch strings.ToLower(strings.TrimSpace(op.Format)) {
+func renderContent(op spec.Operation, raw []byte) ([]byte, error) {
+	switch op.Format {
 	case "", "raw", "text":
 		return raw, nil
 	case "pdf":
@@ -309,12 +248,11 @@ func renderContent(op Operation, raw []byte) ([]byte, error) {
 			return nil, err
 		}
 		return libgen.RenderPDF(string(raw), meta)
-	default:
-		return nil, fmt.Errorf("unknown format %q (want raw or pdf)", op.Format)
 	}
+	return nil, fmt.Errorf("unknown format %q (want raw or pdf)", op.Format)
 }
 
-func pdfMeta(op Operation) (libgen.PDFMeta, error) {
+func pdfMeta(op spec.Operation) (libgen.PDFMeta, error) {
 	if op.Pdf == nil {
 		return libgen.PDFMeta{}, nil
 	}
@@ -341,42 +279,41 @@ func pdfMeta(op Operation) (libgen.PDFMeta, error) {
 
 // writeEmail builds the message and either writes it as a standalone .eml or
 // appends it to an mbox. The format defaults from the path extension.
-func writeEmail(ctx ExecContext, op Operation, target string) error {
-	if op.Email == nil {
-		return fmt.Errorf("email action requires an email block")
+func writeEmail(ctx ExecContext, op spec.Operation, target string) error {
+	var readSource func(string) ([]byte, error)
+	if ctx.Sources != nil {
+		readSource = ctx.Sources.ReadFile
 	}
-
 	msg, date, err := email.Build(email.Options{
-		Spec:     *op.Email,
-		BaseDir:  ctx.BaseDir,
-		Root:     ctx.Root,
-		Boundary: ctx.Boundary,
+		Spec:       *op.Email,
+		ReadSource: readSource,
+		ReadOutput: ctx.FS.ReadFile,
+		Boundary:   ctx.Boundary,
 	})
 	if err != nil {
 		return err
 	}
 
-	format := strings.ToLower(strings.TrimSpace(op.Format))
+	format := op.Format
 	if format == "" {
-		if strings.EqualFold(filepath.Ext(target), ".mbox") {
+		if strings.EqualFold(path.Ext(target), ".mbox") {
 			format = "mbox"
 		} else {
 			format = "eml"
 		}
 	}
 
-	if err := os.MkdirAll(filepath.Dir(target), defaultDirMode); err != nil {
-		return err
-	}
-
 	switch format {
 	case "eml":
-		if err := os.WriteFile(target, msg, fileModeFor(op)); err != nil {
+		if err := ctx.FS.WriteFile(target, msg, fileModeFor(op)); err != nil {
 			return err
 		}
 	case "mbox":
 		// Append, so a whole thread accumulates across steps.
-		f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_APPEND, fileModeFor(op))
+		if err := ctx.FS.MkdirParent(target); err != nil {
+			return err
+		}
+		f, err := ctx.FS.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_APPEND, fileModeFor(op))
 		if err != nil {
 			return err
 		}
@@ -394,37 +331,34 @@ func writeEmail(ctx ExecContext, op Operation, target string) error {
 	// A message with no explicit times inherits its own Date header, which is
 	// what an actual mail store would show.
 	if strings.TrimSpace(op.Atime) == "" && strings.TrimSpace(op.Mtime) == "" && !date.IsZero() {
-		if err := applyMode(op, target); err != nil {
+		if err := applyMode(ctx.FS, op, target); err != nil {
 			return err
 		}
-		return util.SetTimes(target, date, date)
+		return ctx.FS.Chtimes(target, date, date)
 	}
-	return applyModeAndTimes(op, target)
+	return applyModeAndTimes(ctx.FS, op, target)
 }
 
-// writeArtifact creates the parent directory, writes the file with the right
-// permissions and then stamps its times.
-func writeArtifact(op Operation, target string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(target), defaultDirMode); err != nil {
+// writeArtifact writes the file with the right permissions, creating its
+// parent, and then stamps its times.
+func writeArtifact(fs *sandbox.FS, op spec.Operation, target string, data []byte) error {
+	if err := fs.WriteFile(target, data, fileModeFor(op)); err != nil {
 		return err
 	}
-	if err := os.WriteFile(target, data, fileModeFor(op)); err != nil {
-		return err
-	}
-	return applyModeAndTimes(op, target)
+	return applyModeAndTimes(fs, op, target)
 }
 
-func copyFile(src, dst string, mode os.FileMode) error {
-	in, err := os.Open(src)
+func copyFile(fs *sandbox.FS, src, dst string, mode os.FileMode) error {
+	in, err := fs.OpenFile(src, os.O_RDONLY, 0)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
 
-	if err := os.MkdirAll(filepath.Dir(dst), defaultDirMode); err != nil {
+	if err := fs.MkdirParent(dst); err != nil {
 		return err
 	}
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	out, err := fs.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
 	if err != nil {
 		return err
 	}
@@ -437,29 +371,26 @@ func copyFile(src, dst string, mode os.FileMode) error {
 
 // applyModeAndTimes chmods before stamping times: chmod itself touches ctime,
 // so doing it afterwards would disturb the timeline we just set.
-func applyModeAndTimes(op Operation, target string) error {
-	if err := applyMode(op, target); err != nil {
+func applyModeAndTimes(fs *sandbox.FS, op spec.Operation, target string) error {
+	if err := applyMode(fs, op, target); err != nil {
 		return err
 	}
-	return applyTimes(op, target)
+	return applyTimes(fs, op, target)
 }
 
-func applyMode(op Operation, target string) error {
+func applyMode(fs *sandbox.FS, op spec.Operation, target string) error {
 	mode, ok, err := util.ParseFileMode(op.Mode)
-	if err != nil {
+	if err != nil || !ok {
 		return err
-	}
-	if !ok {
-		return nil
 	}
 	// WriteFile only applies the mode when it creates the file, so an existing
 	// target needs an explicit chmod.
-	return os.Chmod(target, mode)
+	return fs.Chmod(target, mode)
 }
 
-func applyTimes(op Operation, target string) error {
-	at, mt, _ := parseTimes(op.Atime, op.Mtime)
-	if at.IsZero() && mt.IsZero() {
+func applyTimes(fs *sandbox.FS, op spec.Operation, target string) error {
+	at, mt, ok := parseTimes(op.Atime, op.Mtime)
+	if !ok {
 		return nil
 	}
 	if at.IsZero() {
@@ -468,26 +399,27 @@ func applyTimes(op Operation, target string) error {
 	if mt.IsZero() {
 		mt = at
 	}
-	return util.SetTimes(target, at, mt)
+	return fs.Chtimes(target, at, mt)
 }
 
-func fileModeFor(op Operation) os.FileMode {
-	if mode, ok, err := util.ParseFileMode(op.Mode); err == nil && ok {
+// fileModeFor and dirModeFor read a mode that compile has already validated.
+func fileModeFor(op spec.Operation) os.FileMode {
+	if mode, ok, _ := util.ParseFileMode(op.Mode); ok {
 		return mode
 	}
-	return defaultFileMode
+	return sandbox.FileMode
 }
 
-func dirModeFor(op Operation) fs.FileMode {
-	if mode, ok, err := util.ParseFileMode(op.Mode); err == nil && ok {
+func dirModeFor(op spec.Operation) os.FileMode {
+	if mode, ok, _ := util.ParseFileMode(op.Mode); ok {
 		return mode
 	}
-	return defaultDirMode
+	return sandbox.DirMode
 }
 
 // contentOrRandom returns the operation's content, falling back to
-// deterministic random bytes of content_len (or fallbackLen) when it has none.
-func contentOrRandom(op Operation, fallbackLen int) []byte {
+// deterministic random text of content_len (or fallbackLen) when it has none.
+func contentOrRandom(op spec.Operation, fallbackLen int) []byte {
 	if len(op.Content) > 0 {
 		return []byte(op.Content)
 	}
@@ -510,20 +442,15 @@ func optionalTime(value, field string) (time.Time, error) {
 	return t, nil
 }
 
+// parseTimes reads atime and mtime, which compile has already validated;
+// ok reports whether either was given.
 func parseTimes(at, mt string) (time.Time, time.Time, bool) {
 	var atT, mtT time.Time
-	ok := false
-	if strings.TrimSpace(at) != "" {
-		if t, err := time.Parse(time.RFC3339, at); err == nil {
-			atT = t
-			ok = true
-		}
+	if s := strings.TrimSpace(at); s != "" {
+		atT, _ = time.Parse(time.RFC3339, s)
 	}
-	if strings.TrimSpace(mt) != "" {
-		if t, err := time.Parse(time.RFC3339, mt); err == nil {
-			mtT = t
-			ok = true
-		}
+	if s := strings.TrimSpace(mt); s != "" {
+		mtT, _ = time.Parse(time.RFC3339, s)
 	}
-	return atT, mtT, ok
+	return atT, mtT, !atT.IsZero() || !mtT.IsZero()
 }

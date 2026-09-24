@@ -1,0 +1,56 @@
+# input-sha256 d27d1cb52dcd1197b5bc47c5c39377752189df32200e726b844825169cae3d4a
+d computer-01/
+d computer-01/mail/
+f 0a5e0623eee905825ba7af6ac6e7a306ee88c866820ff71ba71f945fef777a4f 768 computer-01/mail/alert-system.eml
+f 991086c28f8ea3b554b53a5dffa8e7ba962057a10bbedebd0ddfc349755147a1 512 computer-01/mail/notification-001.eml
+f 5d6be7f6e30cccbe69b3ff85ff1e2a2a2275422889724c53b34c883b3b30c677 384 computer-01/mail/update-10.eml
+d computer-01/program-files/
+f e65fbd5e1b9c0dc9c31f94c7d7b19cdd77072107e042949cd4aa2fed54f21776 4096 computer-01/program-files/system-monitor.exe
+f 04245445545bb4f46f826767f29efa264cead39cd0d86ac531068a577629bd90 2048 computer-01/program-files/update-tool.exe
+d computer-01/temp/
+f cf4652b7feaf0c2c4bee6043b0b2a26115c59d236e6765193482dfc549fc89d7 1536 computer-01/temp/installer-7.exe
+d computer-02/
+d computer-02/mail/
+f c55938bbf548be1c6d3a1726b05b94b5de129e88c9d0bff3deb9714a5b31a162 768 computer-02/mail/alert-system.eml
+f c968a9ff8bbeb8972663259ac236980ad2e69fbc7ea57c701b2941dc4cc19bc6 512 computer-02/mail/notification-001.eml
+f 5e7188d8064e9676fc5aeff02ebbf8e18c13e69a95f94c427cbc490cdfc66606 384 computer-02/mail/update-20.eml
+d computer-02/program-files/
+f 4ef82c546353ccaf293ab3c09aacd830e0996f37538be07d0db2633dc1f22a1c 4096 computer-02/program-files/system-monitor.exe
+f 5c95be3868a4b56d341cce8c05fb2005b78944aa00011cbbac24e243e82840d9 2048 computer-02/program-files/update-tool.exe
+d computer-02/temp/
+f 8fe6a58963c03c05ecd884fdac9040d01ea492439bb0e6bc24bbff985e56d640 1536 computer-02/temp/installer-17.exe
+d computer-03/
+d computer-03/mail/
+f cff09d09a96fb16a60c1117eccb360c70acf172ba26488d31e028dcf4da7934a 768 computer-03/mail/alert-system.eml
+f d6c9ee1c9293b97b96a2bcd4f0bf02d7ff1824a493b673e527d56f9eb1f127d5 512 computer-03/mail/notification-001.eml
+f b446205a3c65c8726d9cdefbf2b64319fc692834c221794e5ececc34c4955cbf 384 computer-03/mail/update-30.eml
+d computer-03/program-files/
+f 0ed2e785c8db56c25c2556407db75912fd19f99905197c242dd6e585bbea5a2f 4096 computer-03/program-files/system-monitor.exe
+f 49dff5d6f25753b4e9d50cdfcbb35ea48283a97177446625da3f98b7aac35ae4 2048 computer-03/program-files/update-tool.exe
+d computer-03/temp/
+f eba0b4c7aab349681bbe9e56d357fadf0bab6b9c720ea3a7d147c5d5c460165e 1536 computer-03/temp/installer-27.exe
+d computer-04/
+d computer-04/mail/
+f a69534d7cc1bd2b1c32ad8a74121016237112591421f17f0733a80a14e741792 768 computer-04/mail/alert-system.eml
+f 1907f070cab044495edeb990b71e4e88b94283caa7ef794ec708311dc4480d88 512 computer-04/mail/notification-001.eml
+f e9700d76558588a2e12a72e09fdb57abd37cbb50803c3187f1dfb224ee76e091 384 computer-04/mail/update-40.eml
+d computer-04/program-files/
+f f190a3e7dedf3d5f7f8ec3ca1a2e69192f3cc349ddb170a6ae94c05e506a5948 4096 computer-04/program-files/system-monitor.exe
+f b5b7a099fe8d5289190ed879e5d0165be30eb09ef1055c39e999091fd13c9ff0 2048 computer-04/program-files/update-tool.exe
+d computer-04/temp/
+f 61807fb8e86e338b038a6e4bc9efce867f94bec0a56103e2fb89ba6a4d80322f 1536 computer-04/temp/installer-37.exe
+d computer-05/
+d computer-05/mail/
+f 4da5c94e2ea546a79131b12d97caff75a0790beb59332468e6167cf32f6055b5 768 computer-05/mail/alert-system.eml
+f 41e9a36fb5eb427b946133f51943fef6f63f0d30127c568e46e3a7d60f7de724 512 computer-05/mail/notification-001.eml
+f 4666f14477814e8799ce2859701fad3b72cfed7a6d944662684a90603d3bbb50 384 computer-05/mail/update-50.eml
+d computer-05/program-files/
+f 8fb5c1edcdd7552671c28efd998ea5f319d00e8f5c7df0d1822d00c4eb07e272 4096 computer-05/program-files/system-monitor.exe
+f b96c09adad11f10122d9c81f80b43bf97093cebaa3bad05cdb12ff99eacb7e25 2048 computer-05/program-files/update-tool.exe
+d computer-05/temp/
+f 050fca3857c1798fcf2d6c9d17da676727ad4852fd617aff0ac21c3c3ae7bd8d 1536 computer-05/temp/installer-47.exe
+d network-share/
+d network-share/deployment/
+f a12684842176a4285c0a52985ad305f2a6d6d37b4b61a4e7ad444b04f708e22e 512 network-share/deployment/email-template.eml
+f a441917df49bf12673a1c8e52f6f36fea6a5d049f15dd7af10685e90fc2799de 4096 network-share/deployment/system-monitor-master.exe
+f cc4aec2e30fa2b202c38dac0f0337980c41ef071ce815011cf610290cf7f6584 2048 network-share/deployment/update-tool-master.exe

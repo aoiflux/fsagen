@@ -8,12 +8,11 @@ steps:
   - actor: attacker
     offset: 0s
     actions:
-      - action: create
-        path: var/log/app.jsonl
-        content: ''
+      # append creates the log on its first write.
       - action: append
         path: var/log/app.jsonl
-        content: '{"ts":"${DATE:2006-01-02T15:04:05Z07:00}","level":"info","msg":"service start"}\n'
+        content: |
+          {"ts":"${DATE:2006-01-02T15:04:05Z07:00}","level":"info","msg":"service start"}
 
   # Tampering: inject fake entries, then backdate file
   - actor: attacker
@@ -23,7 +22,8 @@ steps:
     actions:
       - action: append
         path: var/log/app.jsonl
-        content: '{"ts":"${DATE:2006-01-02T15:04:05Z07:00}","level":"warn","user":"${RND:6}","msg":"unexpected input"}\n'
+        content: |
+          {"ts":"${DATE:2006-01-02T15:04:05Z07:00}","level":"warn","user":"${RND:6}","msg":"unexpected input"}
       - action: mace
         path: var/log/app.jsonl
         atime: "2021-06-15T12:00:00Z"

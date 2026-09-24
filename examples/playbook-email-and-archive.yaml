@@ -13,9 +13,13 @@ steps:
         path: mail
       - action: create
         path: mail/msg-${SEQ}.eml
+        id: mail
+        format: text   # placeholder text, not a real file of this type
         content_len: 400
       - action: create
         path: media/pic-${SEQ}.jpg
+        id: media
+        format: text   # placeholder text, not a real file of this type
         content_len: 256
 
   - actor: insider
@@ -23,13 +27,16 @@ steps:
     actions:
       - action: create
         path: bundles/bundle.zip
+        format: text   # placeholder text, not a real file of this type
         content_len: 2048
 
   # Clean up originals to look like staging/exfil
   - actor: insider
     offset: 30m
     actions:
+      # The originals are named by id: ${SEQ} has moved on since they were
+      # created, so repeating their path template would name different files.
       - action: delete
-        path: mail/msg-${SEQ}.eml
+        refs: mail
       - action: delete
-        path: media/pic-${SEQ}.jpg
+        refs: media

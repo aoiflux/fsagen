@@ -1,3 +1,6 @@
 .codegraph/
-*.exe
 .vscode/
+*.exe
+
+# Run sidecars (run-manifest.json and friends) written beside an output root.
+*.fsagen/

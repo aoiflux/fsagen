@@ -12,6 +12,10 @@ type Manifest struct {
 type Operation struct {
 	Action     string `yaml:"action" json:"action"`
 	Path       string `yaml:"path" json:"path"`               // required for most actions
+	ID         string `yaml:"id" json:"id" render:"-"`        // names what this action creates or renames, for later ref/refs
+	Ref        string `yaml:"ref" json:"ref" render:"-"`      // instead of path: the one live path created under this id
+	Refs       string `yaml:"refs" json:"refs" render:"-"`    // instead of path: every live path created under this id
+	MissingOK  bool   `yaml:"missing_ok" json:"missing_ok"`   // delete: a missing path is a recorded no-op, not an error
 	NewPath    string `yaml:"new_path" json:"new_path"`       // for rename/rotate/copy
 	Type       string `yaml:"type" json:"type"`               // for create: file|dir
 	Ext        string `yaml:"ext" json:"ext"`                 // for create file when path is a directory
@@ -117,7 +121,7 @@ type Step struct {
 	Offset     string   `yaml:"offset" json:"offset"` // duration from playbook start for first iteration
 	Every      string   `yaml:"every" json:"every"`   // repeat interval
 	Repeat     int      `yaml:"repeat" json:"repeat"`
-	Condition  string   `yaml:"condition" json:"condition"`     // Conditional execution: "odd", "even", "first", "last"
+	Condition  string   `yaml:"condition" json:"condition"`     // "odd", "even", "first", "last"; tested against the iteration index
 	BatchCount int      `yaml:"batch_count" json:"batch_count"` // Generate N files in this step
 	Actions    []Action `yaml:"actions" json:"actions"`
 }
@@ -126,6 +130,10 @@ type Step struct {
 type Action struct {
 	Action     string `yaml:"action" json:"action"`
 	Path       string `yaml:"path" json:"path"`
+	ID         string `yaml:"id" json:"id" render:"-"`
+	Ref        string `yaml:"ref" json:"ref" render:"-"`
+	Refs       string `yaml:"refs" json:"refs" render:"-"`
+	MissingOK  bool   `yaml:"missing_ok" json:"missing_ok"`
 	NewPath    string `yaml:"new_path" json:"new_path"`
 	Type       string `yaml:"type" json:"type"`
 	Ext        string `yaml:"ext" json:"ext"`
@@ -133,7 +141,7 @@ type Action struct {
 	ContentLen int    `yaml:"content_len" json:"content_len"`
 	Template   string `yaml:"template" json:"template"`   // Predefined template: "email", "log", "script", "doc"
 	Offset     string `yaml:"offset" json:"offset"`       // relative to step occurrence time
-	Condition  string `yaml:"condition" json:"condition"` // Action-level condition
+	Condition  string `yaml:"condition" json:"condition"` // Action-level condition; tested against the batch index
 	// Optional explicit times override the computed time when provided
 	Atime string `yaml:"atime" json:"atime"`
 	Mtime string `yaml:"mtime" json:"mtime"`

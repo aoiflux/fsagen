@@ -7,12 +7,11 @@ steps:
   - actor: operator
     offset: 0s
     actions:
-      - action: create
-        path: var/log/access.log
-        content: ''
+      # append creates the log on its first write.
       - action: append
         path: var/log/access.log
-        content: '2021-10-10T00:00:00Z GET /index.html 200\n'
+        content: |
+          2021-10-10T00:00:00Z GET /index.html 200
 
   # Rotate the log (move to .1) and continue logging
   - actor: operator
@@ -23,7 +22,8 @@ steps:
         new_path: var/log/access.log.1
       - action: append
         path: var/log/access.log
-        content: '2021-10-10T00:15:10Z GET /home 200\n'
+        content: |
+          2021-10-10T00:15:10Z GET /home 200
 
   # Truncate the active log (simulate log cleanup)
   - actor: operator
@@ -33,4 +33,5 @@ steps:
         path: var/log/access.log
       - action: append
         path: var/log/access.log
-        content: '2021-10-10T00:30:05Z GET /login 302\n'
+        content: |
+          2021-10-10T00:30:05Z GET /login 302

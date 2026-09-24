@@ -1,7 +1,7 @@
 package email
 
 import (
-	"fsagen/spec"
+	"github.com/aoiflux/fsagen/spec"
 	"mime"
 	"net/mail"
 	"os"
@@ -134,7 +134,7 @@ func TestBuildWithAttachmentNestsAlternativeInsideMixed(t *testing.T) {
 	s.BodyHTML = "<p>hi</p>"
 	s.Attachments = []spec.Attachment{{SourceFile: "brief.pdf", Name: "Brief.pdf"}}
 
-	msg, _, err := Build(Options{Spec: s, BaseDir: dir, Boundary: fixedBoundary()})
+	msg, _, err := Build(Options{Spec: s, ReadSource: dirReader(dir), Boundary: fixedBoundary()})
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestBuildAttachmentFromRoot(t *testing.T) {
 	s := baseSpec()
 	s.Attachments = []spec.Attachment{{SourceRoot: "report.pdf"}}
 
-	msg, _, err := Build(Options{Spec: s, Root: root, Boundary: fixedBoundary()})
+	msg, _, err := Build(Options{Spec: s, ReadOutput: dirReader(root), Boundary: fixedBoundary()})
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -273,4 +273,8 @@ func TestBuildEncodesNonASCIISubject(t *testing.T) {
 	if dec != "Réunion technique" {
 		t.Errorf("round-tripped subject = %q", dec)
 	}
+}
+
+func dirReader(dir string) func(string) ([]byte, error) {
+	return func(p string) ([]byte, error) { return os.ReadFile(filepath.Join(dir, filepath.FromSlash(p))) }
 }

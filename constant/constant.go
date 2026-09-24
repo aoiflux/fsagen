@@ -1,7 +1,5 @@
 package constant
 
-import "runtime"
-
 // Supported file types and behaviors are documented via these extension constants.
 // Bulk generator and manifest/playbook modes can create files of these types:
 // - Text and docs: .txt, .md, .docx, .pdf
@@ -10,13 +8,19 @@ import "runtime"
 // - Logs: .log, .syslog (also JSONL logs)
 // - Archives: .zip
 // - Email: .eml, .mbox
-// - Windows artifacts: .reg, .exe (EXE is generated as a minimal PE stub)
+// - Browser history: .db (Chrome urls/visits), .sqlite (Firefox places)
+// - Windows artifacts: .reg, .exe (EXE is a 256-byte DOS MZ stub, not a loadable PE)
 // Note: Some formats are simplistic or synthetic, focused on filesystem artifact generation.
 const (
-	FileNameLen        = 10
-	ContentLen         = 200000
-	DefaultDepth int64 = 2
+	FileNameLen = 10
+	ContentLen  = 200000
 )
+
+// GeneratorVersion identifies the byte output of this build. It is bumped by
+// every change that alters a covered output (file and stream content, the
+// dry-run listing, the run manifest) for some seed and input, and is never
+// reused for different bytes. Version 1 matches 7accc8d for valid inputs.
+const GeneratorVersion = 1
 
 const (
 	TxtExtension    = ".txt"
@@ -37,11 +41,6 @@ const (
 	MdExtension     = ".md"
 	SyslogExtension = ".syslog"
 	ExeExtension    = ".exe"
-	DbExtension	 	= ".db"
+	DbExtension     = ".db"
 	SqLiteExtension = ".sqlite"
 )
-
-var MaxThreadCount = runtime.NumCPU() * 2
-
-// Number of file types generated per iteration in libgen
-const NumFileTypes int64 = 19

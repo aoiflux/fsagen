@@ -7,6 +7,251 @@
           "if": {
             "properties": {
               "action": {
+                "const": "create"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "properties": {
+              "format": {
+                "enum": [
+                  "raw",
+                  "text",
+                  "pdf"
+                ]
+              }
+            },
+            "propertyNames": {
+              "enum": [
+                "action",
+                "atime",
+                "condition",
+                "content",
+                "content_file",
+                "content_len",
+                "ext",
+                "format",
+                "id",
+                "mode",
+                "mtime",
+                "offset",
+                "path",
+                "pdf",
+                "render",
+                "template",
+                "type"
+              ]
+            },
+            "required": [
+              "path"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "update"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "oneOf": [
+              {
+                "required": [
+                  "path"
+                ]
+              },
+              {
+                "required": [
+                  "ref"
+                ]
+              }
+            ],
+            "properties": {
+              "format": {
+                "enum": [
+                  "raw",
+                  "text",
+                  "pdf"
+                ]
+              }
+            },
+            "propertyNames": {
+              "enum": [
+                "action",
+                "atime",
+                "condition",
+                "content",
+                "content_file",
+                "content_len",
+                "format",
+                "mode",
+                "mtime",
+                "offset",
+                "path",
+                "pdf",
+                "ref",
+                "render",
+                "template"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "append"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "oneOf": [
+              {
+                "required": [
+                  "path"
+                ]
+              },
+              {
+                "required": [
+                  "ref"
+                ]
+              }
+            ],
+            "propertyNames": {
+              "enum": [
+                "action",
+                "atime",
+                "condition",
+                "content",
+                "content_file",
+                "content_len",
+                "id",
+                "mode",
+                "mtime",
+                "offset",
+                "path",
+                "ref",
+                "render",
+                "template"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "delete"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "oneOf": [
+              {
+                "required": [
+                  "path"
+                ]
+              },
+              {
+                "required": [
+                  "ref"
+                ]
+              },
+              {
+                "required": [
+                  "refs"
+                ]
+              }
+            ],
+            "propertyNames": {
+              "enum": [
+                "action",
+                "atime",
+                "condition",
+                "missing_ok",
+                "mtime",
+                "offset",
+                "path",
+                "ref",
+                "refs"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "mace"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "anyOf": [
+              {
+                "required": [
+                  "atime"
+                ]
+              },
+              {
+                "required": [
+                  "mtime"
+                ]
+              }
+            ],
+            "oneOf": [
+              {
+                "required": [
+                  "path"
+                ]
+              },
+              {
+                "required": [
+                  "ref"
+                ]
+              },
+              {
+                "required": [
+                  "refs"
+                ]
+              }
+            ],
+            "propertyNames": {
+              "enum": [
+                "action",
+                "atime",
+                "condition",
+                "mode",
+                "mtime",
+                "offset",
+                "path",
+                "ref",
+                "refs"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
                 "const": "rename"
               }
             },
@@ -15,23 +260,29 @@
             ]
           },
           "then": {
-            "required": [
-              "new_path"
-            ]
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "action": {
-                "const": "rotate"
+            "oneOf": [
+              {
+                "required": [
+                  "path"
+                ]
+              },
+              {
+                "required": [
+                  "ref"
+                ]
               }
+            ],
+            "propertyNames": {
+              "enum": [
+                "action",
+                "condition",
+                "id",
+                "new_path",
+                "offset",
+                "path",
+                "ref"
+              ]
             },
-            "required": [
-              "action"
-            ]
-          },
-          "then": {
             "required": [
               "new_path"
             ]
@@ -49,6 +300,32 @@
             ]
           },
           "then": {
+            "oneOf": [
+              {
+                "required": [
+                  "path"
+                ]
+              },
+              {
+                "required": [
+                  "ref"
+                ]
+              }
+            ],
+            "propertyNames": {
+              "enum": [
+                "action",
+                "atime",
+                "condition",
+                "id",
+                "mode",
+                "mtime",
+                "new_path",
+                "offset",
+                "path",
+                "ref"
+              ]
+            },
             "required": [
               "new_path"
             ]
@@ -58,7 +335,7 @@
           "if": {
             "properties": {
               "action": {
-                "const": "ads"
+                "const": "truncate"
               }
             },
             "required": [
@@ -66,8 +343,77 @@
             ]
           },
           "then": {
+            "oneOf": [
+              {
+                "required": [
+                  "path"
+                ]
+              },
+              {
+                "required": [
+                  "ref"
+                ]
+              },
+              {
+                "required": [
+                  "refs"
+                ]
+              }
+            ],
+            "propertyNames": {
+              "enum": [
+                "action",
+                "atime",
+                "condition",
+                "mode",
+                "mtime",
+                "offset",
+                "path",
+                "ref",
+                "refs"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "rotate"
+              }
+            },
             "required": [
-              "stream"
+              "action"
+            ]
+          },
+          "then": {
+            "oneOf": [
+              {
+                "required": [
+                  "path"
+                ]
+              },
+              {
+                "required": [
+                  "ref"
+                ]
+              }
+            ],
+            "propertyNames": {
+              "enum": [
+                "action",
+                "atime",
+                "condition",
+                "mode",
+                "mtime",
+                "new_path",
+                "offset",
+                "path",
+                "ref"
+              ]
+            },
+            "required": [
+              "new_path"
             ]
           }
         },
@@ -83,8 +429,31 @@
             ]
           },
           "then": {
+            "properties": {
+              "format": {
+                "enum": [
+                  "eml",
+                  "mbox"
+                ]
+              }
+            },
+            "propertyNames": {
+              "enum": [
+                "action",
+                "atime",
+                "condition",
+                "email",
+                "format",
+                "id",
+                "mode",
+                "mtime",
+                "offset",
+                "path"
+              ]
+            },
             "required": [
-              "email"
+              "email",
+              "path"
             ]
           }
         },
@@ -100,8 +469,76 @@
             ]
           },
           "then": {
+            "propertyNames": {
+              "enum": [
+                "action",
+                "atime",
+                "condition",
+                "content",
+                "content_file",
+                "id",
+                "mode",
+                "mtime",
+                "offset",
+                "path",
+                "render",
+                "vault"
+              ]
+            },
             "required": [
-              "vault"
+              "vault",
+              "path"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "ads"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "oneOf": [
+              {
+                "required": [
+                  "path"
+                ]
+              },
+              {
+                "required": [
+                  "ref"
+                ]
+              },
+              {
+                "required": [
+                  "refs"
+                ]
+              }
+            ],
+            "propertyNames": {
+              "enum": [
+                "action",
+                "atime",
+                "condition",
+                "content",
+                "content_file",
+                "content_len",
+                "mtime",
+                "offset",
+                "path",
+                "ref",
+                "refs",
+                "render",
+                "stream"
+              ]
+            },
+            "required": [
+              "stream"
             ]
           }
         },
@@ -117,12 +554,37 @@
             ]
           },
           "then": {
-            "properties": {
-              "zone_id": {
-                "maximum": 4,
-                "minimum": 0,
-                "type": "integer"
+            "oneOf": [
+              {
+                "required": [
+                  "path"
+                ]
+              },
+              {
+                "required": [
+                  "ref"
+                ]
+              },
+              {
+                "required": [
+                  "refs"
+                ]
               }
+            ],
+            "propertyNames": {
+              "enum": [
+                "action",
+                "atime",
+                "condition",
+                "host_url",
+                "mtime",
+                "offset",
+                "path",
+                "ref",
+                "referrer_url",
+                "refs",
+                "zone_id"
+              ]
             }
           }
         },
@@ -131,6 +593,30 @@
             "required": [
               "content",
               "content_file"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "template",
+              "content"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "template",
+              "content_file"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "content_len",
+              "content"
             ]
           }
         }
@@ -152,12 +638,14 @@
           "type": "string"
         },
         "content_len": {
+          "minimum": 1,
           "type": "integer"
         },
         "email": {
           "$ref": "#/$defs/EmailSpec"
         },
         "ext": {
+          "pattern": "^\\.[^/\\\\:]+$",
           "type": "string"
         },
         "format": {
@@ -173,6 +661,14 @@
         "host_url": {
           "type": "string"
         },
+        "id": {
+          "description": "Names what this action creates or renames, for later ref/refs.",
+          "type": "string"
+        },
+        "missing_ok": {
+          "description": "delete: a missing path is a recorded no-op.",
+          "type": "boolean"
+        },
         "mode": {
           "description": "Octal file permissions, for example 0600",
           "pattern": "^0?[0-7]{3,4}$",
@@ -185,8 +681,7 @@
           "type": "string"
         },
         "offset": {
-          "description": "Go duration string (for example: 15m, 2h, 30s)",
-          "type": "string"
+          "$ref": "#/$defs/Duration"
         },
         "path": {
           "type": "string"
@@ -194,7 +689,15 @@
         "pdf": {
           "$ref": "#/$defs/PdfSpec"
         },
+        "ref": {
+          "description": "Instead of path: the one live path created under this id.",
+          "type": "string"
+        },
         "referrer_url": {
+          "type": "string"
+        },
+        "refs": {
+          "description": "Instead of path: every live path created under this id.",
           "type": "string"
         },
         "render": {
@@ -223,8 +726,7 @@
         }
       },
       "required": [
-        "action",
-        "path"
+        "action"
       ],
       "type": "object"
     },
@@ -251,6 +753,23 @@
     },
     "Attachment": {
       "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "source_file"
+          ]
+        },
+        {
+          "required": [
+            "source_root"
+          ]
+        },
+        {
+          "required": [
+            "content"
+          ]
+        }
+      ],
       "properties": {
         "content": {
           "type": "string"
@@ -281,13 +800,17 @@
       "type": "object"
     },
     "Condition": {
+      "description": "A step condition tests the iteration index; an action condition tests the batch index.",
       "enum": [
-        "",
         "odd",
         "even",
         "first",
         "last"
       ],
+      "type": "string"
+    },
+    "Duration": {
+      "description": "Go duration with day (d) and week (w) units, for example 15m, 2h, 2d6h.",
       "type": "string"
     },
     "EmailSpec": {
@@ -391,10 +914,10 @@
         "copy",
         "truncate",
         "rotate",
-        "ads",
-        "motw",
         "email",
-        "ansible-vault"
+        "ansible-vault",
+        "ads",
+        "motw"
       ],
       "type": "string"
     },
@@ -438,17 +961,37 @@
       "type": "object"
     },
     "Rfc3339Time": {
-      "description": "Timestamp in RFC3339 format",
+      "description": "Timestamp in RFC 3339 format, fractional seconds allowed",
       "format": "date-time",
       "type": "string"
     },
     "Step": {
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "repeat": {
+                "minimum": 2
+              }
+            },
+            "required": [
+              "repeat"
+            ]
+          },
+          "then": {
+            "required": [
+              "every"
+            ]
+          }
+        }
+      ],
       "properties": {
         "actions": {
           "items": {
             "$ref": "#/$defs/Action"
           },
+          "minItems": 1,
           "type": "array"
         },
         "actor": {
@@ -462,12 +1005,10 @@
           "$ref": "#/$defs/Condition"
         },
         "every": {
-          "description": "Go duration string",
-          "type": "string"
+          "$ref": "#/$defs/Duration"
         },
         "offset": {
-          "description": "Go duration string",
-          "type": "string"
+          "$ref": "#/$defs/Duration"
         },
         "repeat": {
           "minimum": 1,
@@ -496,6 +1037,7 @@
           "type": "string"
         },
         "salt": {
+          "pattern": "^[0-9a-fA-F]{64}$",
           "type": "string"
         },
         "vault_id": {
@@ -508,10 +1050,10 @@
       "type": "object"
     }
   },
-  "$id": "https://generator.local/playbook-schema.json",
+  "$id": "https://raw.githubusercontent.com/aoiflux/fsagen/main/schemas/playbook-schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Validates fsagen playbook input files.",
+  "description": "Documents fsagen playbook input files. fsagen validates input itself; this schema mirrors those rules for editors.",
   "properties": {
     "actors": {
       "items": {
@@ -521,6 +1063,7 @@
       "type": "array"
     },
     "start": {
+      "description": "RFC 3339 start of the scenario, or \"now\" for a run that cannot be reproduced.",
       "oneOf": [
         {
           "const": "now"
@@ -545,6 +1088,7 @@
     }
   },
   "required": [
+    "start",
     "actors",
     "steps"
   ],

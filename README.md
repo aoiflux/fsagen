@@ -18,11 +18,17 @@ Deterministic generator for creating diverse file-system artifacts to test foren
 
 ## Install
 
-Build from source:
+```pwsh
+go install github.com/aoiflux/fsagen@latest
+```
+
+or build from source (pure Go; `CGO_ENABLED=0` works on Windows, Linux, macOS and FreeBSD):
 
 ```pwsh
 go build -v -o fsagen.exe
 ```
+
+Released under the MIT License (see `LICENSE`).
 
 ## Usage
 
@@ -36,28 +42,40 @@ fsagen [OPTIONS] <output-path>
 - `--seed N` - PRNG seed for deterministic generation (default: 1)
 - `--manifest FILE` - Execute a YAML manifest (simple file operations)
 - `--playbook FILE` - Execute a YAML playbook (complex modus operandi)
-- `--generate-schema` - Write separate JSON schemas for manifest/playbook and exit
-- `--schema-out DIR` - Output directory for `--generate-schema` (default: `examples`)
 - `--bulk N` - Super-simple bulk generation: N items per level (no YAML)
 - `--depth D` - Bulk generation depth (default: 1)
-- `--timeline FILE` - Generate forensic timeline after execution (formats: csv, txt, bodyfile, macb)
 - `--vars-file FILE` - YAML map of variables exposed to templates as `${VAR:name}`
 - `--var k=v` - Set one template variable (repeatable; overrides `--vars-file`)
+- `--validate` - Check the manifest or playbook and exit; nothing is written
+- `--dry-run` - Print the compiled operations (resolved paths, times, content hashes) as JSON lines and exit
+- `--clean` - Empty a non-empty output directory before generating
+- `--into-existing` - Generate into a non-empty output directory, merging (recorded in the run manifest)
+- `--on-unsupported fail|skip` - What to do with operations the platform cannot perform (default `fail`, before anything is written; `skip` generates the rest and records each skipped operation)
+- `--allow-nonportable` - Allow paths that only work on some platforms (reserved device names, case-only differences, very long paths)
+- `--allow-external-sources` - Allow `content_file`, email bodies and attachments from outside the YAML file's directory
+- `--meta DIR` - Where to write `run-manifest.json` (default: `<output-path>.fsagen`, beside the output)
+- `--timeline FILE` - Write a timeline of the output after generating; `FILE` must be outside the output directory
+- `--timeline-format csv|txt|bodyfile|macb` - Timeline format (default: from the extension: `.csv`, `.txt`, `.bodyfile`, `.body`, `.macb`; any other extension is an error)
+- `--generate-schema` - Write JSON schemas for manifests and playbooks and exit (`--schema-out DIR`, default `schemas`)
+- `--version` - Print the module version, generator version and build
+
+**Exit status:** 0 success, 1 generation failed, 2 command-line error. Diagnostics go to stderr.
+
+**Output directory:** must be a directory or not exist. A non-empty one is refused unless `--clean` or `--into-existing` is given.
+
+**Run manifest:** every generation writes `run-manifest.json` beside the output (never inside it): generator version, seed, SHA-256 of every input read, options, platform, skipped operations, and a status that reads `running` until the run ends and then `complete` or `failed`. A tree whose run manifest does not say `complete` is not a finished corpus.
 
 **Examples:**
 
-Generate schema file for external input validation:
+Check a playbook, then see exactly what it would do:
 ```pwsh
-fsagen --generate-schema
+fsagen --playbook examples/playbook-basic.yaml --validate
+fsagen --playbook examples/playbook-basic.yaml --dry-run
 ```
 
-This writes:
-- `manifest-schema.json`
-- `playbook-schema.json`
-
-Generate schema to a custom location:
+Regenerate the JSON schemas in `schemas/` (they document the input format for editors; fsagen validates its input itself):
 ```pwsh
-fsagen --generate-schema --schema-out ./schemas
+fsagen --generate-schema
 ```
 
 Simple bulk generation with manifest:
@@ -70,9 +88,9 @@ Complex adversary simulation with playbook:
 fsagen --seed 100 --playbook examples/playbook-adversary-data-theft.yaml ./crime-scene
 ```
 
-Generate artifacts with forensic timeline:
+Generate artifacts with a Sleuth Kit bodyfile timeline:
 ```pwsh
-fsagen --seed 42 --playbook examples/playbook-comprehensive-ransomware.yaml --timeline timeline.csv ./output
+fsagen --seed 42 --playbook examples/playbook-comprehensive-ransomware.yaml --timeline timeline.body ./output
 ```
 
 Quick synthetic corpus with bulk generator (no YAML):
@@ -85,12 +103,15 @@ fsagen --seed 7 --bulk 3 --depth 2 ./quick-bulk
 YAML with a sequence of operations:
 
 - action: `create|update|append|truncate|rotate|delete|mace|rename|copy|ads|motw|email|ansible-vault`
-- path: target path relative to output root
+- path: target path relative to output root (see *Paths* below)
+- id: name for what this action creates or renames, so a later action can refer to it
+- ref / refs: instead of `path`, act on the one path (`ref`) or every path (`refs`) created under an `id` that still exists; ids follow renames
+- missing_ok: for `delete`, a path that does not exist is a recorded no-op instead of an error
 - type: `file|dir` (for create)
 - ext: file extension to append if `path` has no extension
 - content: literal content (optional)
-- content_file: load content from a file, resolved relative to the manifest (optional)
-- content_len: size of deterministic random content (fallback when neither is provided)
+- content_file: load content from a file inside the manifest's directory (optional)
+- content_len: size of deterministic random content, at least 1 (fallback when neither is provided)
 - render: run `${...}` substitution over the content. Defaults to `true` for inline
   `content` and `false` for `content_file`, because scripts and PEM keys contain
   `${...}` sequences of their own that must survive verbatim
@@ -104,8 +125,43 @@ YAML with a sequence of operations:
 - stream: ADS stream name (for `ads` action, Windows-only)
 - zone_id, host_url, referrer_url: for `motw` action (Windows-only)
 
-A manifest may also carry a top-level `variables:` map. Unknown keys are a hard
-error: a silently dropped typo produces artifacts that look right and are not.
+A manifest may also carry a top-level `variables:` map.
+
+**Input is strict.** fsagen refuses to generate anything from an input it would
+have to guess about, and says where the problem is (file, line and column, the
+operation or step/action, and the field). All of these are errors:
+
+- an unknown or duplicated key, or a key the action does not use (for example
+  `stream` on `create`, or times on `rename`, which keeps a file's times)
+- a time that is not RFC 3339, a malformed or negative duration, `zone_id`
+  outside 0-4, an invalid `mode`, `content_len` below 1
+- an undefined `${VAR:name}`, an unknown or unterminated `${...}` token
+  (write `$${` for a literal `${`)
+- `delete` of a path that does not exist (unless `missing_ok: true`), `update`
+  or `truncate` of a missing file (use `create`), `ads`/`motw` on a missing file,
+  `rename`/`copy`/`rotate` onto a path that already exists, deleting a non-empty
+  directory. `append` creates a missing file, as a log comes into being.
+- random content (`content_len`, or no content at all) under an extension that
+  promises a structured format fsagen cannot generate yet (`.exe`, `.zip`,
+  `.png`, `.jpg`, `.sqlite`, `.docx`, `.mp4`, `.eml`, ...). Add `format: text`
+  to write placeholder text on purpose, or give `content`/`content_file`.
+- an explicitly empty `content: ''`: this generator version would write random
+  text in its place. To start a log, simply `append` to it.
+- an operation the platform cannot perform (`ads`/`motw` off NTFS), unless
+  `--on-unsupported=skip`
+
+**Paths** use `/` on every platform and are relative to the output root (and
+to the actor's `base` in playbooks). A trailing `/` means a directory. `..` is
+allowed only while it stays inside the root. Backslashes, `:` (drive letters,
+stream syntax), absolute paths, NUL and names ending in a dot or space are
+refused everywhere. Unless `--allow-nonportable` is given, so are reserved
+Windows device names (`CON`, `NUL`, `COM1.log`, ...), two paths that differ
+only by case or Unicode normalisation, and paths over 200 characters.
+
+Files read by a scenario (`content_file`, `body_text_file`, `body_html_file`,
+`attachments[].source_file`) must lie inside the directory of the YAML that
+names them, unless `--allow-external-sources` is given; `attachments[].source_root`
+must name a file already generated in the output.
 
 **Examples:**
 - `examples/manifest-basic.yaml` - Basic create/update/delete operations
@@ -115,24 +171,28 @@ error: a silently dropped typo produces artifacts that look right and are not.
 
 YAML with a timeline and actors:
 
-- **start**: RFC3339 or "now"
+- **start** (required): RFC3339, or "now" for a run that cannot be reproduced (recorded as such in the run manifest)
 - **variables**: Global variables for templating (map of key-value pairs)
 - **actors**: List of { name, base, variables }
-	- name: Actor identifier
+	- name: Actor identifier (unique, case-insensitively)
 	- base: Base directory for this actor's files
 	- variables: Actor-specific variables (override global variables)
 - **steps**: Timeline steps
 	- actor: Actor name
 	- offset: time.Duration from start for first occurrence (e.g., 5m, 2h)
-	- every: Repeat interval (optional)
+	- every: Repeat interval; required when `repeat` is above 1 (`every: 0s` stacks the occurrences on one instant on purpose)
 	- repeat: Number of occurrences (default 1)
-	- condition: Step-level conditional execution ("odd", "even", "first", "last")
+	- condition: Step-level conditional execution (`odd`, `even`, `first`, `last`), tested against the iteration index
 	- batch_count: Generate N files in this step (multiplies actions)
 	- actions: List of operations with extras:
 		- offset: time.Duration relative to the step occurrence
-		- condition: Action-level conditional execution
-		- template: Predefined content template ("email", "log", "script", "doc")
-		- All standard manifest fields (action, path, content, etc.)
+		- condition: Action-level conditional execution, tested against the batch index
+		- template: Predefined content template (`email`, `log`, `script`, `doc`) for create/update/append; cannot be combined with `content` or `content_file`
+		- All standard manifest fields (action, path, id, ref, content, etc.)
+
+Steps run in the order they are written. `${SEQ}` counts every action as it is
+compiled, so two actions rendering `file-${SEQ}.txt` name two different files:
+give the first an `id` and refer to it with `ref`/`refs`.
 
 Operations supported: `create|update|append|truncate|rotate|delete|mace|rename|copy|ads|motw|email|ansible-vault` (all operations work in both manifest and playbook). `ads` and `motw` are Windows-only. Timestamps are computed from the timeline unless explicitly provided in the action.
 
@@ -141,13 +201,13 @@ Durations accept `d` and `w` in addition to Go's own units, so a step can be
 
 **Playbook templating:**
 - `${SEQ}` - Monotonic sequence counter
-- `${RND:N}` or `${RANDOM:N}` - Deterministic random string of length N
-- `${DATE:layout}` - Current time formatted with Go layout (e.g., `${DATE:2006-01-02T15:04:05Z07:00}`)
-- `${ACTOR}` - Current actor name
-- `${VAR:name}` - Variable substitution (from global or actor-specific variables)
-- `${UUID}` - Deterministic UUID based on sequence
+- `${RND:N}` or `${RANDOM:N}` - Deterministic random string of length N (N at least 1)
+- `${DATE:layout}` - The action's scheduled time (in a manifest, the operation's `mtime`) formatted with a Go layout (e.g., `${DATE:2006-01-02T15:04:05Z07:00}`)
+- `${ACTOR}` - Current actor name (playbooks only)
+- `${VAR:name}` - Variable substitution (from global or actor-specific variables); undefined names are errors
+- `${UUID}` - Random version-4 UUID drawn from the seeded PRNG
 - `${IP}` - Deterministic IP address (192.168.x.x range)
-- `${HASH:N}` - Deterministic hash-like hex string of length N
+- `${HASH:N}` - Deterministic lowercase hex string of length N
 - `${BATCH}` - Current batch index (when using batch_count)
 - `${ITER}` - Current iteration index (when using repeat)
 
@@ -193,7 +253,7 @@ steps:
 actions:
   - action: create
     path: message.eml
-    template: email  # Generates realistic email structure
+    template: email  # a simple LF-terminated message; use the email action for RFC 5322
 ```
 
 Available templates: `email`, `log`, `script`, `doc`
@@ -244,11 +304,10 @@ bodies and attachments). Writes a `.eml`, or appends to a `.mbox` with mboxrd
     body_text_file: content/msg-03.txt
     body_html_file: content/msg-03.html
     attachments:
-      - source_file: content/brief.pdf    # relative to the manifest/playbook
+      - source_file: content/brief.pdf    # inside the manifest/playbook's directory
         name: "Technical_Assessment_Brief.pdf"
-      - source_root: reports/review.pdf   # relative to the output root, for
-                                          # attaching an artifact an earlier
-                                          # step generated
+      - source_root: reports/review.pdf   # a file an earlier step generated in
+                                          # the output root
 ```
 
 Author-supplied `headers` are emitted first, in order, then the structured
@@ -336,12 +395,10 @@ fsagen --seed 1414 --vars-file personas.yaml --var org="Acme" --manifest evidenc
 ```
 
 Precedence is `--var` > `--vars-file` > actor variables > playbook/manifest
-variables. An unknown `${VAR:name}` is left verbatim rather than blanked, so a
-typo shows up in the output instead of silently emptying a field.
-
-A worked example using all of the above is in
-[`ctf/priyan-rogue-agent/`](ctf/priyan-rogue-agent/): six interlocking evidence
-items for a CTF scenario.
+variables. An undefined `${VAR:name}` is an error that names the file, line and
+the variables that are defined; it is never left in the output. The run manifest
+records the vars file's SHA-256 and a hash of the `--var` values, not the values
+themselves (they can hold a vault password).
 
 ## Notes on timestamps
 
@@ -352,20 +409,36 @@ items for a CTF scenario.
 
 ## Reproducibility
 
-- All random values (names, synthetic content) come from a seeded PRNG. Use the same `--seed` to reproduce identical output on the same platform and file system.
-- Race-condition free: concurrent operations use proper synchronization while maintaining determinism.
+What is reproducible today, and verified by the test suite:
+
+- **Manifests and playbooks:** the same generator version (`fsagen --version`),
+  `--seed` and input files produce the same file names, file contents and
+  stream contents (`TestExampleContentGoldens` pins every shipped example), and
+  the same `--dry-run` listing (`TestDryRunGoldens`) and `run-manifest.json`
+  (`TestRunManifestDeterministic`). A playbook with `start: now` is the
+  exception, and says so in its run manifest.
+- **Not reproducible yet:** bulk mode (its generators run concurrently and draw
+  from one random stream), and timelines, which record what the file system
+  reports, including creation and change times the operating system stamps at
+  generation time. Both are addressed in the next generator version.
 
 ## Supported File Types
 
-The generator can create artifacts with proper structure for:
+Bulk mode writes these types. Most are structurally valid; the exceptions are
+called out:
 
 - **Documents**: .txt, .md, .docx, .pdf
 - **Data**: .csv, .json, .jsonl, .xml, .html
 - **Logs**: .log, .syslog, .jsonl
-- **Media**: .png, .mp4
+- **Media**: .png; .mp4 (holds text, not video)
 - **Archives**: .zip
 - **Email**: .eml, .mbox
-- **Windows**: .reg, .exe, NTFS ADS, MoTW
+- **Browser history**: Chrome `urls`/`visits` (.db) and Firefox `moz_places` (.sqlite) databases
+- **Windows**: .reg; .exe (a 256-byte DOS stub, not a loadable PE)
+
+Manifests and playbooks write text, PDFs (`format: pdf`), email (`action: email`),
+Ansible vaults and NTFS streams (`ads`, `motw`); see *Input is strict* for the
+formats they refuse to fake.
 
 ## Forensic Timeline Generation
 
@@ -379,17 +452,20 @@ fsagen --playbook scenario.yaml --timeline output.csv ./artifacts
 
 - **CSV** (`.csv`): Structured data with all metadata (path, size, mode, timestamps, MD5, type, ADS)
 - **TXT** (`.txt`): Human-readable format with detailed file information
-- **Bodyfile** (`.bodyfile`): Compatible with The Sleuth Kit's mactime tool
-- **MACB** (`.macb`): Modified/Accessed/Changed/Birth timeline showing all timestamp events separately
+- **Bodyfile** (`.bodyfile` or `.body`): The Sleuth Kit's bodyfile layout, for `mactime -b`
+- **MACB** (`.macb`): modified, accessed and changed events listed separately
+
+The format comes from `--timeline-format` or the extension; an unknown extension
+is an error, never a silent fall-back. The timeline file must lie outside the
+output directory, or it would describe itself.
 
 **Timeline Features:**
 
 - MD5 hash calculation for all files (except files > 100MB)
-- Full timestamp capture (access, modify, change/create times)
-- NTFS Alternate Data Stream detection (Windows)
+- Access and modification times, plus a third time that is the creation time on Windows and the inode change time on Unix (the bodyfile currently writes it in both its ctime and crtime columns)
+- Detection of the NTFS streams `Zone.Identifier`, `metadata` and `content` (Windows)
 - Chronologically sorted by modification time
-- Deterministic output (same seed = same timeline)
-- **Timeline-only mode**: Generate timelines from existing artifacts without regenerating them
+- **Timeline-only mode**: Generate timelines from an existing directory without regenerating it
 
 **Example workflows:**
 
@@ -440,8 +516,8 @@ fsagen --seed 7 --bulk 3 --depth 2 --timeline timeline.csv ./quick-bulk
 
 What it does:
 - Creates a directory fan-out up to `--depth` with `--bulk` sub-branches per level
-- Populates each level with many file types (txt, docx, png, pdf, mp4, csv, json, xml, html, log, reg, zip, exe, jsonl, syslog, md, eml, mbox)
-- Deterministic names and contents from `--seed`
+- Populates each level with many file types (txt, docx, png, pdf, mp4, csv, json, xml, html, log, reg, zip, exe, jsonl, syslog, md, eml, mbox, Chrome .db, Firefox .sqlite)
+- Draws names and contents from `--seed`, but not yet reproducibly: see *Reproducibility*
 
 Intended use:
 - Quickly produce a sizeable, diverse dataset for tool demos, performance tests, or classroom exercises
@@ -450,7 +526,14 @@ Intended use:
 Notes:
 - Output size grows quickly with `--bulk` and `--depth`. Start small (e.g., `--bulk 2 --depth 1` or `--bulk 3 --depth 2`).
 - Bulk mode is structure/content focused; if you need precise timelines, actors, or conditions, prefer Playbooks.
-- 
+
+## Development
+
+`go run ./tools/gate` runs the checks a change must pass: `go vet`, a gofmt
+check, the tests (with the race detector where cgo is available), and
+`CGO_ENABLED=0` builds for Windows, Linux, macOS and FreeBSD on amd64 and arm64.
+Golden files under `testdata/golden/v<generator version>/` pin generated bytes;
+`go test -update` only rewrites a golden whose input changed.
 
 ### Related Research Paper
 https://link.springer.com/chapter/10.1007/978-981-96-9443-3_17

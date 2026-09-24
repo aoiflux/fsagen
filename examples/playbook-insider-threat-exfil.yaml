@@ -30,6 +30,7 @@ steps:
     actions:
       - action: create
         path: Documents/${VAR:project_code}/accessed-${ITER}-${BATCH}.pdf
+        format: text   # placeholder text, not a real file of this type
         content_len: 16384
       - action: append
         path: .access-log.txt
@@ -53,10 +54,12 @@ steps:
     actions:
       - action: create
         path: USB-STAGING/${VAR:project_code}-doc-${BATCH}.pdf
+        format: text   # placeholder text, not a real file of this type
         content_len: 8192
         condition: odd
       - action: create
         path: USB-STAGING/customer-list-${BATCH}.xlsx
+        format: text   # placeholder text, not a real file of this type
         content_len: 4096
         condition: even
 
@@ -66,6 +69,7 @@ steps:
     actions:
       - action: create
         path: USB-STAGING/backup-${DATE:20060102}.zip
+        format: text   # placeholder text, not a real file of this type
         content_len: 131072
         mtime: "2024-05-15T10:00:00Z"
 
@@ -80,6 +84,8 @@ steps:
         template: email
       - action: create
         path: Downloads/attachment-${UUID}.zip
+        id: attachments
+        format: text   # placeholder text, not a real file of this type
         content_len: 65536
 
   # Cloud upload simulation
@@ -117,6 +123,7 @@ steps:
         template: doc
       - action: create
         path: Documents/presentation-${RND:8}.pptx
+        format: text   # placeholder text, not a real file of this type
         content_len: 2048
 
   # Final cleanup before leaving
@@ -124,7 +131,7 @@ steps:
     offset: 168h
     actions:
       - action: delete
-        path: Downloads/attachment-${UUID}.zip
+        refs: attachments   # every attachment saved earlier, by id
       - action: create
         path: Documents/resignation-letter.docx
         content: "Two weeks notice - ${DATE:2006-01-02}"

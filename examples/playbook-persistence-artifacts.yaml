@@ -13,10 +13,10 @@ steps:
         path: Users/Public/Startup
       - action: create
         path: Users/Public/Startup/helper.bat
-        content: 'echo run ${ACTOR} ${DATE:2006-01-02}\r\n'
+        content: "echo run ${ACTOR} ${DATE:2006-01-02}\r\n"
       - action: create
         path: Users/Public/Startup/readme.md
-        content: '# Note ${ACTOR}\nThis system has been modified.'
+        content: "# Note ${ACTOR}\nThis system has been modified."
 
   # Fake registry export that would suggest persistence
   - actor: foeman

@@ -1,0 +1,1511 @@
+{
+    "document": {
+        "kind": "planning-mode prompt",
+        "schema_version": "1.0",
+        "created": "2026-09-24",
+        "title": "fsagen: correctness, determinism and forensic-fidelity overhaul",
+        "target_repository": "https://github.com/aoiflux/fsagen",
+        "baseline_commit": "62d759c ('deps updated, project is fsagen'; Go pseudo-version v0.0.0-20260710120947-62d759c50547), 19 commits, no tags",
+        "produced_by": "an audit run from the Mutant repository, which consumes fsagen output for its QUILLDROP DFIR workshop (examples/workshop in Mutant)",
+        "how_to_use": "Paste this whole file into a Claude Code session opened at the root of an fsagen checkout, in plan mode. It is a brief for a planner, not a patch."
+    },
+    "role_and_mode": {
+        "you_are": "a planning agent working in the fsagen repository in plan mode",
+        "you_must_produce": "an implementation plan, not code. Read-only exploration only until the owner approves the plan.",
+        "prime_directive": "Correctness over features. fsagen exists to produce ground truth for testing forensic tools (it is the subject of a Springer paper: 'File System Artefacts Generator (FSAGen): Towards Faster Forensic Tool Testing', Gogia and Rughani, 2026). A generator that silently produces something other than what the scenario says is worse than one that refuses, because every tool tested against it inherits the error as if it were truth."
+    },
+    "planner_instructions": [
+        "Re-verify every finding below against HEAD before planning it. Line numbers were taken at 62d759c; if HEAD has moved, re-locate the code and say so in the plan.",
+        "Each finding carries a 'verified' field. 'reproduced' means it was observed by running fsagen on Windows 11 / NTFS / Go 1.26; 'cross-compiled' means observed with GOOS/GOARCH builds; 'code-reading' means inferred from source and NOT executed. Re-check the code-reading ones before building on them, and prefer reproducing them.",
+        "Do not trust this document where it and the code disagree. The code is the evidence; this document is a lead list.",
+        "Present every item in 'owner_decisions_required' to the owner with AskUserQuestion before finalising the plan. Put the recommended option first. Do not decide them yourself.",
+        "Order the plan by severity, then by dependency: safety and silent-wrong-output first, determinism second, timestamp fidelity third, new capability last.",
+        "For every fix, name the test that fails before the fix and passes after it. A test that would still pass with the fix reverted is not a test; say how you will confirm each one can fail (for example by temporarily reverting the fix, or by a mutation of the guarded condition).",
+        "Where a fix changes output bytes for an existing seed, say so explicitly. Reproducibility of previously published corpora is a research claim, so plan the versioning mechanism (see D-6) before the first byte-changing fix lands.",
+        "Keep the plan executable in phases that each leave the tool shippable. Name the files each phase touches.",
+        "List what you deliberately leave out, and why, in the plan itself."
+    ],
+    "hard_constraints": [
+        "Never commit, push, tag or otherwise mutate git history. Edits to the working tree are fine once the plan is approved; landing them is the owner's call.",
+        "No configuration from environment variables. Every behaviour is selected by a flag or by the playbook/manifest file.",
+        "Pure Go only: the tool must build with CGO_ENABLED=0 on windows, linux and darwin (amd64 and arm64). Dependencies must be embeddable Go libraries.",
+        "Determinism is a contract, not a convenience: same generator version + same seed + same input file + same platform class must produce byte-identical content, and the plan must state precisely which outputs are covered by that promise and which are not.",
+        "Never claim a capability in README, help text or docs that a test does not verify.",
+        "Do not weaken an error into a warning to keep an old example working. Fix the example.",
+        "Existing correct playbooks must keep working. Inputs that only 'worked' because a mistake was silently ignored may start failing, with an error that names the file, the step/operation index, the field and the fix."
+    ],
+    "context": {
+        "what_fsagen_is": "A Go CLI that synthesises file-system artefacts under an output directory from (a) a YAML manifest of operations, (b) a YAML playbook of actors and timed steps compiled into manifest operations, or (c) a bulk fan-out generator, and optionally writes a timeline (csv/txt/bodyfile/macb) by walking the result.",
+        "codebase_map": [
+            {
+                "path": "main.go",
+                "lines": 233,
+                "role": "flag parsing, mode dispatch, timeline format selection by extension, output-root resolution"
+            },
+            {
+                "path": "spec/types.go",
+                "lines": 71,
+                "role": "Manifest/Operation and Playbook/Actor/Step/Action structs (yaml+json tags)"
+            },
+            {
+                "path": "manifest/manifest.go",
+                "lines": 353,
+                "role": "manifest templating and the executor for all ten actions"
+            },
+            {
+                "path": "playbook/playbook.go",
+                "lines": 393,
+                "role": "playbook compiler (times, conditions, batches, templating, content templates)"
+            },
+            {
+                "path": "libgen/genfiles.go",
+                "lines": 432,
+                "role": "bulk generator: 20 per-type generators run as goroutines"
+            },
+            {
+                "path": "libgen/genfiles_test.go",
+                "lines": 233,
+                "role": "the only tests in the repo (browser history DBs)"
+            },
+            {
+                "path": "timeline/timeline.go (+ timeline_windows.go, timeline_unix.go)",
+                "lines": 377,
+                "role": "filesystem walk, MD5, ADS probe, four writers"
+            },
+            {
+                "path": "schema/schema.go + schemas/*.json",
+                "lines": 255,
+                "role": "JSON Schema generation for manifest and playbook (documentation only; never enforced)"
+            },
+            {
+                "path": "util/util.go",
+                "lines": 142,
+                "role": "seeded PRNG, random strings, Chtimes, ADS and MOTW writers"
+            },
+            {
+                "path": "constant/constant.go",
+                "lines": 47,
+                "role": "extensions and sizes"
+            },
+            {
+                "path": "examples/",
+                "lines": 1500,
+                "role": "14 example manifests/playbooks plus three markdown guides"
+            }
+        ],
+        "primary_consumer": {
+            "name": "Mutant QUILLDROP workshop (Mutant repo, examples/workshop)",
+            "how_it_uses_fsagen": "fsagen --seed 88412 --playbook quilldrop.playbook.yaml --timeline case_quilldrop.body case_quilldrop, then six Mutant programs analyse the tree and the bodyfile: magic-vs-extension and Mark-of-the-Web (07), bodyfile supertimeline + Sigma (08), anti-forensics tells such as mtime < crtime and log sequence gaps (09), exfil proof by CRC-32 of zip members against originals (10), signed chain of custody whose report digest every student is promised to share (11).",
+            "what_happened_when_it_was_run": "All six programs ran; four of the six stories broke because of fsagen behaviour: the timeline silently came out as CSV, the phishing email was replaced by a generic template, the dropper was not a PE, the zip was not a zip, every file had mtime < crtime, deletions did nothing, and the bodyfile digest differed on every run. See consumer_requirements."
+        },
+        "how_the_findings_were_verified": {
+            "platform": "Windows 11 Pro 10.0.26200, NTFS, Go 1.26.x, fsagen built from 62d759c with 'go build'",
+            "commands": [
+                "go vet ./... (clean)",
+                "go test ./... (libgen passes; eight packages have no tests)",
+                "GOOS=darwin|freebsd|linux GOARCH=amd64 go build . (darwin and freebsd fail)",
+                "gofmt on CR-stripped copies (real diffs in constant/constant.go and libgen/genfiles_test.go)",
+                "fsagen --generate-schema diffed against schemas/ (in sync)",
+                "every example under examples/ run once with --seed 42",
+                "probe manifests and playbooks, reproduced in repro_fixtures below",
+                "bulk mode run twice with --seed 7 --bulk 2 --depth 2 and the trees compared",
+                "the QUILLDROP playbook run twice with --seed 88412 and the bodyfiles compared"
+            ],
+            "not_verified": "Nothing was run on Linux or macOS. Linux behaviour of ads/motw is from code reading. staticcheck 2026.1 could not load Go 1.26 export data, so no staticcheck results are included."
+        }
+    },
+    "owner_decisions_required": [
+        {
+            "id": "D-1",
+            "question": "When a playbook uses a Windows-only action (ads, motw, crtime/ChangeTime setting) on a platform that cannot perform it, what should happen?",
+            "options": [
+                "Fail before generating anything, listing every unsupported operation (recommended default), with an explicit --on-unsupported=skip flag that skips and records each skip in the run manifest",
+                "Skip and record by default",
+                "Keep today's behaviour: abort at the first such operation, leaving a partial tree"
+            ],
+            "why_it_blocks": "Today a Linux run aborts midway and leaves a half-built corpus that looks complete (F-PLAT-2)."
+        },
+        {
+            "id": "D-2",
+            "question": "What should the default source of the timeline be?",
+            "options": [
+                "Keep 'observed' (stat the real files) as default and add --timeline-source=modelled, which writes the scenario's intended times from the operation ledger and is byte-deterministic (recommended)",
+                "Make 'modelled' the default",
+                "Observed only"
+            ],
+            "why_it_blocks": "Observed timelines can never be byte-identical across runs because the OS stamps creation/change times itself (F-DET-4). Modelled ones can, but must never be presented as observed."
+        },
+        {
+            "id": "D-3",
+            "question": "If an action gives both 'template' and 'content', what should happen?",
+            "options": [
+                "Error at compile time (recommended)",
+                "content wins",
+                "template wins (today, silently)"
+            ],
+            "why_it_blocks": "F-IN-6 lost the workshop's phishing email without a word."
+        },
+        {
+            "id": "D-4",
+            "question": "Strict input by default?",
+            "options": [
+                "Strict by default: unknown keys, bad times, bad durations, unknown conditions/templates, undefined variables and out-of-range values are errors. No lenient escape hatch (recommended)",
+                "Strict by default with a --lenient flag for old files",
+                "Warn only"
+            ],
+            "why_it_blocks": "Most silent-wrong-output findings (F-IN-*) disappear with strict decoding; the choice fixes the error surface for every later phase."
+        },
+        {
+            "id": "D-5",
+            "question": "Rename the Go module from 'fsagen' to 'github.com/aoiflux/fsagen'?",
+            "options": [
+                "Yes (recommended): 'go install github.com/aoiflux/fsagen@latest' fails today",
+                "No; document clone-and-build only"
+            ],
+            "why_it_blocks": "Every downstream install instruction (including Mutant's workshop scripts) depends on it (F-PLAT-1)."
+        },
+        {
+            "id": "D-6",
+            "question": "How should byte-changing fixes treat reproducibility of corpora generated by today's version?",
+            "options": [
+                "Introduce a generator version recorded in a run manifest, bump it with every byte-changing fix, and do not keep the old PRNG path; old corpora stay reproducible by checking out the old tag (recommended; requires tagging the current commit first)",
+                "Keep a --compat=v0 mode that reproduces today's output bit for bit",
+                "Ignore"
+            ],
+            "why_it_blocks": "F-DET-5 (per-operation PRNG streams) and every typed-content fix change output for existing seeds."
+        },
+        {
+            "id": "D-7",
+            "question": "Scope of image output (writing a disk image instead of, or in addition to, a live directory tree)?",
+            "options": [
+                "Out of this plan; record as a follow-on with the design notes in F-TIME-6 (recommended)",
+                "In scope, FAT12/16/32 first (pure Go, full control of create/modify/access times and of deleted entries), NTFS later",
+                "In scope including NTFS"
+            ],
+            "why_it_blocks": "It is the only way to make $FILE_NAME times and deleted-file residue realistic (F-TIME-6, F-TL-5), and it is large."
+        },
+        {
+            "id": "D-8",
+            "question": "License",
+            "options": [
+                "Add a license file; the owner chooses which",
+                "Leave unlicensed"
+            ],
+            "why_it_blocks": "There is no LICENSE file. The tool is published alongside a paper, so reuse is legally unclear (F-PLAT-5)."
+        },
+        {
+            "id": "D-9",
+            "question": "Continuous integration?",
+            "options": [
+                "No CI; 'go test ./...' plus a cross-compile script is the local gate (matches the sibling Mutant project, whose owner removed CI on purpose)",
+                "Add a CI workflow with a windows/linux/darwin matrix"
+            ],
+            "why_it_blocks": "Determinism across platforms can only be checked by running on more than one OS; the plan must say where that happens."
+        },
+        {
+            "id": "D-10",
+            "question": "Replace unmaintained or heavyweight dependencies (gofpdf is archived, gingfrederik/docx is v0.0.1 and ignores a create error, glebarez/sqlite pulls in GORM, yaml.v2)?",
+            "options": [
+                "Yes: hand-written minimal OOXML/PDF writers or maintained libraries, a database/sql SQLite driver without GORM, go.yaml.in/yaml/v3 (recommended)",
+                "Only the YAML library",
+                "No"
+            ],
+            "why_it_blocks": "PDF determinism (F-DET-3) and strict YAML (F-IN-1) depend on it."
+        }
+    ],
+    "findings": [
+        {
+            "id": "F-SEC-1",
+            "severity": "critical",
+            "area": "safety",
+            "title": "Paths escape the output root",
+            "evidence": [
+                "manifest/manifest.go:119",
+                "manifest/manifest.go:239",
+                "manifest/manifest.go:274",
+                "playbook/playbook.go:159-168"
+            ],
+            "verified": "reproduced",
+            "observed": "A manifest operation with path '../ESCAPED.txt' wrote ESCAPED.txt into the parent of the output root. filepath.Join(root, path) is the only confinement. new_path for rename/rotate is unconfined in the same way, and so are absolute paths and Windows drive-relative paths.",
+            "impact": "A shared playbook can write or delete anywhere the user can.",
+            "fix_direction": "Open the output root with os.OpenRoot (Go 1.24+; it also stops symlink escapes) and perform every file operation through it. Later Go releases added MkdirAll, WriteFile, Chtimes, Rename and RemoveAll to *os.Root; confirm the exact method set against the Go version in go.mod before designing around it. Additionally reject at compile time: absolute paths, '..' components, drive letters, NUL, and any ':' outside the ads action (see F-SEC-2).",
+            "acceptance": "Tests for '../x', 'a/../../x', '/x', 'C:/x', 'C:x', a symlink inside the root pointing outside, and new_path variants: each is refused with an error naming the operation, and nothing is written outside a temp root."
+        },
+        {
+            "id": "F-SEC-2",
+            "severity": "high",
+            "area": "safety",
+            "title": "A ':' in a path silently creates an NTFS alternate data stream",
+            "evidence": [
+                "playbook/playbook.go:287-290",
+                "manifest/manifest.go:119"
+            ],
+            "verified": "reproduced",
+            "observed": "path 'undefined_${VAR:nope}.txt' with no variable 'nope' produced a file named 'undefined_${VAR' carrying a hidden stream named 'nope}.txt'.",
+            "impact": "Unintended hidden streams in evidence meant to be ground truth.",
+            "fix_direction": "Reject ':' in any path component; streams are created only by the ads/motw actions. Fixing F-IN-5 removes the trigger in this case, but the check is needed independently.",
+            "acceptance": "A path containing ':' is a compile error on every platform, not only on Windows."
+        },
+        {
+            "id": "F-SEC-3",
+            "severity": "medium",
+            "area": "safety",
+            "title": "An output path that names an existing file generates into that file's parent directory",
+            "evidence": [
+                "main.go:173-194"
+            ],
+            "verified": "reproduced",
+            "observed": "'fsagen --bulk 1 --depth 1 iamafile.txt' created a generated directory beside iamafile.txt and exited 0.",
+            "fix_direction": "Error if the output path exists and is not a directory. Use MkdirAll, not Mkdir (see F-PLAT-3).",
+            "acceptance": "Test: an existing file as the output path exits non-zero and writes nothing."
+        },
+        {
+            "id": "F-SEC-4",
+            "severity": "medium",
+            "area": "safety",
+            "title": "Every file is created with os.ModePerm (0777)",
+            "evidence": [
+                "util/util.go:82",
+                "util/util.go:120",
+                "util/util.go:125",
+                "manifest/manifest.go:141",
+                "manifest/manifest.go:165",
+                "manifest/manifest.go:192",
+                "manifest/manifest.go:250",
+                "manifest/manifest.go:285",
+                "libgen/genfiles.go (every os.WriteFile)"
+            ],
+            "verified": "code-reading (bodyfile shows 666/777 on Windows)",
+            "observed": "On Unix, after the umask, every generated file ends up executable, and the bodyfile mode column is then a generation artefact rather than scenario data.",
+            "fix_direction": "0644 for files and 0755 for directories by default, plus an optional per-operation 'mode' field applied with Chmod after write on platforms that support it.",
+            "acceptance": "Unix test: default modes are 0644/0755; a 'mode: 0700' operation is honoured."
+        },
+        {
+            "id": "F-SEC-5",
+            "severity": "medium",
+            "area": "safety",
+            "title": "Generating into a non-empty directory merges with whatever is already there",
+            "evidence": [
+                "main.go:173-194"
+            ],
+            "verified": "code-reading",
+            "observed": "Leftovers from an earlier run stay in the tree and the timeline, so the result is no longer a function of the seed and input. Mutant's build script deletes the directory first to work around this.",
+            "fix_direction": "Refuse a non-empty output root unless --clean (delete through os.Root, then generate) or --into-existing (explicit merge, recorded in the run manifest) is given.",
+            "acceptance": "Test: second run into the same directory fails without a flag and succeeds with --clean, producing a tree identical to a fresh run."
+        },
+        {
+            "id": "F-IN-1",
+            "severity": "critical",
+            "area": "input validation",
+            "title": "YAML decoding ignores unknown keys",
+            "evidence": [
+                "manifest/manifest.go:28",
+                "playbook/playbook.go:29",
+                "examples/manifest-history.yaml"
+            ],
+            "verified": "reproduced",
+            "observed": "An operation carrying 'crtime:' was accepted and the key was dropped. The shipped example manifest-history.yaml uses 'content_template: history', a key that does not exist, and produces files named History.sqlite and places.sqlite that contain base32 text rather than SQLite databases. The JSON Schemas declare additionalProperties:false, so the schema and the runtime disagree.",
+            "impact": "Every misspelt or unsupported field is a silent no-op. This is the root of most of the workshop failures.",
+            "fix_direction": "Switch to go.yaml.in/yaml/v3 with Decoder.KnownFields(true) (gopkg.in/yaml.v3 is unmaintained; go.yaml.in is its maintained home). Report file, line, column and the list of valid keys.",
+            "acceptance": "Test per struct (Manifest, Operation, Playbook, Actor, Step, Action): an unknown key fails with its line number. examples/manifest-history.yaml fails until F-GEN-5 wires a real history generator and the example is rewritten."
+        },
+        {
+            "id": "F-IN-2",
+            "severity": "high",
+            "area": "input validation",
+            "title": "Invalid timestamps are silently ignored",
+            "evidence": [
+                "manifest/manifest.go:337-353",
+                "manifest/manifest.go:144",
+                "manifest/manifest.go:168",
+                "manifest/manifest.go:203",
+                "manifest/manifest.go:223"
+            ],
+            "verified": "reproduced",
+            "observed": "mtime: '2021-01-01 00:00:00' (not RFC 3339) was dropped; the file kept the generation time. util.SetTimes errors are also discarded ('_ = util.SetTimes').",
+            "fix_direction": "Parse errors and Chtimes errors are hard errors naming the operation. Accept RFC 3339 with fractional seconds (RFC3339Nano).",
+            "acceptance": "Tests: a bad atime/mtime/crtime is an error; a Chtimes failure (for example a read-only file) surfaces."
+        },
+        {
+            "id": "F-IN-3",
+            "severity": "high",
+            "area": "input validation",
+            "title": "An invalid action offset is silently ignored",
+            "evidence": [
+                "playbook/playbook.go:100-102"
+            ],
+            "verified": "reproduced",
+            "observed": "offset: '5 minutes' was dropped; the action ran at the step time. Step-level offset and every are validated; action-level offset is not.",
+            "fix_direction": "Same validation as step offset. Also reject negative durations where they are meaningless (every, repeat interval).",
+            "acceptance": "Test: a bad action offset is a compile error naming step and action index."
+        },
+        {
+            "id": "F-IN-4",
+            "severity": "high",
+            "area": "input validation",
+            "title": "An unknown condition evaluates to true",
+            "evidence": [
+                "playbook/playbook.go:207-224"
+            ],
+            "verified": "reproduced",
+            "observed": "condition: 'frist' ran on every iteration.",
+            "fix_direction": "Unknown conditions are errors. Consider richer conditions later (every_n, index lists), still closed-set.",
+            "acceptance": "Test: a typo is a compile error; each valid condition selects exactly the documented indices."
+        },
+        {
+            "id": "F-IN-5",
+            "severity": "high",
+            "area": "input validation",
+            "title": "An undefined ${VAR:name} is left in the output literally",
+            "evidence": [
+                "playbook/playbook.go:282-291"
+            ],
+            "verified": "reproduced",
+            "observed": "The literal text '${VAR:nope}' went into a path (and triggered F-SEC-2). The same happens in content.",
+            "fix_direction": "An undefined variable is an error. Also error on any '${' token that no rule consumed, so a misspelt token (for example '${RAND:8}') cannot reach the output.",
+            "acceptance": "Tests: undefined variable, unknown token, unterminated '${' are all compile errors."
+        },
+        {
+            "id": "F-IN-6",
+            "severity": "high",
+            "area": "input validation",
+            "title": "'template' silently overrides 'content'; an unknown template silently becomes 256 random characters",
+            "evidence": [
+                "playbook/playbook.go:128-134",
+                "playbook/playbook.go:378-379"
+            ],
+            "verified": "reproduced",
+            "observed": "An action with template: email and a hand-written content block produced fsagen's generic email ('From: u@example.com', random subject). In the Mutant workshop this discarded the phishing lure whose sender domain the whole entry-vector exercise depends on.",
+            "fix_direction": "Per D-3. Unknown template names are errors. The schema should express the exclusivity (F-IN-13).",
+            "acceptance": "Tests: template+content fails (or behaves per D-3); template: 'emial' fails."
+        },
+        {
+            "id": "F-IN-7",
+            "severity": "high",
+            "area": "input validation",
+            "title": "Deleting a path that does not exist succeeds silently",
+            "evidence": [
+                "util/util.go:88-104",
+                "manifest/manifest.go:215-220"
+            ],
+            "verified": "reproduced",
+            "observed": "delete of a missing file exits 0. Combined with F-IN-8 this turns every 'clean-up' step in the shipped example playbook-email-and-archive.yaml, and the Mutant workshop's staging-file deletion, into no-ops: the originals are never deleted.",
+            "fix_direction": "Deleting a missing path is an error unless the operation says missing_ok: true. Record every deletion in the ledger (F-TL-5).",
+            "acceptance": "Test: delete of a missing path fails; with missing_ok it passes and is recorded as 'no-op' in the run manifest."
+        },
+        {
+            "id": "F-IN-8",
+            "severity": "high",
+            "area": "input model",
+            "title": "A later action cannot refer to a file an earlier action generated",
+            "evidence": [
+                "playbook/playbook.go:115-126",
+                "playbook/playbook.go:245-310"
+            ],
+            "verified": "reproduced (via examples/playbook-email-and-archive.yaml and the QUILLDROP playbook)",
+            "observed": "${SEQ} is a global per-action counter and ${RND}/${HASH} draw fresh values, so 'delete stg_${SEQ}_${RND:6}.tmp' names a file that never existed. There is no mechanism to capture a rendered path.",
+            "fix_direction": "Add an optional 'id' on any action that creates or renames a path, and a way to reference it later: a 'ref' field (single path) and a 'refs' selector (all paths created under an id, or a glob confined to the root). Rendered paths are recorded in the ledger. Errors: duplicate id, unknown ref, a ref to a deleted path.",
+            "acceptance": "Test: 24 files created with id 'staging' in one step are all deleted by a later 'delete refs: staging' step; the email-and-archive example is rewritten to use it and its deletions take effect."
+        },
+        {
+            "id": "F-IN-9",
+            "severity": "medium",
+            "area": "input validation",
+            "title": "Out-of-range zone_id is silently coerced to 3",
+            "evidence": [
+                "manifest/manifest.go:323-326"
+            ],
+            "verified": "reproduced",
+            "observed": "zone_id: 9 produced ZoneId=3.",
+            "fix_direction": "Error outside 0-4. Consider also emitting the modern Zone.Identifier fields that browsers write (LastWriterPackageFamilyName, AppZoneId) as optional inputs.",
+            "acceptance": "Test: zone_id 9 fails; 0-4 round-trip exactly."
+        },
+        {
+            "id": "F-IN-10",
+            "severity": "medium",
+            "area": "input validation",
+            "title": "ads and motw on a missing path silently create an empty base file",
+            "evidence": [
+                "util/util.go:118-123"
+            ],
+            "verified": "reproduced",
+            "observed": "motw on a path no action created left a 0-byte file carrying only a stream.",
+            "fix_direction": "Error unless the base file exists (or the action says create_base: true).",
+            "acceptance": "Test: motw/ads on a missing path fails."
+        },
+        {
+            "id": "F-IN-11",
+            "severity": "medium",
+            "area": "input validation",
+            "title": "'update' on a missing file creates it (and fails if its directory is missing)",
+            "evidence": [
+                "manifest/manifest.go:156-178"
+            ],
+            "verified": "reproduced",
+            "fix_direction": "update requires an existing file; create is the action that creates.",
+            "acceptance": "Test: update of a missing path fails with a message pointing at 'create'."
+        },
+        {
+            "id": "F-IN-12",
+            "severity": "medium",
+            "area": "input validation",
+            "title": "A trailing '/' means 'directory' only on Unix",
+            "evidence": [
+                "manifest/manifest.go:123"
+            ],
+            "verified": "reproduced",
+            "observed": "On Windows, 'path: trailing_slash_dir/' produced a 1024-byte FILE, because the check compares against os.PathSeparator while YAML paths use '/'.",
+            "fix_direction": "Treat YAML paths as slash-separated on every platform: a trailing '/' means directory everywhere. Reject backslashes in YAML paths (or normalise them) so a playbook means the same thing on every OS.",
+            "acceptance": "Test runs identically on Windows and Unix."
+        },
+        {
+            "id": "F-IN-13",
+            "severity": "medium",
+            "area": "input validation",
+            "title": "The JSON Schemas are advisory and partly wrong",
+            "evidence": [
+                "schema/schema.go:52",
+                "schema/schema.go:122",
+                "schema/schema.go:28-29",
+                "schema/schema.go:116-117",
+                "main.go:23"
+            ],
+            "verified": "code-reading; schemas/ confirmed in sync with the generator",
+            "observed": "Nothing validates input against the schema at runtime. The schema cannot express template/content exclusivity or the per-action field matrix (for example stream only on ads). repeat/batch_count have minimum 1 in the schema while the runtime accepts 0 and negatives as 1. atime/mtime are 'format: date-time' while manifest mode renders ${DATE:...} inside them. $id is a placeholder (https://generator.local/...). --schema-out defaults to 'examples' while the checked-in schemas live in 'schemas/'.",
+            "fix_direction": "Make strict decoding (F-IN-1) plus a semantic validation pass the single source of truth; generate the schema from the same field table so they cannot drift; add a drift test comparing generated output to schemas/. Add 'fsagen validate FILE' (or --validate) and --dry-run that prints the compiled operation list with resolved paths and times without touching the disk.",
+            "acceptance": "Drift test; every validation error has a matching negative test; --dry-run output is deterministic and covered by a golden file."
+        },
+        {
+            "id": "F-IN-14",
+            "severity": "high",
+            "area": "input model",
+            "title": "Playbook mode does not template stream, host_url, referrer_url or explicit atime/mtime; manifest mode does",
+            "evidence": [
+                "playbook/playbook.go:105-112",
+                "playbook/playbook.go:146-149",
+                "manifest/manifest.go:102-110"
+            ],
+            "verified": "reproduced",
+            "observed": "host_url: 'http://${VAR:host}/dl.exe' was written into Zone.Identifier literally.",
+            "fix_direction": "One rendering function applied to every string field in both modes.",
+            "acceptance": "Table test: every string field of Action renders ${VAR}, ${SEQ} etc. identically in manifest and playbook mode."
+        },
+        {
+            "id": "F-IN-15",
+            "severity": "medium",
+            "area": "input model",
+            "title": "Operations execute in declaration order, not scenario-time order",
+            "evidence": [
+                "playbook/playbook.go:60-154"
+            ],
+            "verified": "reproduced",
+            "observed": "A step at +1h declared before a step at +30m ran first, so real creation order (and every OS side effect that follows it: directory timestamps, $MFT record allocation, inode numbers, cluster placement) contradicts the scenario.",
+            "fix_direction": "Stable-sort compiled operations by scheduled time (ties keep declaration order), or reject out-of-order steps unless the playbook opts in. Document which one.",
+            "acceptance": "Test: two steps declared out of order execute in time order; ledger sequence numbers follow time."
+        },
+        {
+            "id": "F-IN-16",
+            "severity": "low",
+            "area": "input model",
+            "title": "repeat without every stacks every occurrence on the same instant, without comment",
+            "evidence": [
+                "playbook/playbook.go:69-84"
+            ],
+            "verified": "reproduced (cond_0..2 all at 09:03:00)",
+            "fix_direction": "Either require every when repeat > 1, or make it explicit with every: 0s.",
+            "acceptance": "Test for the chosen rule."
+        },
+        {
+            "id": "F-DET-1",
+            "severity": "critical",
+            "area": "determinism",
+            "title": "Bulk mode is not deterministic",
+            "evidence": [
+                "libgen/genfiles.go:24-52",
+                "libgen/genfiles.go:69-88",
+                "util/util.go:48-64"
+            ],
+            "verified": "reproduced",
+            "observed": "Two runs of '--seed 7 --bulk 2 --depth 2' produced different file names and different file counts (241 vs 242). Twenty goroutines per iteration draw from one mutex-guarded PRNG in scheduler order.",
+            "fix_direction": "Compute the whole generation plan (names, sizes, content seeds) sequentially from the PRNG, then write in parallel with a bounded worker pool; or derive each file's stream from (seed, path) so order does not matter (see F-DET-5).",
+            "acceptance": "Test: two bulk runs with the same seed produce identical sorted (path, sha256) lists, run 20 times under -race."
+        },
+        {
+            "id": "F-DET-2",
+            "severity": "critical",
+            "area": "determinism",
+            "title": "Bulk mode exits while generators are still writing (19 waited for, 20 launched)",
+            "evidence": [
+                "libgen/genfiles.go:61-62",
+                "libgen/genfiles.go:69-88",
+                "libgen/genfiles.go:92-97",
+                "constant/constant.go:47"
+            ],
+            "verified": "reproduced",
+            "observed": "populateFolder waits for limit*19 results but launches 20 generators per iteration (the two browser generators were added without updating the count; the comment still says 18, constant.NumFileTypes says 19 and is unused). The process can exit mid-write: leaf folders contained stray '*.db-journal' / '*.sqlite-journal' files (8720 bytes and 0 bytes), meaning SQLite transactions were cut off and the databases may be missing rows. On the first error, populateFolder also returns while the other goroutines keep running.",
+            "fix_direction": "Derive the generator list from one table, use errgroup (or WaitGroup plus error collection) so every goroutine is awaited on success and on failure, and delete the stale constant.",
+            "acceptance": "Test: no '-journal' files and exactly N*types files per folder over 50 runs; an injected generator error is returned and no goroutine outlives GenerateFiles (goleak or a WaitGroup assertion)."
+        },
+        {
+            "id": "F-DET-3",
+            "severity": "high",
+            "area": "determinism",
+            "title": "Wall-clock time leaks into generated content",
+            "evidence": [
+                "libgen/genfiles.go:189 (json timestamp)",
+                "libgen/genfiles.go:362 (chrome)",
+                "libgen/genfiles.go:416 (firefox)",
+                "libgen/genfiles.go:150-160 (PDF: gofpdf writes CreationDate/ModDate from time.Now when unset)",
+                "manifest/manifest.go:66 (${DATE} reference time)",
+                "playbook/playbook.go:45 (start: now)",
+                "timeline/timeline.go:152 and :254 ('Generated:' headers)"
+            ],
+            "verified": "code-reading, confirmed against gofpdf v1.16.2 source (timeOrNow at fpdf.go:4644-4647)",
+            "fix_direction": "Every time value comes from the scenario clock (playbook start + offsets) or a fixed epoch in bulk/manifest mode. 'start: now' is allowed but recorded in the run manifest and flagged as non-reproducible. PDF: SetCreationDate/SetModificationDate. Timeline headers either drop the generated-at line or take it from the run manifest.",
+            "acceptance": "Test: two runs an hour apart (simulated by an injected clock) produce identical content bytes."
+        },
+        {
+            "id": "F-DET-4",
+            "severity": "high",
+            "area": "determinism",
+            "title": "Timeline files are never reproducible",
+            "evidence": [
+                "timeline/timeline.go:135-137",
+                "timeline/timeline.go:195-218"
+            ],
+            "verified": "reproduced",
+            "observed": "Two QUILLDROP runs with the same seed produced bodyfiles with different SHA-256 (205f7df2... vs 99e200b7...) although every MD5/path pair matched: ctime, crtime and all directory times are the moment of generation. The CSV writer formats times in the machine's local zone (+05:30 was observed), so the same run gives different CSV on machines in different zones.",
+            "fix_direction": "Always UTC. Provide the modelled timeline (D-2). Emit a content manifest (SHA256SUMS over generated file contents plus stream contents) that is deterministic even when the observed timeline is not, and say in the docs exactly which artefact to compare across machines.",
+            "acceptance": "Test: modelled bodyfile and SHA256SUMS are byte-identical across two runs; observed CSV is zone-independent (run with TZ forced via the Go test's time.Local override, not an env var in the product)."
+        },
+        {
+            "id": "F-DET-5",
+            "severity": "high",
+            "area": "determinism",
+            "title": "One global PRNG stream: editing one action changes unrelated files",
+            "evidence": [
+                "util/util.go:16-28",
+                "util/util.go:48-64"
+            ],
+            "verified": "reproduced",
+            "observed": "Removing one 'template: email' line from the QUILLDROP playbook changed the MD5 of an unrelated file (the dropper: a7f2a549... became 2c6c0926...), because every later draw shifted.",
+            "fix_direction": "Derive an independent stream per operation from (seed, stable operation key such as step index/iteration/batch/action index or the action id), for example math/rand/v2 ChaCha8 seeded by SHA-256(seed || key). Record the derivation scheme in the generator version (D-6).",
+            "acceptance": "Test: inserting an unrelated action leaves every other file's bytes unchanged."
+        },
+        {
+            "id": "F-DET-6",
+            "severity": "medium",
+            "area": "determinism",
+            "title": "Docs promise determinism the code does not deliver",
+            "evidence": [
+                "README.md ('Race-condition free: concurrent operations use proper synchronization while maintaining determinism'; 'Deterministic output (same seed = same timeline)')",
+                "TIMELINE_FEATURE.md:65",
+                "TIMELINE_FEATURE.md:205",
+                "examples/TIMELINE_EXAMPLES.md:63",
+                "examples/INVESTIGATION_WORKFLOW.md:132"
+            ],
+            "verified": "reproduced (see F-DET-1, F-DET-4)",
+            "fix_direction": "State the exact determinism contract once (which outputs, under which conditions) and link to it from everywhere else.",
+            "acceptance": "Every determinism sentence in the docs corresponds to a test."
+        },
+        {
+            "id": "F-TIME-1",
+            "severity": "critical",
+            "area": "timestamp fidelity",
+            "title": "Creation time is never set, so every scenario file is born after it was modified",
+            "evidence": [
+                "util/util.go:71-75",
+                "spec/types.go:18-19",
+                "spec/types.go:64-65"
+            ],
+            "verified": "reproduced",
+            "observed": "Only os.Chtimes (atime, mtime) is used. On Windows the creation time is the wall-clock moment of generation, so a file whose scenario time is 2026-03-11 has a creation time of the day fsagen ran. In the Mutant workshop the 'modified before born' anti-forensics check flagged all 140 generated files instead of the 4 the playbook deliberately stomped.",
+            "impact": "The most important timestomping ground truth is inverted: every file carries the signature of timestomping.",
+            "fix_direction": "Add 'crtime' (and set it by default to the action's scheduled time on create). On Windows set it with windows.SetFileTime or SetFileInformationByHandle(FileBasicInfo) from golang.org/x/sys/windows (pure Go, no cgo). On Linux and macOS a birth time cannot be set: per D-1, fail or skip-and-record, and never pretend.",
+            "acceptance": "Windows test: create with scenario time T yields CreationTime == T to 100 ns; the QUILLDROP scenario then yields mtime < crtime for exactly the 4 stomped files."
+        },
+        {
+            "id": "F-TIME-2",
+            "severity": "high",
+            "area": "timestamp fidelity",
+            "title": "'mace' sets two of the four times",
+            "evidence": [
+                "manifest/manifest.go:222-233",
+                "README.md ('MACE (atime/mtime) timestamp control')"
+            ],
+            "verified": "reproduced",
+            "observed": "mace sets M and A only; C (NTFS $STANDARD_INFORMATION entry-change time, or Unix ctime) and B/E (creation) are untouched.",
+            "fix_direction": "Fields atime, mtime, ctime, crtime on mace (and on create/update/append). Windows: FILE_BASIC_INFO carries all four (CreationTime, LastAccessTime, LastWriteTime, ChangeTime) and is set with SetFileInformationByHandle(FileBasicInfo); prove that ChangeTime actually sticks on the target Windows versions before promising it. Unix: ctime and birth time are not settable; handle per D-1.",
+            "acceptance": "Windows test reading the four values back with GetFileInformationByHandleEx(FileBasicInfo)."
+        },
+        {
+            "id": "F-TIME-3",
+            "severity": "critical",
+            "area": "timestamp fidelity",
+            "title": "Later writes silently overwrite times set earlier",
+            "evidence": [
+                "manifest/manifest.go:299-330",
+                "util/util.go:109-142"
+            ],
+            "verified": "reproduced",
+            "observed": "Writing an ADS or a MOTW stream after a mace reset the file's LastWriteTime to the moment of the write (both probes). Creating, renaming or deleting a child resets the parent directory's times, so every directory in every corpus carries the generation time.",
+            "fix_direction": "Keep a time ledger: the intended times of every path after each operation. After all operations complete, run a settle pass that applies the final intended times to files, then streams, then directories in post-order (children before parents). Anything the platform cannot set is reported, not ignored.",
+            "acceptance": "Tests: mace then ads keeps the mace times; directory times equal the scenario time of their last child operation (or an explicit value); a corpus re-stat after generation matches the ledger exactly on Windows."
+        },
+        {
+            "id": "F-TIME-4",
+            "severity": "high",
+            "area": "timestamp fidelity",
+            "title": "Writing the timeline changes the evidence it describes",
+            "evidence": [
+                "timeline/timeline.go:70-75",
+                "timeline/timeline.go:271-285"
+            ],
+            "verified": "reproduced",
+            "observed": "Hashing every file for the MD5 column updated its last-access time on NTFS (last-access updates are enabled on the test machine). The bodyfile records the pre-read value, but the tree now differs from the bodyfile, and a second --timeline run records different atimes.",
+            "fix_direction": "Windows: open for read, then call SetFileTime with lpLastAccessTime = {0xFFFFFFFF, 0xFFFFFFFF} on that handle to suspend access-time updates for it. Linux: open with O_NOATIME where permitted, otherwise restore atime after hashing. Always compare before and after in tests.",
+            "acceptance": "Test: a timeline pass leaves every file's atime unchanged (where the platform updates atime at all)."
+        },
+        {
+            "id": "F-TIME-5",
+            "severity": "medium",
+            "area": "timestamp fidelity",
+            "title": "All scenario times fall on whole seconds",
+            "evidence": [
+                "playbook/playbook.go:108-111",
+                "manifest/manifest.go:337-353"
+            ],
+            "verified": "code-reading",
+            "observed": "Times are rendered with time.RFC3339 (whole seconds). On NTFS a creation time with a zero sub-second part is itself a well-known timestomping heuristic, so innocent files look stomped.",
+            "fix_direction": "Keep full precision (RFC3339Nano) end to end, and add an optional seeded sub-second jitter for times fsagen chooses itself (never for times the playbook states explicitly).",
+            "acceptance": "Test: jitter is deterministic per seed and absent when a time is given explicitly."
+        },
+        {
+            "id": "F-TIME-6",
+            "severity": "high",
+            "area": "timestamp fidelity (design limit)",
+            "title": "A live-filesystem generator cannot control NTFS $FILE_NAME times",
+            "evidence": [
+                "design"
+            ],
+            "verified": "reasoning, consistent with Windows API behaviour (no API sets $FILE_NAME times)",
+            "observed": "Whatever fsagen does to $STANDARD_INFORMATION, each file's $FILE_NAME times are the real moment of creation (or of the last rename). $MFT analysis of any fsagen tree therefore finds SI earlier than FN on every file whose scenario is in the past: the textbook timestomp signature.",
+            "fix_direction": "In this plan, document the limit prominently and put it in the run manifest ('filename_times_controlled: false'). As a follow-on (D-7): image output mode, FAT first (pure Go, every timestamp and every deleted-entry marker under control), NTFS by generating on a scratch volume and then patching both SI and FN times in place. The aoiflux libntfs writer supports same-length in-place writes but exposes no timestamp setter today, so that would be a libntfs feature request.",
+            "acceptance": "Docs and run manifest state the limit; no doc claims SI/FN realism."
+        },
+        {
+            "id": "F-TL-1",
+            "severity": "critical",
+            "area": "timeline",
+            "title": "An unrecognised --timeline extension silently writes CSV",
+            "evidence": [
+                "main.go:155-170"
+            ],
+            "verified": "reproduced",
+            "observed": "--timeline case_quilldrop.body produced a CSV (header 'Path,Size,Mode,...'); a bodyfile parser then read zero records. The format is chosen only by extension; '.body' (a common bodyfile extension) is not one of them.",
+            "fix_direction": "Add --timeline-format=csv|txt|bodyfile|macb|jsonl. With no format flag, infer from the extension, accept '.body' as bodyfile, and fail on an unknown extension.",
+            "acceptance": "Tests: '.body' yields a bodyfile; '.foo' fails without writing a file; an explicit format overrides the extension."
+        },
+        {
+            "id": "F-TL-2",
+            "severity": "critical",
+            "area": "timeline",
+            "title": "The bodyfile writes the same value for ctime and crtime, and that value means different things per OS",
+            "evidence": [
+                "timeline/timeline.go:23",
+                "timeline/timeline.go:195-205",
+                "timeline/timeline_windows.go:25",
+                "timeline/timeline_unix.go:25-27"
+            ],
+            "verified": "reproduced",
+            "observed": "Entry.Ctime holds the Windows creation time on Windows and the inode change time on Unix, and WriteBodyfile writes it into both the ctime and crtime columns. On Windows the real change time is never read; on Unix the birth time is never read.",
+            "fix_direction": "Separate Atime, Mtime, Ctime (change) and Btime (birth) with an explicit 'unknown' state. Windows: GetFileInformationByHandleEx(FileBasicInfo) gives all four. Linux: unix.Statx with STATX_BTIME (check the returned mask). macOS/BSD: Stat_t.Birthtimespec. Write 0 for unknown, as TSK does, and never copy one field into another.",
+            "acceptance": "Per-OS tests: on Windows crtime != ctime after a mace; on Linux btime comes from statx or is 0 when the filesystem does not report it."
+        },
+        {
+            "id": "F-TL-3",
+            "severity": "critical",
+            "area": "platform",
+            "title": "fsagen does not compile for macOS or FreeBSD",
+            "evidence": [
+                "timeline/timeline_unix.go:25-27"
+            ],
+            "verified": "cross-compiled",
+            "observed": "GOOS=darwin and GOOS=freebsd fail: syscall.Stat_t has no Atim/Mtim/Ctim there (darwin names them Atimespec/Mtimespec/Ctimespec/Birthtimespec). The paper and README describe the tool as cross-platform.",
+            "fix_direction": "Per-OS files using golang.org/x/sys/unix (statx on linux, Birthtimespec on darwin/freebsd), with a build-tag layout that covers every GOOS Go supports or fails the build with a clear message.",
+            "acceptance": "A cross-compile script building windows, linux, darwin, freebsd on amd64 and arm64 passes."
+        },
+        {
+            "id": "F-TL-4",
+            "severity": "high",
+            "area": "timeline",
+            "title": "ADS detection only checks three hard-coded names",
+            "evidence": [
+                "timeline/timeline.go:287-305"
+            ],
+            "verified": "reproduced",
+            "observed": "Only Zone.Identifier, 'metadata' and 'content' are probed. The QUILLDROP implant's stream 'quill' did not appear in the timeline's ADS column. Hidden streams with other names, which is how they are hidden in practice, are invisible.",
+            "fix_direction": "Enumerate streams with FindFirstStreamW/FindNextStreamW through golang.org/x/sys/windows (pure Go). In the bodyfile, emit each named stream as its own record, 'path:stream', as The Sleuth Kit does.",
+            "acceptance": "Test: a file with streams 'quill' and 'a b' reports both, with sizes."
+        },
+        {
+            "id": "F-TL-5",
+            "severity": "high",
+            "area": "timeline / ground truth",
+            "title": "Deleted files leave no trace in any output",
+            "evidence": [
+                "timeline/timeline.go:36-98",
+                "manifest/manifest.go:215-220"
+            ],
+            "verified": "reproduced",
+            "observed": "The timeline is a walk of what survives, so every deleted file, truncated log or renamed file vanishes from every output. There is nothing to score recovery tools, or 'in the timeline but not on disk' logic, against.",
+            "fix_direction": "Write an operation ledger (JSONL: sequence, scheduled time, action, path, new_path, id, content sha256 before/after, times set, streams, platform outcome). Provide a ground-truth answer key derived from it (files created, deleted, renamed, stomped; streams written) so tool-testing can measure precision and recall. In the modelled bodyfile (D-2), deleted files may appear with the TSK '(deleted)' suffix; the observed bodyfile must never contain them.",
+            "acceptance": "Test: create, stomp, rename and delete produce the expected ledger lines and answer-key entries; the observed bodyfile has no deleted entries and the modelled one has them marked."
+        },
+        {
+            "id": "F-TL-6",
+            "severity": "medium",
+            "area": "timeline",
+            "title": "The bodyfile does not follow Sleuth Kit conventions",
+            "evidence": [
+                "timeline/timeline.go:48-51",
+                "timeline/timeline.go:70-75",
+                "timeline/timeline.go:184-222"
+            ],
+            "verified": "reproduced",
+            "observed": "Paths are relative and use the OS separator ('a\\mace.txt' on Windows) with no leading '/'. The root is emitted as '.'. The mode column is octal permission bits ('666'), not a TSK mode string ('r/rrw-rw-rw-', 'd/drwxr-xr-x'). The MD5 column is empty for empty files and for files over 100 MB, where TSK writes '0'. inode, UID and GID are always 0.",
+            "fix_direction": "Forward slashes, leading '/', no root entry, TSK mode strings, '0' for an uncomputed hash (and hash large files anyway, streaming, with an explicit --hash-limit), real inode/file IDs where the platform provides them (Windows file index, Unix ino), and UID/GID on Unix.",
+            "acceptance": "Golden-file test, plus a round-trip through a strict bodyfile parser. If mactime is available, an optional test that 'mactime -b' accepts the file."
+        },
+        {
+            "id": "F-TL-7",
+            "severity": "medium",
+            "area": "timeline",
+            "title": "The MACB writer is not a MACB timeline",
+            "evidence": [
+                "timeline/timeline.go:224-269"
+            ],
+            "verified": "code-reading",
+            "observed": "It never emits B, writes one row per letter instead of combining coincident times ('MAC.', 'M.CB'), and drops C when it equals A or M.",
+            "fix_direction": "Group by (path, timestamp) and emit the combined MACB flags, mactime style.",
+            "acceptance": "Golden test with all sixteen flag combinations."
+        },
+        {
+            "id": "F-TL-8",
+            "severity": "medium",
+            "area": "timeline / CLI",
+            "title": "Timeline failures are hidden",
+            "evidence": [
+                "timeline/timeline.go:42-47",
+                "main.go:90-98",
+                "main.go:173-180"
+            ],
+            "verified": "reproduced",
+            "observed": "Walk errors are swallowed (unreadable entries simply vanish). A timeline that cannot be written prints 'Warning' and exits 0. A timeline written inside the output root is picked up by the next timeline. Timeline-only mode on a missing directory creates it and writes an empty timeline.",
+            "fix_direction": "Every walk error is either fatal or listed in a 'skipped' section; a failed timeline exits non-zero; the timeline file is excluded from its own walk (and refused inside the root by default); timeline-only mode requires an existing directory.",
+            "acceptance": "Tests for each case."
+        },
+        {
+            "id": "F-TL-9",
+            "severity": "low",
+            "area": "timeline",
+            "title": "Ties in the mtime sort have no defined order",
+            "evidence": [
+                "timeline/timeline.go:92-95"
+            ],
+            "verified": "code-reading",
+            "fix_direction": "sort.SliceStable with path as the tie-breaker.",
+            "acceptance": "Golden test with equal mtimes."
+        },
+        {
+            "id": "F-GEN-1",
+            "severity": "critical",
+            "area": "content",
+            "title": "content_len ignores the file type: an .exe is not a PE, a .zip is not a zip",
+            "evidence": [
+                "manifest/manifest.go:127-134",
+                "util/util.go:48-64"
+            ],
+            "verified": "reproduced",
+            "observed": "create with content_len and a .exe path wrote base32 text ('EEH4PO4B...'), with no 'MZ'. A .zip path gave base32 text that zip readers reject; .jpg, .png, .pdf and .sqlite behave the same. In the Mutant workshop the dropper and implant were therefore not executables and the exfil archive was not an archive.",
+            "fix_direction": "Typed content: choose a generator from an explicit 'format' field (pe, zip, png, jpeg, pdf, docx, sqlite, eml, text, bytes), falling back to the extension, and produce a structurally valid file padded (in a format-appropriate way, for example PE overlay or zip comment) to content_len. Unknown format + content_len yields bytes, and is reported, never silently text.",
+            "acceptance": "Tests parse each output with the standard library or a strict reader (debug/pe, archive/zip, image/png, image/jpeg, net/mail, a SQLite open plus integrity_check) and check size == content_len where requested."
+        },
+        {
+            "id": "F-GEN-2",
+            "severity": "high",
+            "area": "content",
+            "title": "There is no way to build an archive from other generated files",
+            "evidence": [
+                "spec/types.go:8 (the action list)"
+            ],
+            "verified": "code-reading",
+            "observed": "The bulk generator can write a zip of random members, but manifests and playbooks cannot package files they created, which is the core exfiltration artefact: an examiner proves theft by matching member CRC-32 and size against originals.",
+            "fix_direction": "An 'archive' action: format zip (tar/tar.gz later), members by ref/refs (F-IN-8) or confined glob, stored member names, per-member modified time from the ledger, method store|deflate, deterministic member order, optional archive comment. Member bytes are the source files' bytes at that moment.",
+            "acceptance": "Test: CRC-32 and size of every member equal the source files; archive bytes are identical across runs."
+        },
+        {
+            "id": "F-GEN-3",
+            "severity": "high",
+            "area": "content",
+            "title": "The generated .exe is a 256-byte DOS stub, not a PE",
+            "evidence": [
+                "libgen/genfiles.go:257-267",
+                "constant/constant.go:13"
+            ],
+            "verified": "reproduced (e_lfanew = 0)",
+            "observed": "The constant comment says 'EXE is generated as a minimal PE stub'; e_lfanew is 0, so there is no PE header.",
+            "fix_direction": "A minimal valid PE32+/PE32 writer with inputs: machine, TimeDateStamp (including 0 and future values, both used in teaching), subsystem, section names/sizes/characteristics, an optional import table (a list of dll!function), optional version resource, and overlay padding. Deterministic.",
+            "acceptance": "debug/pe opens it and the header fields equal the inputs; imphash is stable across runs."
+        },
+        {
+            "id": "F-GEN-4",
+            "severity": "medium",
+            "area": "content",
+            "title": "The generated .mp4 is text",
+            "evidence": [
+                "libgen/genfiles.go:162-175"
+            ],
+            "verified": "reproduced (no ftyp box)",
+            "observed": "Random base32 text is written through mp4.Writer, which only passes bytes through; there is no ftyp/moov/mdat.",
+            "fix_direction": "Emit minimal valid ftyp + moov + mdat boxes (the go-mp4 library can marshal boxes) or drop MP4 from the supported list.",
+            "acceptance": "A box parser reads ftyp and moov."
+        },
+        {
+            "id": "F-GEN-5",
+            "severity": "high",
+            "area": "content",
+            "title": "Browser history databases use the wrong epochs and are only reachable from bulk mode",
+            "evidence": [
+                "libgen/genfiles.go:330-380",
+                "libgen/genfiles.go:382-432",
+                "libgen/genfiles_test.go:174-233",
+                "examples/manifest-history.yaml",
+                "examples/playbook-browsing.yaml"
+            ],
+            "verified": "code-reading plus reproduced example output",
+            "observed": "Chrome's urls.last_visit_time and visits.visit_time are WebKit microseconds since 1601-01-01; Firefox's last_visit_date and visit_date are PRTime microseconds since 1970. Both are written as Unix seconds, from time.Now. TestBrowserHistoryTimestamps enforces the wrong epoch (it reads the value as Unix seconds within the last year). Files get random names ('XXXX.db', 'places_XXXX.sqlite') instead of 'History' and 'places.sqlite'. moz_places.rev_host is empty, and the meta, downloads, downloads_url_chains, keyword_search_terms and moz_origins tables are missing. The generators cannot be invoked from a manifest or playbook, so the history examples silently produce text files (F-IN-1).",
+            "fix_direction": "Correct epochs from scenario time; real file names; the tables forensic parsers read; a 'browser_history' format usable from manifest/playbook with visits given in YAML (url, title, time, transition, from_visit), plus Cookies and downloads. Fix the test to assert the correct epoch against a fixed scenario time.",
+            "acceptance": "Tests decode WebKit/PRTime back to the scenario time exactly; a third-party-style parser query (the standard Chrome/Firefox history SQL) returns the YAML visits."
+        },
+        {
+            "id": "F-GEN-6",
+            "severity": "medium",
+            "area": "content",
+            "title": "PNG and MP4 generators continue after an error and send several results",
+            "evidence": [
+                "libgen/genfiles.go:138-148",
+                "libgen/genfiles.go:162-175"
+            ],
+            "verified": "code-reading",
+            "observed": "On os.Create failure they send the error, do not return, then use a nil *os.File (panic) and send again, corrupting the result count F-DET-2 depends on.",
+            "fix_direction": "Return after sending; one result per generator, enforced by the errgroup rewrite.",
+            "acceptance": "Test with an unwritable directory: one error, no panic."
+        },
+        {
+            "id": "F-GEN-7",
+            "severity": "high",
+            "area": "content",
+            "title": "The email template is not a real email",
+            "evidence": [
+                "playbook/playbook.go:318-332"
+            ],
+            "verified": "reproduced",
+            "observed": "LF line endings (RFC 5322 requires CRLF), a random 20-character subject, fixed recipient, no Message-ID, no MIME headers. (The bulk .eml generator does use CRLF.)",
+            "fix_direction": "A parameterised email generator: from, to, cc, reply_to, subject, date (defaults to scenario time), message_id, headers map, text and/or html body, attachments by ref (base64, deterministic boundaries). Always CRLF on the wire.",
+            "acceptance": "net/mail parses it; headers equal the inputs; bytes are identical across runs; attachments decode to the referenced files."
+        },
+        {
+            "id": "F-GEN-8",
+            "severity": "medium",
+            "area": "content",
+            "title": "Random content is base32 text only",
+            "evidence": [
+                "util/util.go:59-63"
+            ],
+            "verified": "code-reading",
+            "observed": "About 5 bits of entropy per byte, uppercase A-Z and 2-7 only. It cannot stand in for encrypted or packed payloads, so entropy-based detection cannot be tested, and it is the wrong shape for any binary format.",
+            "fix_direction": "A 'content_kind' (text, bytes, zeros, pattern, lorem, from_file confined to the playbook's directory). Uniform random bytes for 'bytes'.",
+            "acceptance": "Test: 'bytes' content has Shannon entropy > 7.9 bits/byte at 64 KiB; 'text' stays printable."
+        },
+        {
+            "id": "F-GEN-9",
+            "severity": "medium",
+            "area": "content",
+            "title": "No in-place edit: a log cannot lose lines",
+            "evidence": [
+                "spec/types.go:8 (the action list)"
+            ],
+            "verified": "code-reading",
+            "observed": "Anti-forensics that deletes lines from a log (leaving a sequence gap) cannot be expressed; rotate and truncate operate on whole files. The Mutant workshop's 'hole in the beacon sequence' therefore never exists.",
+            "fix_direction": "An 'edit' action: delete_lines (1-based range or regex), replace (regex to template), insert_after. Times are set per the ledger rules.",
+            "acceptance": "Test: deleting lines 40-60 of a 170-line log leaves 149 lines and a measurable gap."
+        },
+        {
+            "id": "F-GEN-10",
+            "severity": "low",
+            "area": "content",
+            "title": "Bulk text-log generators hard-code 2021 dates",
+            "evidence": [
+                "libgen/genfiles.go:206-216",
+                "libgen/genfiles.go:269-281",
+                "libgen/genfiles.go:283-295",
+                "libgen/genfiles.go:305-314"
+            ],
+            "verified": "code-reading",
+            "fix_direction": "Take a base time from a --bulk-start flag (default a fixed epoch), so bulk corpora can be placed in time.",
+            "acceptance": "Test: --bulk-start moves every embedded date."
+        },
+        {
+            "id": "F-GEN-11",
+            "severity": "low",
+            "area": "dependencies",
+            "title": "Unmaintained or heavyweight dependencies",
+            "evidence": [
+                "go.mod",
+                "libgen/genfiles.go:18-21"
+            ],
+            "verified": "code-reading",
+            "observed": "jung-kurt/gofpdf is archived; gingfrederik/docx v0.0.1 ignores the os.Create error in File.Save; glebarez/sqlite is a GORM dialect imported only to register a database/sql driver (pulling GORM, inflection and now into the build); gopkg.in/yaml.v2 is superseded; github.com/google/uuid is listed // indirect in the direct block.",
+            "fix_direction": "Per D-10.",
+            "acceptance": "go mod tidy is clean; the dependency list is justified in the plan."
+        },
+        {
+            "id": "F-PLAT-1",
+            "severity": "critical",
+            "area": "packaging",
+            "title": "'go install github.com/aoiflux/fsagen@latest' fails",
+            "evidence": [
+                "go.mod:1"
+            ],
+            "verified": "reproduced",
+            "observed": "'module declares its path as: fsagen but was required as: github.com/aoiflux/fsagen'. Downstream instructions (Mutant's workshop README and build scripts) tell users to run that command.",
+            "fix_direction": "Per D-5: rename the module and every import; add the install line to the README.",
+            "acceptance": "go install from a clean GOPATH succeeds against the pushed commit (manual check by the owner after landing)."
+        },
+        {
+            "id": "F-PLAT-2",
+            "severity": "high",
+            "area": "platform",
+            "title": "On Linux and macOS a playbook aborts at its first ads or motw action",
+            "evidence": [
+                "manifest/manifest.go:42-50",
+                "manifest/manifest.go:299-302",
+                "manifest/manifest.go:319-322",
+                "util/util.go:112-114",
+                "util/util.go:131-133"
+            ],
+            "verified": "code-reading",
+            "observed": "ExecuteOperations returns on the first error, so everything after the first Windows-only operation is never generated, and the directory that is left looks like a finished corpus. Mutant's workshop docs claim the rest of the corpus is still produced on ext4/APFS.",
+            "fix_direction": "Per D-1: pre-flight every compiled operation against the platform's capabilities and fail before writing, or skip and record.",
+            "acceptance": "Test (build-tagged for non-Windows, or via an injected capability set): a playbook with a motw step fails before any file is written, or with --on-unsupported=skip completes and lists the skipped operation."
+        },
+        {
+            "id": "F-PLAT-3",
+            "severity": "medium",
+            "area": "CLI",
+            "title": "CLI conventions: exit codes, stderr, version, nested roots",
+            "evidence": [
+                "main.go:40-44",
+                "main.go:176",
+                "main.go:196-201"
+            ],
+            "verified": "reproduced",
+            "observed": "No arguments prints usage and exits 0. Errors go to stdout. There is no --version (and no tags or build info). A nested output path whose parent is missing fails (os.Mkdir, not MkdirAll).",
+            "fix_direction": "Usage errors exit 2, runtime errors exit 1, diagnostics go to stderr; --version from runtime/debug.ReadBuildInfo plus a generator version (D-6); MkdirAll for the root.",
+            "acceptance": "CLI tests for each exit code and stream."
+        },
+        {
+            "id": "F-PLAT-4",
+            "severity": "low",
+            "area": "repo hygiene",
+            "title": "Formatting and line endings",
+            "evidence": [
+                "constant/constant.go:40",
+                "libgen/genfiles_test.go (space-indented)",
+                ".gitignore"
+            ],
+            "verified": "reproduced",
+            "observed": "Real gofmt diffs in two files. With no .gitattributes, a Windows checkout under core.autocrlf=true makes 'gofmt -l' flag every file. .gitignore holds only '*.exe' with no trailing newline.",
+            "fix_direction": "gofmt; a .gitattributes with '*.go text eol=lf' (and binary markers for fixtures); ignore generated corpora and timelines.",
+            "acceptance": "gofmt -l is empty on a fresh Windows checkout."
+        },
+        {
+            "id": "F-PLAT-5",
+            "severity": "medium",
+            "area": "repo hygiene",
+            "title": "No LICENSE file",
+            "evidence": [
+                "repository root"
+            ],
+            "verified": "reproduced",
+            "fix_direction": "Per D-8.",
+            "acceptance": "LICENSE present, README states it."
+        },
+        {
+            "id": "F-PLAT-6",
+            "severity": "high",
+            "area": "tests",
+            "title": "Almost no tests",
+            "evidence": [
+                "go test ./... output: eight packages with no test files"
+            ],
+            "verified": "reproduced",
+            "observed": "Only the browser-history generators are tested, and one of those tests asserts a bug (F-GEN-5). The manifest executor, the playbook compiler, the timeline writers, the schema, the CLI and determinism have no tests at all.",
+            "fix_direction": "A test suite built alongside each phase (see verification_plan), including golden files under testdata/ and a determinism harness that generates twice and compares.",
+            "acceptance": "Each finding in this document has at least one test that fails at 62d759c and passes after its fix."
+        },
+        {
+            "id": "F-PLAT-7",
+            "severity": "low",
+            "area": "repo hygiene",
+            "title": "Dead code",
+            "evidence": [
+                "playbook/playbook.go:383-393 (renderTemplatesWithActor, writeTempManifest returning '')",
+                "util/util.go:30-46 (GetAbsPath)",
+                "util/util.go:77-86 (Touch)",
+                "constant/constant.go:44 (MaxThreadCount)",
+                "constant/constant.go:47 (NumFileTypes)"
+            ],
+            "verified": "code-reading (grep shows no callers)",
+            "fix_direction": "Delete.",
+            "acceptance": "go vet and a deadcode/unused check are clean."
+        },
+        {
+            "id": "F-PLAT-8",
+            "severity": "medium",
+            "area": "platform",
+            "title": "Windows path hazards are not checked",
+            "evidence": [
+                "manifest/manifest.go:119"
+            ],
+            "verified": "code-reading",
+            "observed": "Reserved device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9, with any extension), trailing dots and spaces, paths over MAX_PATH, and names that differ only in case (which collide on NTFS but not on ext4) are all accepted, so one playbook yields different trees on different platforms.",
+            "fix_direction": "Validate at compile time on every platform (a playbook is either portable or rejected with a reason), with an explicit --allow-nonportable for Unix-only scenarios.",
+            "acceptance": "Tests for each hazard."
+        },
+        {
+            "id": "F-DOC-1",
+            "severity": "high",
+            "area": "documentation",
+            "title": "README and timeline docs claim behaviour the code does not have",
+            "evidence": [
+                "README.md",
+                "TIMELINE_FEATURE.md",
+                "examples/TIMELINE_EXAMPLES.md",
+                "examples/INVESTIGATION_WORKFLOW.md"
+            ],
+            "verified": "reproduced against each claim",
+            "observed": "False or misleading today: race-condition free; same seed = same timeline; 'proper structure' for exe/mp4/zip (and anything created with content_len); MACB 'showing Birth'; ${HASH:N} is a 'hex string' (it is base32 uppercase); ${DATE:layout} is 'current time' (it is the action's scheduled time); 'MACE timestamp control' (M and A only); the bulk type list omits .db/.sqlite; 'cross-platform' (no macOS/BSD build); '--schema-out' default 'examples' while the repo keeps schemas in 'schemas/'.",
+            "fix_direction": "Rewrite each claim to match the code after the fixes, and add a 'Limits' section (F-TIME-6, platform capability table from D-1, determinism contract from F-DET-6).",
+            "acceptance": "Each remaining capability claim names the test that verifies it."
+        },
+        {
+            "id": "F-DOC-2",
+            "severity": "medium",
+            "area": "documentation",
+            "title": "Shipped examples are broken",
+            "evidence": [
+                "examples/manifest-history.yaml ('content_template' is not a field)",
+                "examples/playbook-email-and-archive.yaml (deletes never match; see F-IN-7/F-IN-8)",
+                "examples/playbook-log-tampering.yaml (single-quoted '\\n' is a literal backslash-n in YAML, so the 'lines' are one line)"
+            ],
+            "verified": "reproduced",
+            "fix_direction": "Fix each example and add a test that runs every example and asserts a small, example-specific expectation (not just exit 0).",
+            "acceptance": "Examples test passes; every example is exercised."
+        },
+        {
+            "id": "F-DOC-3",
+            "severity": "low",
+            "area": "documentation",
+            "title": "${UUID} and ${IP} are not what their names suggest",
+            "evidence": [
+                "playbook/playbook.go:293-297"
+            ],
+            "verified": "reproduced ('0000000b-0000-0000-0000-00000000000b', '192.168.0.11')",
+            "fix_direction": "${UUID}: a deterministic RFC 9562 version-4-shaped value from the per-operation stream (version and variant bits set). ${IP}: keep, but allow a CIDR argument (${IP:10.0.0.0/8}) and document the range.",
+            "acceptance": "Tests: UUID parses with version 4 and RFC variant; IP stays inside the requested CIDR."
+        }
+    ],
+    "consumer_requirements": {
+        "note": "What the Mutant QUILLDROP workshop needs from fsagen. Use these as an end-to-end acceptance scenario after the relevant phases land. The playbook is Mutant's examples/workshop/evidence/quilldrop.playbook.yaml; it will be updated on the Mutant side to use the new fields.",
+        "requirements": [
+            {
+                "id": "CR-1",
+                "need": "A Sleuth Kit bodyfile from --timeline with a .body or .bodyfile name, or an explicit --timeline-format bodyfile.",
+                "findings": [
+                    "F-TL-1"
+                ]
+            },
+            {
+                "id": "CR-2",
+                "need": "The phishing email exactly as written in the playbook, CRLF line endings, parseable by net/mail.",
+                "findings": [
+                    "F-IN-6",
+                    "F-GEN-7"
+                ]
+            },
+            {
+                "id": "CR-3",
+                "need": "The dropper (Invoice_MRD-88412.pdf.exe) and implant (svchost.exe) as valid PEs whose TimeDateStamp the playbook sets (0 for the 'scrubbed build time' lesson), sized to the requested length.",
+                "findings": [
+                    "F-GEN-1",
+                    "F-GEN-3"
+                ]
+            },
+            {
+                "id": "CR-4",
+                "need": "Mark-of-the-Web on the dropper with templated HostUrl/ReferrerUrl, written without disturbing the file's times.",
+                "findings": [
+                    "F-IN-14",
+                    "F-TIME-3"
+                ]
+            },
+            {
+                "id": "CR-5",
+                "need": "The implant's 'quill' stream visible in the timeline.",
+                "findings": [
+                    "F-TL-4"
+                ]
+            },
+            {
+                "id": "CR-6",
+                "need": "Creation times equal to scenario time, so that after the 12 March stomp exactly four files show mtime < crtime.",
+                "findings": [
+                    "F-TIME-1",
+                    "F-TIME-2",
+                    "F-TL-2"
+                ]
+            },
+            {
+                "id": "CR-7",
+                "need": "bkp_20260311.zip as a real zip whose members are the staged documents, CRC-32 and size matching the originals.",
+                "findings": [
+                    "F-GEN-2",
+                    "F-IN-8"
+                ]
+            },
+            {
+                "id": "CR-8",
+                "need": "The 24 staging files actually deleted, and their deletion recorded in the ground truth.",
+                "findings": [
+                    "F-IN-7",
+                    "F-IN-8",
+                    "F-TL-5"
+                ]
+            },
+            {
+                "id": "CR-9",
+                "need": "A real gap in the beacon log's sequence numbers after the anti-forensics step.",
+                "findings": [
+                    "F-GEN-9"
+                ]
+            },
+            {
+                "id": "CR-10",
+                "need": "An artefact every student can compare byte for byte: a deterministic content SHA256SUMS and/or modelled bodyfile, identical on every machine that runs the same fsagen version and seed.",
+                "findings": [
+                    "F-DET-3",
+                    "F-DET-4",
+                    "F-DET-5"
+                ]
+            },
+            {
+                "id": "CR-11",
+                "need": "On Linux/macOS: either a clear refusal before anything is written, or a completed corpus with the NTFS-only artefacts listed as skipped.",
+                "findings": [
+                    "F-PLAT-2",
+                    "F-TL-3"
+                ]
+            },
+            {
+                "id": "CR-12",
+                "need": "go install github.com/aoiflux/fsagen@latest works.",
+                "findings": [
+                    "F-PLAT-1"
+                ]
+            }
+        ]
+    },
+    "proposed_phases": [
+        {
+            "phase": "P0",
+            "name": "Stop silent wrong output and unsafe writes",
+            "goal": "Every input mistake becomes an error; nothing is written outside the root; timeline format and exit codes are honest. No output bytes change for valid inputs.",
+            "findings": [
+                "F-SEC-1",
+                "F-SEC-2",
+                "F-SEC-3",
+                "F-SEC-5",
+                "F-IN-1",
+                "F-IN-2",
+                "F-IN-3",
+                "F-IN-4",
+                "F-IN-5",
+                "F-IN-6",
+                "F-IN-7",
+                "F-IN-9",
+                "F-IN-10",
+                "F-IN-11",
+                "F-IN-12",
+                "F-IN-14",
+                "F-TL-1",
+                "F-TL-8",
+                "F-PLAT-3",
+                "F-PLAT-8",
+                "F-GEN-6"
+            ],
+            "depends_on_decisions": [
+                "D-3",
+                "D-4"
+            ],
+            "notes": "Bundle the validation into one compile/validate pass shared by manifest and playbook, and expose it as --dry-run / validate. F-IN-14 changes output only for inputs that were previously wrong."
+        },
+        {
+            "phase": "P1",
+            "name": "Determinism you can state in one sentence",
+            "goal": "Same generator version, seed, input and platform class give byte-identical content, with a run manifest that says so.",
+            "findings": [
+                "F-DET-1",
+                "F-DET-2",
+                "F-DET-3",
+                "F-DET-4",
+                "F-DET-5",
+                "F-DET-6",
+                "F-TL-9",
+                "F-IN-15",
+                "F-IN-16"
+            ],
+            "depends_on_decisions": [
+                "D-6"
+            ],
+            "notes": "Tag the pre-change commit before the first byte-changing fix so old corpora stay reproducible. Add the run manifest (generator version, seed, input sha256, platform, filesystem type, flags, content SHA256SUMS)."
+        },
+        {
+            "phase": "P2",
+            "name": "Timestamps that mean what the scenario says",
+            "goal": "Creation, modification, access and (on Windows) change times all come from the scenario, survive later operations, and are not disturbed by the timeline pass.",
+            "findings": [
+                "F-TIME-1",
+                "F-TIME-2",
+                "F-TIME-3",
+                "F-TIME-4",
+                "F-TIME-5",
+                "F-TIME-6",
+                "F-PLAT-2"
+            ],
+            "depends_on_decisions": [
+                "D-1"
+            ],
+            "notes": "Introduce the operation ledger here; P3 and P4 build on it."
+        },
+        {
+            "phase": "P3",
+            "name": "Timelines and ground truth",
+            "goal": "Correct four-time bodyfile on every OS, full ADS enumeration, modelled timeline, answer key.",
+            "findings": [
+                "F-TL-2",
+                "F-TL-3",
+                "F-TL-4",
+                "F-TL-5",
+                "F-TL-6",
+                "F-TL-7"
+            ],
+            "depends_on_decisions": [
+                "D-2"
+            ]
+        },
+        {
+            "phase": "P4",
+            "name": "Artefacts forensic tools can actually parse",
+            "goal": "Typed content, archive, PE, email, edit, references between actions, browser databases.",
+            "findings": [
+                "F-GEN-1",
+                "F-GEN-2",
+                "F-GEN-3",
+                "F-GEN-4",
+                "F-GEN-5",
+                "F-GEN-7",
+                "F-GEN-8",
+                "F-GEN-9",
+                "F-GEN-10",
+                "F-IN-8",
+                "F-IN-13",
+                "F-DOC-3"
+            ],
+            "depends_on_decisions": [
+                "D-10"
+            ]
+        },
+        {
+            "phase": "P5",
+            "name": "Packaging, platform, docs",
+            "goal": "Installable, buildable everywhere, licensed, documented truthfully, examples tested.",
+            "findings": [
+                "F-PLAT-1",
+                "F-PLAT-4",
+                "F-PLAT-5",
+                "F-PLAT-6",
+                "F-PLAT-7",
+                "F-SEC-4",
+                "F-GEN-11",
+                "F-DOC-1",
+                "F-DOC-2"
+            ],
+            "depends_on_decisions": [
+                "D-5",
+                "D-8",
+                "D-9"
+            ],
+            "notes": "F-PLAT-6 is not a phase of its own: tests land with every fix. Here it means the examples test and the cross-compile script."
+        },
+        {
+            "phase": "P6 (follow-on, only if D-7 puts it in scope)",
+            "name": "Image output and artefact breadth",
+            "goal": "FAT image output with controlled timestamps and real deleted-entry residue; then NTFS. More Windows artefacts.",
+            "candidates": [
+                "FAT12/16/32 image writer (pure Go) with create/modify/access times, long file names, 0xE5 deleted entries and slack",
+                "NTFS: generate on a scratch volume, then patch $STANDARD_INFORMATION and $FILE_NAME times in place (needs a timestamp-setting API in aoiflux/libntfs)",
+                "Registry hive (regf) writer for Run/RunOnce persistence, since exported .reg text is not what examiners find on disk",
+                "EVTX, LNK, Prefetch, $Recycle.Bin $I/$R pairs, Chrome Cookies and downloads",
+                "symlink, hardlink and junction actions"
+            ]
+        }
+    ],
+    "verification_plan": {
+        "gates_for_every_phase": [
+            "go vet ./...",
+            "gofmt -l . is empty (with LF checkout, see F-PLAT-4)",
+            "go test ./... -race -count=1",
+            "cross-compile: GOOS in windows, linux, darwin, freebsd and GOARCH in amd64, arm64, all with CGO_ENABLED=0"
+        ],
+        "determinism_harness": "A test helper that runs a scenario twice into two temp roots with the same seed and asserts identical sorted (slash-path, sha256, streams) lists and identical modelled bodyfile / run manifest bytes; a second assertion that a different seed changes them. Run it for bulk, manifest, playbook and every example.",
+        "golden_files": "testdata/golden/<scenario>/{ops.jsonl, bodyfile, macb, csv, answer_key.jsonl}. Updated only with an explicit -update flag, never automatically.",
+        "format_validators_in_tests": [
+            "debug/pe",
+            "archive/zip (CRC and size)",
+            "image/png",
+            "image/jpeg",
+            "net/mail",
+            "SQLite open + PRAGMA integrity_check",
+            "an MP4 box walk",
+            "a strict bodyfile parser"
+        ],
+        "windows_only_tests": [
+            "crtime/ChangeTime set and read back",
+            "ADS/MOTW after mace keeps times",
+            "stream enumeration",
+            "timeline pass does not move atime",
+            "directory settle pass"
+        ],
+        "negative_tests": "Every validation error listed in P0 has a test with the exact message shape (file, line/column when available, step/action index, field, hint).",
+        "mutation_check": "For each new test, record in the plan how it was shown to fail: revert the fix or invert the guarded condition, run, see red, restore.",
+        "consumer_acceptance": "After P4, run the updated QUILLDROP playbook and check CR-1 to CR-12 with a small Go test or script inside fsagen (no dependency on Mutant)."
+    },
+    "cross_repo_follow_ups_not_for_this_plan": [
+        "Mutant workshop: use '.bodyfile' (or --timeline-format) until F-TL-1 lands; remove 'template: email' from the lure step; replace the ${SEQ}/${RND} delete paths with refs once F-IN-8 lands; replace 'go install github.com/aoiflux/fsagen@latest' until F-PLAT-1 lands.",
+        "Mutant workshop tools with their own bugs, found in the same run: 08 prints a hard-coded 'three hits are dated 2024'; 09 prints a hard-coded '12 March' and splits bodyfile paths on '/' only (every record becomes 'no surviving file' on Windows); 06's cookie-without-visit rule can never fire; examples/registry/registry_persistence_hunt.mut opens the wrong fixture.",
+        "aoiflux/libntfs: a same-length, in-place API to set $STANDARD_INFORMATION and $FILE_NAME timestamps on a writable image volume, if D-7 takes NTFS image output in scope."
+    ],
+    "out_of_scope": [
+        "Writing forensic analysis logic into fsagen: it generates evidence and ground truth; judging evidence is the consumer's job.",
+        "Any network access during generation.",
+        "Encrypting or signing corpora; a SHA256SUMS in the run manifest is the integrity artefact.",
+        "cgo-based libraries or shelling out to OS tools (mkfs, fsutil, reg.exe) from the generator."
+    ],
+    "repro_fixtures": {
+        "note": "The probes used for this audit. Recreate them under testdata/ and turn each expectation into a test.",
+        "manifest_edge_cases.yaml": [
+            "operations:",
+            "  - action: create",
+            "    path: a/unknown_field.txt",
+            "    content: 'x'",
+            "    crtime: 2020-01-01T00:00:00Z        # expected: error (unknown key); observed: ignored",
+            "    mtime: 2021-01-01T00:00:00Z",
+            "  - action: create",
+            "    path: a/bad_time.txt",
+            "    content: 'x'",
+            "    mtime: '2021-01-01 00:00:00'        # expected: error; observed: ignored, mtime = now",
+            "  - action: create",
+            "    path: ../ESCAPED.txt                # expected: error; observed: written outside root",
+            "    content: 'escaped'",
+            "  - action: create",
+            "    path: a/ads_after_mace.bin",
+            "    content: 'base'",
+            "    mtime: 2021-06-01T00:00:00Z",
+            "    atime: 2021-06-01T00:00:00Z",
+            "  - action: ads                         # observed: resets mtime to now",
+            "    path: a/ads_after_mace.bin",
+            "    stream: quill",
+            "    content: 'hidden'",
+            "  - action: motw",
+            "    path: a/zone9.exe                   # observed: creates empty base file; ZoneId=3",
+            "    zone_id: 9",
+            "  - action: create",
+            "    path: a/dropper.exe                 # observed: base32 text, no MZ",
+            "    content_len: 4096",
+            "  - action: create",
+            "    path: a/exfil.zip                   # observed: base32 text, not a zip",
+            "    content_len: 4096",
+            "  - action: create",
+            "    path: trailing_slash_dir/           # observed on Windows: a 1024-byte file",
+            "  - action: update",
+            "    path: never_created.txt             # observed: creates the file",
+            "    content: 'update of a missing file'",
+            "  - action: delete",
+            "    path: does_not_exist.txt            # observed: exit 0"
+        ],
+        "playbook_edge_cases.yaml": [
+            "start: 2026-03-11T09:00:00Z",
+            "variables: { host: evil.test }",
+            "actors: [ { name: u, base: home } ]",
+            "steps:",
+            "  - actor: u",
+            "    offset: 1m",
+            "    actions:",
+            "      - { action: create, path: both.eml, template: email, content: 'From: attacker@evil.test' }   # template wins silently",
+            "  - actor: u",
+            "    offset: 2m",
+            "    actions:",
+            "      - { action: create, path: dl.exe, content: 'MZ' }",
+            "      - { action: motw, path: dl.exe, zone_id: 3, host_url: 'http://${VAR:host}/dl.exe' }    # written literally",
+            "  - actor: u",
+            "    offset: 3m",
+            "    repeat: 3",
+            "    condition: frist                                                                         # runs every time",
+            "    actions: [ { action: create, path: 'cond_${ITER}.txt', content: 'c' } ]",
+            "  - actor: u",
+            "    offset: 4m",
+            "    actions: [ { action: create, path: bad_offset.txt, content: 'o', offset: '5 minutes' } ]  # offset ignored",
+            "  - actor: u",
+            "    offset: 5m",
+            "    actions: [ { action: create, path: 'undefined_${VAR:nope}.txt', content: 'v' } ]          # literal token; ':' makes an ADS on Windows",
+            "  - actor: u",
+            "    offset: 1h",
+            "    actions: [ { action: create, path: later/one.txt, content: '1' } ]                         # runs before the 30m step",
+            "  - actor: u",
+            "    offset: 30m",
+            "    actions: [ { action: create, path: later/two.txt, content: '2' } ]"
+        ],
+        "determinism_commands": [
+            "fsagen --seed 7 --bulk 2 --depth 2 bulk1 && fsagen --seed 7 --bulk 2 --depth 2 bulk2   # compare sorted (path, sha256): differ today; also look for *-journal files",
+            "fsagen --seed 88412 --playbook quilldrop.playbook.yaml --timeline r1.bodyfile r1   # twice, into r1 and r2: MD5/path columns match, bodyfile sha256 differs",
+            "GOOS=darwin GOARCH=amd64 go build .   # fails today"
+        ]
+    },
+    "expected_plan_output": {
+        "format": "A markdown plan the owner can approve section by section.",
+        "must_contain": [
+            "The answers to D-1 to D-10 as the owner gave them, quoted.",
+            "Per phase: goal, findings closed, files touched, new types/functions/flags, tests added (with the fail-first evidence method), output-byte impact, rollback notes.",
+            "A single statement of the determinism contract (F-DET-6) and of the platform capability matrix (D-1): which fields and actions work on windows, linux and darwin.",
+            "Every finding from this document mapped to a phase or explicitly declined, with a reason.",
+            "Anything in this document the planner found to be wrong at HEAD, with evidence."
+        ],
+        "must_not_contain": [
+            "Code changes made before the plan is approved.",
+            "Any git commit, push or tag.",
+            "Claims of verification that did not happen."
+        ]
+    }
+}

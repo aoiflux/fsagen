@@ -4,8 +4,8 @@ import (
 	"archive/zip"
 	"database/sql"
 	"fmt"
-	"fsagen/constant"
-	"fsagen/util"
+	"github.com/aoiflux/fsagen/constant"
+	"github.com/aoiflux/fsagen/util"
 	"image"
 	"image/color"
 	"image/png"
@@ -52,7 +52,7 @@ func GenerateFiles(rootpath string, limit, depth int64) error {
 }
 
 func populateFolder(path string, limit int64, channeledErr chan error) {
-	ioerr := os.MkdirAll(path, os.ModePerm)
+	ioerr := os.MkdirAll(path, 0o755)
 	if ioerr != nil {
 		channeledErr <- ioerr
 		return
@@ -102,7 +102,7 @@ func populateFolder(path string, limit int64, channeledErr chan error) {
 func generateTxt(basedir string, channeledErr chan error) {
 	txtpath := util.GetFilePath(basedir, constant.TxtExtension)
 	randomData := []byte(util.GetRandomString(constant.ContentLen))
-	channeledErr <- os.WriteFile(txtpath, randomData, os.ModePerm)
+	channeledErr <- os.WriteFile(txtpath, randomData, 0o644)
 }
 
 func generateDocx(basedir string, channeledErr chan error) {
@@ -180,27 +180,27 @@ func generateCsv(basedir string, channeledErr chan error) {
 	for i := 0; i < 10; i++ {
 		rows = append(rows, fmt.Sprintf("%d,%s,%s", i+1, util.GetRandomString(8), util.GetRandomString(12)))
 	}
-	channeledErr <- os.WriteFile(p, []byte(strings.Join(rows, "\n")+"\n"), os.ModePerm)
+	channeledErr <- os.WriteFile(p, []byte(strings.Join(rows, "\n")+"\n"), 0o644)
 }
 
 func generateJson(basedir string, channeledErr chan error) {
 	p := util.GetFilePath(basedir, constant.JsonExtension)
 	content := fmt.Sprintf(`{"id":%d,"name":"%s","timestamp":"%s"}`,
 		1, util.GetRandomString(8), time.Now().UTC().Format(time.RFC3339))
-	channeledErr <- os.WriteFile(p, []byte(content), os.ModePerm)
+	channeledErr <- os.WriteFile(p, []byte(content), 0o644)
 }
 
 func generateXml(basedir string, channeledErr chan error) {
 	p := util.GetFilePath(basedir, constant.XmlExtension)
 	content := fmt.Sprintf(`<root><id>%d</id><name>%s</name></root>`, 1, util.GetRandomString(8))
-	channeledErr <- os.WriteFile(p, []byte(content), os.ModePerm)
+	channeledErr <- os.WriteFile(p, []byte(content), 0o644)
 }
 
 func generateHtml(basedir string, channeledErr chan error) {
 	p := util.GetFilePath(basedir, constant.HtmlExtension)
 	body := util.GetRandomString(64)
 	html := fmt.Sprintf(`<!doctype html><html><head><meta charset="utf-8"><title>%s</title></head><body><p>%s</p></body></html>`, body[:8], body)
-	channeledErr <- os.WriteFile(p, []byte(html), os.ModePerm)
+	channeledErr <- os.WriteFile(p, []byte(html), 0o644)
 }
 
 func generateLog(basedir string, channeledErr chan error) {
@@ -212,7 +212,7 @@ func generateLog(basedir string, channeledErr chan error) {
 		lines = append(lines, fmt.Sprintf("%s INFO user=%s event=%s", t.Format(time.RFC3339), util.GetRandomString(6), msg))
 		t = t.Add(1 * time.Minute)
 	}
-	channeledErr <- os.WriteFile(p, []byte(strings.Join(lines, "\n")+"\n"), os.ModePerm)
+	channeledErr <- os.WriteFile(p, []byte(strings.Join(lines, "\n")+"\n"), 0o644)
 }
 
 func generateReg(basedir string, channeledErr chan error) {
@@ -220,7 +220,7 @@ func generateReg(basedir string, channeledErr chan error) {
 	p := util.GetFilePath(basedir, constant.RegExtension)
 	content := "Windows Registry Editor Version 5.00\r\n\r\n" +
 		fmt.Sprintf("[HKEY_CURRENT_USER\\Software\\Fsagen\\%s]\r\n\"Value\"=\"%s\"\r\n", util.GetRandomString(6), util.GetRandomString(12))
-	channeledErr <- os.WriteFile(p, []byte(content), os.ModePerm)
+	channeledErr <- os.WriteFile(p, []byte(content), 0o644)
 }
 
 func generateZip(basedir string, channeledErr chan error) {
@@ -263,7 +263,7 @@ func generateExe(basedir string, channeledErr chan error) {
 	buf[0] = 'M'
 	buf[1] = 'Z'
 	copy(buf[0x40:], []byte("This program cannot be run in DOS mode.\r\r\n$"))
-	channeledErr <- os.WriteFile(p, buf, os.ModePerm)
+	channeledErr <- os.WriteFile(p, buf, 0o644)
 }
 
 func generateJsonl(basedir string, channeledErr chan error) {
@@ -277,7 +277,7 @@ func generateJsonl(basedir string, channeledErr chan error) {
 		b.WriteByte('\n')
 		t = t.Add(30 * time.Second)
 	}
-	channeledErr <- os.WriteFile(p, []byte(b.String()), os.ModePerm)
+	channeledErr <- os.WriteFile(p, []byte(b.String()), 0o644)
 }
 
 func generateSyslog(basedir string, channeledErr chan error) {
@@ -291,7 +291,7 @@ func generateSyslog(basedir string, channeledErr chan error) {
 		lines = append(lines, fmt.Sprintf("%s %s %s[%d]: %s", t.Format(time.RFC3339), host, app, 1000+i, msg))
 		t = t.Add(45 * time.Second)
 	}
-	channeledErr <- os.WriteFile(p, []byte(strings.Join(lines, "\n")+"\n"), os.ModePerm)
+	channeledErr <- os.WriteFile(p, []byte(strings.Join(lines, "\n")+"\n"), 0o644)
 }
 
 func generateMarkdown(basedir string, channeledErr chan error) {
@@ -299,7 +299,7 @@ func generateMarkdown(basedir string, channeledErr chan error) {
 	title := util.GetRandomString(12)
 	body := util.GetRandomString(80)
 	md := fmt.Sprintf("# %s\n\n%s\n", title, body)
-	channeledErr <- os.WriteFile(p, []byte(md), os.ModePerm)
+	channeledErr <- os.WriteFile(p, []byte(md), 0o644)
 }
 
 func generateEml(basedir string, channeledErr chan error) {
@@ -310,7 +310,7 @@ func generateEml(basedir string, channeledErr chan error) {
 	subj := "Test message " + util.GetRandomString(6)
 	body := util.GetRandomString(120)
 	eml := fmt.Sprintf("Date: %s\r\nFrom: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s\r\n", date, from, to, subj, body)
-	channeledErr <- os.WriteFile(p, []byte(eml), os.ModePerm)
+	channeledErr <- os.WriteFile(p, []byte(eml), 0o644)
 }
 
 func generateMbox(basedir string, channeledErr chan error) {
@@ -324,7 +324,7 @@ func generateMbox(basedir string, channeledErr chan error) {
 		b.WriteString(fmt.Sprintf("From alice@example.com %s\n", ts))
 		b.WriteString(fmt.Sprintf("Date: %s\nFrom: alice@example.com\nTo: bob@example.com\nSubject: %s\n\n%s\n\n", ts, subj, body))
 	}
-	channeledErr <- os.WriteFile(p, []byte(b.String()), os.ModePerm)
+	channeledErr <- os.WriteFile(p, []byte(b.String()), 0o644)
 }
 
 func generateChromeHistory(basedir string, channeledErr chan error) {

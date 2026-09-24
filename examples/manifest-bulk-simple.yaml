@@ -22,32 +22,38 @@ operations:
   # Consistent executable files across systems
   - action: create
     path: computer-01/program-files/update-tool.exe
+    format: text   # placeholder text, not a real file of this type
     content_len: 2048
     mtime: "2024-10-15T09:30:00Z"
 
   - action: create
     path: computer-01/program-files/system-monitor.exe
+    format: text   # placeholder text, not a real file of this type
     content_len: 4096
     mtime: "2024-10-15T09:30:15Z"
 
   - action: create
     path: computer-01/temp/installer-${SEQ}.exe
+    format: text   # placeholder text, not a real file of this type
     content_len: 1536
     mtime: "2024-10-15T10:15:00Z"
 
   # Email files with consistent naming
   - action: create
     path: computer-01/mail/notification-001.eml
+    format: text   # placeholder text, not a real file of this type
     content_len: 512
     mtime: "2024-10-15T08:45:00Z"
 
   - action: create
     path: computer-01/mail/alert-system.eml
+    format: text   # placeholder text, not a real file of this type
     content_len: 768
     mtime: "2024-10-15T09:00:00Z"
 
   - action: create
     path: computer-01/mail/update-${SEQ}.eml
+    format: text   # placeholder text, not a real file of this type
     content_len: 384
     mtime: "2024-10-15T11:30:00Z"
 
@@ -71,32 +77,38 @@ operations:
   # Same executables with identical timestamps (coordinated deployment)
   - action: create
     path: computer-02/program-files/update-tool.exe
+    format: text   # placeholder text, not a real file of this type
     content_len: 2048
     mtime: "2024-10-15T09:30:00Z"
 
   - action: create
     path: computer-02/program-files/system-monitor.exe
+    format: text   # placeholder text, not a real file of this type
     content_len: 4096
     mtime: "2024-10-15T09:30:15Z"
 
   - action: create
     path: computer-02/temp/installer-${SEQ}.exe
+    format: text   # placeholder text, not a real file of this type
     content_len: 1536
     mtime: "2024-10-15T10:15:00Z"
 
   # Same email patterns
   - action: create
     path: computer-02/mail/notification-001.eml
+    format: text   # placeholder text, not a real file of this type
     content_len: 512
     mtime: "2024-10-15T08:45:00Z"
 
   - action: create
     path: computer-02/mail/alert-system.eml
+    format: text   # placeholder text, not a real file of this type
     content_len: 768
     mtime: "2024-10-15T09:00:00Z"
 
   - action: create
     path: computer-02/mail/update-${SEQ}.eml
+    format: text   # placeholder text, not a real file of this type
     content_len: 384
     mtime: "2024-10-15T11:30:00Z"
 
@@ -120,32 +132,38 @@ operations:
   # Same executables (slightly delayed deployment)
   - action: create
     path: computer-03/program-files/update-tool.exe
+    format: text   # placeholder text, not a real file of this type
     content_len: 2048
     mtime: "2024-10-15T09:31:00Z"
 
   - action: create
     path: computer-03/program-files/system-monitor.exe
+    format: text   # placeholder text, not a real file of this type
     content_len: 4096
     mtime: "2024-10-15T09:31:15Z"
 
   - action: create
     path: computer-03/temp/installer-${SEQ}.exe
+    format: text   # placeholder text, not a real file of this type
     content_len: 1536
     mtime: "2024-10-15T10:16:00Z"
 
   # Same email patterns
   - action: create
     path: computer-03/mail/notification-001.eml
+    format: text   # placeholder text, not a real file of this type
     content_len: 512
     mtime: "2024-10-15T08:45:00Z"
 
   - action: create
     path: computer-03/mail/alert-system.eml
+    format: text   # placeholder text, not a real file of this type
     content_len: 768
     mtime: "2024-10-15T09:00:00Z"
 
   - action: create
     path: computer-03/mail/update-${SEQ}.eml
+    format: text   # placeholder text, not a real file of this type
     content_len: 384
     mtime: "2024-10-15T11:30:00Z"
 
@@ -169,32 +187,38 @@ operations:
   # Same executables
   - action: create
     path: computer-04/program-files/update-tool.exe
+    format: text   # placeholder text, not a real file of this type
     content_len: 2048
     mtime: "2024-10-15T09:30:00Z"
 
   - action: create
     path: computer-04/program-files/system-monitor.exe
+    format: text   # placeholder text, not a real file of this type
     content_len: 4096
     mtime: "2024-10-15T09:30:15Z"
 
   - action: create
     path: computer-04/temp/installer-${SEQ}.exe
+    format: text   # placeholder text, not a real file of this type
     content_len: 1536
     mtime: "2024-10-15T10:15:30Z"
 
   # Same email patterns
   - action: create
     path: computer-04/mail/notification-001.eml
+    format: text   # placeholder text, not a real file of this type
     content_len: 512
     mtime: "2024-10-15T08:45:00Z"
 
   - action: create
     path: computer-04/mail/alert-system.eml
+    format: text   # placeholder text, not a real file of this type
     content_len: 768
     mtime: "2024-10-15T09:00:00Z"
 
   - action: create
     path: computer-04/mail/update-${SEQ}.eml
+    format: text   # placeholder text, not a real file of this type
     content_len: 384
     mtime: "2024-10-15T11:30:00Z"
 
@@ -218,32 +242,38 @@ operations:
   # Same executables (final deployment wave)
   - action: create
     path: computer-05/program-files/update-tool.exe
+    format: text   # placeholder text, not a real file of this type
     content_len: 2048
     mtime: "2024-10-15T09:32:00Z"
 
   - action: create
     path: computer-05/program-files/system-monitor.exe
+    format: text   # placeholder text, not a real file of this type
     content_len: 4096
     mtime: "2024-10-15T09:32:15Z"
 
   - action: create
     path: computer-05/temp/installer-${SEQ}.exe
+    format: text   # placeholder text, not a real file of this type
     content_len: 1536
     mtime: "2024-10-15T10:17:00Z"
 
   # Same email patterns
   - action: create
     path: computer-05/mail/notification-001.eml
+    format: text   # placeholder text, not a real file of this type
     content_len: 512
     mtime: "2024-10-15T08:45:00Z"
 
   - action: create
     path: computer-05/mail/alert-system.eml
+    format: text   # placeholder text, not a real file of this type
     content_len: 768
     mtime: "2024-10-15T09:00:00Z"
 
   - action: create
     path: computer-05/mail/update-${SEQ}.eml
+    format: text   # placeholder text, not a real file of this type
     content_len: 384
     mtime: "2024-10-15T11:30:00Z"
 
@@ -259,15 +289,18 @@ operations:
   # Source files that were distributed
   - action: create
     path: network-share/deployment/update-tool-master.exe
+    format: text   # placeholder text, not a real file of this type
     content_len: 2048
     mtime: "2024-10-15T08:00:00Z"
 
   - action: create
     path: network-share/deployment/system-monitor-master.exe
+    format: text   # placeholder text, not a real file of this type
     content_len: 4096
     mtime: "2024-10-15T08:00:15Z"
 
   - action: create
     path: network-share/deployment/email-template.eml
+    format: text   # placeholder text, not a real file of this type
     content_len: 512
     mtime: "2024-10-15T07:30:00Z"

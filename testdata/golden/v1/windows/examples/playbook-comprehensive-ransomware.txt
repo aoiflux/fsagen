@@ -1,0 +1,127 @@
+# input-sha256 61acd62f2ce2896df1c7a77e1e6321abd51feeee32e9ad080dbad69a3c025846
+d C/
+d C/Users/
+d C/Users/victim/
+d C/Users/victim/AppData/
+d C/Users/victim/AppData/Local/
+d C/Users/victim/AppData/Local/Temp/
+f e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 0 C/Users/victim/AppData/Local/Temp/recon-0.txt
+f 6bcef909cc5a7df64a7fec8b88a5ec8425ae2add14496c232708559042af66f8 237 C/Users/victim/AppData/Local/Temp/recon-1.txt
+f 7cae9fd22d4b2fe6402efd156439af80af6116ada061b1f6978e29829638c408 237 C/Users/victim/AppData/Local/Temp/recon-2.txt
+f 39246e6bd62fcaf8e0b793aaa6a29f10045267cccaaf81acf87c316514b5da25 237 C/Users/victim/AppData/Local/Temp/recon-3.txt
+f b9b6e6ea538f216a6764886f60df251c038a4fcee8d975a1b0a681fd2efd9ac2 237 C/Users/victim/AppData/Local/Temp/recon-4.txt
+f 8f94bb60711f4fef56933591956d7c4fca769803592551e8b9e1c3d818e710b8 237 C/Users/victim/AppData/Local/Temp/recon-5.txt
+f e842d625b2b427665fa228b4987cc9d9ad580eb3c6680e8104387b0294c8df52 237 C/Users/victim/AppData/Local/Temp/recon-6.txt
+f a53f5850fe206f43ce6ea2dca98cddbe964f1eaead104411ed222d8fd5c85f6d 237 C/Users/victim/AppData/Local/Temp/recon-7.txt
+f b9d1de0f405d88f42785c7fcd007a40359b464bee342e36036cd9f52d71f24e5 237 C/Users/victim/AppData/Local/Temp/recon-8.txt
+f 2f6171bd2ed7d4641fd8aaab43c1685869a87e0500cf502f23adf820378d1828 239 C/Users/victim/AppData/Local/Temp/recon-9.txt
+d C/Users/victim/AppData/Local/staging/
+f 650efe771893f6d1cc4112b9cdc04f3daf2a73cf08d0355c6ead1b01d1684d2e 4096 C/Users/victim/AppData/Local/staging/doc-0-0.docx
+f c8be790c73e3403964c72ca4cea5e03e910a6f12be62ba25b50cd580700ff114 4096 C/Users/victim/AppData/Local/staging/doc-0-1.docx
+f f1b7cd67fe94296f1862c38f9b861c4b0f1d2b4365479cbd85b8e5cac7348412 4096 C/Users/victim/AppData/Local/staging/doc-0-2.docx
+f 46d26434d1f517c202925fbefd5759f74c7880631d6d012aa8db31300055fd93 4096 C/Users/victim/AppData/Local/staging/doc-2-0.docx
+f 25888fe4f242b6b60741e6045f658773f6cb8031eb854a8178b048e9b7f521db 4096 C/Users/victim/AppData/Local/staging/doc-2-1.docx
+f b3fb161ba5a30c9438677f1eb46464134854405af852d716de2e6a65b7556555 4096 C/Users/victim/AppData/Local/staging/doc-2-2.docx
+f 5972b123c09e7173cc08077cb2a3c503359a4112a792c3336edfebee69d25bcb 4096 C/Users/victim/AppData/Local/staging/doc-4-0.docx
+f 9f1ec61967994811ddd9aa951e24ab1515f39d03f982e4b246944c8e3df28034 4096 C/Users/victim/AppData/Local/staging/doc-4-1.docx
+f 565d145d14e2d37bb15e0c15401a8b1bf4e8f256079121a488a6cc8f8af2daff 4096 C/Users/victim/AppData/Local/staging/doc-4-2.docx
+f 8a8eac70aa0918b203541f82a50cac196819917fc5d31fad67b875b022ef8cdd 8192 C/Users/victim/AppData/Local/staging/spreadsheet-0479af10-aa16-445b-902d-dae75b278e8e.xlsx
+f 6bd52a0ced31008040d05b67113216241699322bf4b6945205efff6927f8beb5 8192 C/Users/victim/AppData/Local/staging/spreadsheet-0f930b76-611b-492a-b1d2-b6186f9ffd1a.xlsx
+f 02af7440e8e022b9d7cc83f74a4c18aca469efee3baf2ba6a63333e0132ec840 8192 C/Users/victim/AppData/Local/staging/spreadsheet-3ccf10a2-0ef0-404f-963a-ae13883ff827.xlsx
+f 860aca20b7aa46da0a19b3168057e00746c38bd6eb696bc2717204cb515297c2 8192 C/Users/victim/AppData/Local/staging/spreadsheet-4da71ab0-b5bf-40cc-9269-0a5f08a2b3a0.xlsx
+f 42d024a872c372c4e982e93690a2c4d9bf1a39646b1d3ecc41d42b489ce820e4 8192 C/Users/victim/AppData/Local/staging/spreadsheet-b14b843e-df61-4588-b0d3-f96fe7dc8c6d.xlsx
+f d94b50e772fae1f91aae2db4a0e19fe55505de70371b40b176225841439274c9 8192 C/Users/victim/AppData/Local/staging/spreadsheet-b787a830-1c5f-4ed3-b6f7-a070f5d89f66.xlsx
+f dcef975c8820e53eaf016e31a2861985436876da10cab0ed3958caf3f3e10dee 8192 C/Users/victim/AppData/Local/staging/spreadsheet-bf537d67-fa1e-471a-ab22-ce166733b7d7.xlsx
+f 5c54d5950e312aa8e8b25a86f51de7436afff7664c272f33effc1c87c74c32c4 8192 C/Users/victim/AppData/Local/staging/spreadsheet-c3fe7a11-e635-46c7-933e-13af39f3bf17.xlsx
+f ead26b8644ccfa3bc9b1e071b455a3a0f1fe084c360201f497aa43a140a44828 8192 C/Users/victim/AppData/Local/staging/spreadsheet-f302edca-36c7-4c1b-8beb-60e88088826c.xlsx
+d C/Users/victim/AppData/Roaming/
+d C/Users/victim/AppData/Roaming/Microsoft/
+d C/Users/victim/AppData/Roaming/Microsoft/Windows/
+d C/Users/victim/Desktop/
+f 9d0396d449257efe08e7d1c1a25dc04de6cc651279a86f0d71337b6b9027a541 1024 C/Users/victim/Desktop/3PFQWPTUVU7T.encrypted
+f 7c3e3d99870abac906433e601644141e42dc805d7e5a3b9d8f55f5cb0f7f8c73 1024 C/Users/victim/Desktop/3W2ZAWZHFVV2.encrypted
+f f51dd86b73361026c41d7e615223f3496e14c6079d8ee252d88e7d64ec619e2c 1024 C/Users/victim/Desktop/4NPAIJCWYUXF.encrypted
+f b6847b6811c26377e3b4e78e6a520c20edb22feb51f5b653d5d614efc341f8b6 1024 C/Users/victim/Desktop/7LA545H4EQ34.encrypted
+f c96bfa4f3b8d0dd800836fcc48b3932973b50665cffff1c7b80adde543f09869 1024 C/Users/victim/Desktop/7YDZNYKY3QZZ.encrypted
+f acee9a2da7bd44c36503d6fc5c02b27ffd8621f671312b77316cc27ae2ad7ce6 1024 C/Users/victim/Desktop/AZINDD5RGW47.encrypted
+f 550a74136a2d7b994c6aae6122a868463f14272303a6ac36157b6d5b84caa229 1024 C/Users/victim/Desktop/BEN4VBBQOJML.encrypted
+f 74360376a44f464d49f3fc351a2ba87422866c4ab50e928f01ecebf52defacc8 1024 C/Users/victim/Desktop/CHIE5ZFC5QI6.encrypted
+f d04ac7100593d81a6c1576bba846a62a3a8472fb7c53c79f0728c8380ed50d26 1024 C/Users/victim/Desktop/E4ZZBUMKGFTS.encrypted
+f 4da9cf05828aeb33be2bb4c0746e704d937e0f2c6f632ea6b3f98b73d0319208 1024 C/Users/victim/Desktop/EMTZQLBJOM3K.encrypted
+f 1d51a1dc23cd3b40fc2847385b41e8379f95662ab4cbffc425e01c81c58e4252 1024 C/Users/victim/Desktop/GXKXSANU4XFR.encrypted
+f 8f074846aecab4294025c2bd9a2cb08c40c4d251d64eb342ffc2cb2a91242ebf 1024 C/Users/victim/Desktop/H6ACXQYF53LI.encrypted
+f 3dfe89ba1e7ff150d237be2ce635757de5edf014b62537010e01834c0d6e5381 2048 C/Users/victim/Desktop/IMPORTANT_0.txt.encrypted
+f 6cc3384274ef7389ce401701083962dc6543075fd1e99bcb1150bbaed6c125f4 2048 C/Users/victim/Desktop/IMPORTANT_1.txt.encrypted
+f 5677089a564ce6f518e402aca28edba42283c9065afa5d349a1f1f5a2c26eb12 2048 C/Users/victim/Desktop/IMPORTANT_10.txt.encrypted
+f f388c30fbb663af4f5da97a308b8543af0bcb2411736ea9491d112c2e8ee11e4 2048 C/Users/victim/Desktop/IMPORTANT_11.txt.encrypted
+f c3beeabc52efcdbffea634791183eb45c1722e700085ba7ec5532d446ebde3ad 2048 C/Users/victim/Desktop/IMPORTANT_12.txt.encrypted
+f 137062d8becf70941244f5686da5cc47cdf2b6ae011d438bc89a3467ca224a14 2048 C/Users/victim/Desktop/IMPORTANT_13.txt.encrypted
+f 5ff443fbaa619a6dc80d2c83713359736b21e1f05e52443c73c63a01ab68cf78 2048 C/Users/victim/Desktop/IMPORTANT_14.txt.encrypted
+f 64b120a2a6cfe0b5392a56633d10a36731956714e7c54467611c30a88239486c 2048 C/Users/victim/Desktop/IMPORTANT_15.txt.encrypted
+f b1366fc7e084e03e724f2b5b294c67f28d475267fffbe9296457319bb5025694 2048 C/Users/victim/Desktop/IMPORTANT_16.txt.encrypted
+f 1fd0105996e3d279c6c9f32a6dc30ebbdd5d93069553730da9b9d8680c3593bc 2048 C/Users/victim/Desktop/IMPORTANT_17.txt.encrypted
+f 74af350138c41a89160ecdfa161737dd46447d41fe955db97536356f33ecbd30 2048 C/Users/victim/Desktop/IMPORTANT_18.txt.encrypted
+f 5f082bd522722998855b0bf2ed0b0c9b7254c3a4c0479a6036b808f85f106084 2048 C/Users/victim/Desktop/IMPORTANT_19.txt.encrypted
+f a08d500ecdef1421862a7bf9095a6d434fcb06b20a6b6b1f627e8f28d1dfc472 2048 C/Users/victim/Desktop/IMPORTANT_2.txt.encrypted
+f e727bb3f23a84145ca6c42c4629646e2c0c56fb31436f17b09076ada9af15673 2048 C/Users/victim/Desktop/IMPORTANT_20.txt.encrypted
+f f27ec1f7112f4e4f3f34847e7e34c629e61b310eec558d326b441370524d27f7 2048 C/Users/victim/Desktop/IMPORTANT_21.txt.encrypted
+f 72facbdddbe8303c46bfe17b0d00d454f31572a3c1342ff381adbb0f3ebb1acf 2048 C/Users/victim/Desktop/IMPORTANT_22.txt.encrypted
+f 04e0c8013f8f462180f90f89ee4301bfb817258a92409383a4749fa926ed3804 2048 C/Users/victim/Desktop/IMPORTANT_23.txt.encrypted
+f 4b1a5dbb191573612ea14c0f9bcf80facac11f283428a3b0b31df842420985ce 2048 C/Users/victim/Desktop/IMPORTANT_24.txt.encrypted
+f 35af75f4b03c9ed30fd3f1a0f696cd259088f4eb4c961bed24ece04cd23881d3 2048 C/Users/victim/Desktop/IMPORTANT_25.txt.encrypted
+f 38c7bb58a19fc6fcbd2bf33fd31d31be11c6e5b5cfd9d1a946a12fad140711eb 2048 C/Users/victim/Desktop/IMPORTANT_26.txt.encrypted
+f db805b10ef2242969ff7e2c8fe5dadcf989da74e70a6e849158c6fa017738677 2048 C/Users/victim/Desktop/IMPORTANT_27.txt.encrypted
+f 4bfb9585686457f7f99da179048c81c85a6072ce3e2eecb90223a1b14d00db40 2048 C/Users/victim/Desktop/IMPORTANT_28.txt.encrypted
+f d1d895efc36d87d6208709be3d2f64ebd09633ab5e562fe84763f8dec4ded2e2 2048 C/Users/victim/Desktop/IMPORTANT_29.txt.encrypted
+f 4b33cf28f97ed635fea46f3ea9df2f3f2bf5c610fa0855f9d0676990248ea900 2048 C/Users/victim/Desktop/IMPORTANT_3.txt.encrypted
+f 2f6a53d972773e4cd6acdb0d735c060341b503e34c166a0c09d2dbeaf699630f 2048 C/Users/victim/Desktop/IMPORTANT_30.txt.encrypted
+f d428b7cf14d6647177d457d2ebffd618bcd572f56c9005443a5eef05fd416e01 2048 C/Users/victim/Desktop/IMPORTANT_31.txt.encrypted
+f ae8569cb74dadf2ed4e870c1b76c796ceab6b727d5563241de82844d21c709bf 2048 C/Users/victim/Desktop/IMPORTANT_32.txt.encrypted
+f 12ea509e7690d079cf0829ebfd4f1245c188909ac09100d58e230f1078922756 2048 C/Users/victim/Desktop/IMPORTANT_33.txt.encrypted
+f 09da02917d551d4c7d13bc49592358b4b2e22d7748dd3611a4e1981ed46f0352 2048 C/Users/victim/Desktop/IMPORTANT_34.txt.encrypted
+f 4fa67e429a4efc72a7a732c96ceef77bb50375335650a14615d946a3b6fd09e3 2048 C/Users/victim/Desktop/IMPORTANT_35.txt.encrypted
+f 4b9fb2dec6060bc4b01aef916aef47bd59e5c2649eddb8a0dbd649d90da7026e 2048 C/Users/victim/Desktop/IMPORTANT_36.txt.encrypted
+f 57fa4f34ef68c86048371e1fa1803fa9fcb5761afaced0eca9793a6d004884f9 2048 C/Users/victim/Desktop/IMPORTANT_37.txt.encrypted
+f e49b68c7b9ff4c78139f3130bf2f422e387103cad8d828a4b09f08e2a3f3ef2f 2048 C/Users/victim/Desktop/IMPORTANT_38.txt.encrypted
+f cc640c8ce2dbc28f62ebbcb755ff147bb5de65c4bd11826ba7d304f875b96f83 2048 C/Users/victim/Desktop/IMPORTANT_39.txt.encrypted
+f a496b817b8ff69185df6d6f011038608f206a176d676b968bbb26f1af71d1f57 2048 C/Users/victim/Desktop/IMPORTANT_4.txt.encrypted
+f ff7ada0d2307aba7360e4b71ad6b35bce8b76ae64cb16bb5c599fc4d34da7ec6 2048 C/Users/victim/Desktop/IMPORTANT_40.txt.encrypted
+f 1a0893ab0b08893eb31a58b954809e990e5b2f06ad02d05963562ee853fac652 2048 C/Users/victim/Desktop/IMPORTANT_41.txt.encrypted
+f 16aa8a577666b4b055838253f70211783989c5ba98009522ff541e376061f4df 2048 C/Users/victim/Desktop/IMPORTANT_42.txt.encrypted
+f 9652f8dd1fd122b191686abd944cbf9da13bbb3dbac71280cd336238d8f8fced 2048 C/Users/victim/Desktop/IMPORTANT_43.txt.encrypted
+f ef4220f94c33a82c39619f5b284db02ed83e99be7ccb8d9a4c9cf230432df480 2048 C/Users/victim/Desktop/IMPORTANT_44.txt.encrypted
+f e9cf0f036a14e2de9b4ebef3efd4f52877028850a433e9a306b31f01a811e892 2048 C/Users/victim/Desktop/IMPORTANT_45.txt.encrypted
+f 7f9ece791d33f6834f2a57ed22eb1813715a06d10882312be24abb5b1b8d7e1c 2048 C/Users/victim/Desktop/IMPORTANT_46.txt.encrypted
+f 51044208cb7de4c73e1c989e9d7a4a16f978e491caa0dfb6cc3fb22f349a97bf 2048 C/Users/victim/Desktop/IMPORTANT_47.txt.encrypted
+f 72c79cd5389e7b44cc883807fab074ac09e6a34328768c11cf12884afc727d4c 2048 C/Users/victim/Desktop/IMPORTANT_48.txt.encrypted
+f 42487f0d285b6f79294bef1ff3fffb81dd773d466800a22ec2846b0e8439c2be 2048 C/Users/victim/Desktop/IMPORTANT_49.txt.encrypted
+f 5891ee371f1737ca4a41353ed2de67a92f052c7c41de86a111bd252f212f01af 2048 C/Users/victim/Desktop/IMPORTANT_5.txt.encrypted
+f fe58ee9b5867caead084b67184ffe9a4cd7fdf2fdd89a9280615a41878be95f8 2048 C/Users/victim/Desktop/IMPORTANT_6.txt.encrypted
+f 789b1b4264e8c6a13ed4f5d1916fc43908e8c079791cb66497b310ccc7821b19 2048 C/Users/victim/Desktop/IMPORTANT_7.txt.encrypted
+f 2d18b437b71ef58f28ced8bc4d3348cc3581f02d0a00e6fed462ea91ad532c92 2048 C/Users/victim/Desktop/IMPORTANT_8.txt.encrypted
+f 9869a3430cba19db5e9abb13ff4808da5908e4ea3814d0d6c3a4e75d4813a614 2048 C/Users/victim/Desktop/IMPORTANT_9.txt.encrypted
+f 1c1c9d3514440a8885835f17d139f63cd0d323205c335c759d24ccc8a598eb7a 1024 C/Users/victim/Desktop/KT6CDJS5WD2A.encrypted
+f a3dafac30b577a6ffd5186990e69570ba1f9a045a0f9c28f2dc98e046b997f29 1024 C/Users/victim/Desktop/LVSJ7RYBKQA6.encrypted
+f e20f55083c38ad0bfafab1f5fee2d82e13f13484460818059a0a45eea780f7bd 1024 C/Users/victim/Desktop/PSMNI57MRAP7.encrypted
+f 4ba71068ab84f9c541473e7dcac4739a9b5cfd3f9f91f1241ef84e7871c79452 1024 C/Users/victim/Desktop/PUF4Y24XUHFR.encrypted
+f 8ee91b3b7d9f90c66803fc5d1131d5a1775b51c8c3e7fd3b18c3fecefc84a9de 1024 C/Users/victim/Desktop/Q66MXIGWVZSJ.encrypted
+f 37958462ff21f049d4c3688341710184f50f5d96468507080bae763423bfa3a3 199 C/Users/victim/Desktop/README_RW2024-A.txt
+f 990462fa132411ceaeaf4e086a4f83c26003a47ab112689626d9ebc447e52ec1 1024 C/Users/victim/Desktop/RMA4FUWOCCGM.encrypted
+f b16a5cfa00525b9cd36afb79d83ee812a160c0aa015047016bc3a9a66a08850b 1024 C/Users/victim/Desktop/RZSEX7DORWAY.encrypted
+f 89232991abca724bda2fcd0a8867770ed5a53b28ce05f52dd192472ae1fd2f76 1024 C/Users/victim/Desktop/TMF3SAFVJF4M.encrypted
+f 3b4580ff5f64f509f856f3c7b525bfb3b41d314959de49d7e58f0b355962eccd 1024 C/Users/victim/Desktop/V45HCVOYFFRL.encrypted
+f 5b167534ebf1de31987df3d3bd28920c5437877c7f0336da24967228d7565023 1024 C/Users/victim/Desktop/VO7BW3SMY6YT.encrypted
+f 732e37106106b322810b4209589bbabfdb221edda54ecca65ffda40234c7c489 1024 C/Users/victim/Desktop/VS3DR263OAWV.encrypted
+f d644d267edbff6725db2d9b7afbc5d340f55fd81f534775df926bd107253ed77 1024 C/Users/victim/Desktop/WTK56EJERDIY.encrypted
+f 3394dc1ddf4ea342364556ca0e508cd43ba734fa0a586120ab5efb4a068aff3c 1024 C/Users/victim/Desktop/YELR5GMH6LA2.encrypted
+d C/Users/victim/Documents/
+f d80833a8cbf4582c138985b371e783042503479daac50cd28ed2ed66180a5978 31 C/Users/victim/Documents/README.txt
+d C/Windows/
+d C/Windows/System32/
+d C/Windows/System32/winevt/
+d C/Windows/System32/winevt/Logs/
+f 6c843422008e95bad3f518b03596a269155896a440d500bc986ab168129acf4c 512 C/Windows/System32/winevt/Logs/Security.evtx
+d C/Users/victim/AppData/Roaming/Microsoft/Windows/Start Menu/
+d C/Users/victim/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/
+d C/Users/victim/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/
+f 42ecd54caf060feb25c56ff11f59e305c3dbbe97a020796968a7daf2267e4665 147 C/Users/victim/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/updater.bat
