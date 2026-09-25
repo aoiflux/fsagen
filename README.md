@@ -14,6 +14,8 @@ Deterministic generator for creating diverse file-system artifacts to test foren
 - Real `$ANSIBLE_VAULT;1.1;AES256` files that `ansible-vault` can decrypt
 - Extensive file type support: documents, logs, archives, media, emails, Windows artifacts
 - All four timestamps (access, modification, change, creation) taken from the scenario on Windows NTFS, access and modification elsewhere; set, then settled and verified after the last operation (see *Timestamps*)
+- Forensic timelines in The Sleuth Kit's bodyfile, a mactime-style MACB listing, CSV, JSON lines and text, with four times per entry and every NTFS stream; observed (read back from disk) or modelled (what the scenario intends, deleted files included, byte-identical on every run)
+- A ledger of every operation and an answer key of what a tool should find, beside the output
 - Octal file permissions
 - Windows-specific: NTFS ADS and Mark-of-the-Web (MoTW)
 
@@ -55,9 +57,11 @@ fsagen [OPTIONS] <output-path>
 - `--on-unsupported fail|skip` - What to do with operations the platform cannot perform (default `fail`, before anything is written; `skip` generates the rest and records each skipped operation)
 - `--allow-nonportable` - Allow paths that only work on some platforms (reserved device names, case-only differences, very long paths)
 - `--allow-external-sources` - Allow `content_file`, email bodies and attachments from outside the YAML file's directory
-- `--meta DIR` - Where to write `run-manifest.json`, `SHA256SUMS`, `ledger.jsonl` and `run-info.json` (default: `<output-path>.fsagen`, beside the output)
+- `--meta DIR` - Where to write `run-manifest.json`, `SHA256SUMS`, `ledger.jsonl`, `answer-key.jsonl` and `run-info.json` (default: `<output-path>.fsagen`, beside the output)
 - `--timeline FILE` - Write a timeline of the output after generating; `FILE` must be outside the output directory
-- `--timeline-format csv|txt|bodyfile|macb` - Timeline format (default: from the extension: `.csv`, `.txt`, `.bodyfile`, `.body`, `.macb`; any other extension is an error)
+- `--timeline-format csv|txt|bodyfile|macb|jsonl` - Timeline format (default: from the extension: `.csv`, `.txt`, `.bodyfile`, `.body`, `.macb`, `.jsonl`; any other extension is an error)
+- `--timeline-source observed|modelled` - `observed` (default) reads the output back from disk; `modelled` writes what the scenario intends, including the objects it deleted, and is the same bytes on every run (needs `--manifest` or `--playbook`). See *Forensic Timeline Generation*
+- `--hash-limit N` - Observed timeline: leave out the MD5 of files and streams larger than N bytes (default: hash everything)
 - `--generate-schema` - Write JSON schemas for manifests and playbooks and exit (`--schema-out DIR`, default `schemas`)
 - `--version` - Print the module version, generator version and build
 
@@ -67,9 +71,10 @@ fsagen [OPTIONS] <output-path>
 
 **Run records:** every generation writes three files beside the output (never inside it):
 
-- `run-manifest.json`: generator version, Go version, seed, SHA-256 of every input read, options, capabilities (including which times can be set), skipped operations and dropped time fields, the digests of `SHA256SUMS` and `ledger.jsonl`, and a status that reads `running` until the run ends and then `complete` or `failed`. A tree whose run manifest does not say `complete` is not a finished corpus. It holds no absolute path, host name or wall-clock time, so it is itself reproducible.
+- `run-manifest.json`: generator version, Go version, seed, SHA-256 of every input read, options, capabilities (including which times can be set), skipped operations and dropped time fields, the digests of `SHA256SUMS`, `ledger.jsonl` and `answer-key.jsonl`, the timeline written after the run (its source and format, and for a modelled one its digest), and a status that reads `running` until the run ends and then `complete` or `failed`. A tree whose run manifest does not say `complete` is not a finished corpus. It holds no absolute path, host name or wall-clock time, so it is itself reproducible.
 - `SHA256SUMS`: the SHA-256 of every file and NTFS stream in the output (`path:stream`), in `sha256sum` format, sorted by path. Check a corpus with `sha256sum -c` from inside the output directory.
-- `ledger.jsonl` (manifest and playbook runs): one line per operation: the object it acted on (a number that survives renames), its content SHA-256 before and after, its size and streams, the times the scenario intends it to have, which times were left to the file system (`uncontrolled`), and whether it was done, a no-op or skipped. A failed run still writes the ledger up to the failing operation.
+- `ledger.jsonl` (manifest and playbook runs): one line per operation: the object it acted on (a number that survives renames; for a rotate, also the object it moved aside), its kind, its content SHA-256 before and after (and MD5 after), its size and streams, the stream an `ads` or `motw` wrote, the times the scenario intends it to have, which of them the operation stated itself (`explicit`), which were left to the file system (`uncontrolled`), and whether it was done, a no-op or skipped. A failed run still writes the ledger up to the failing operation.
+- `answer-key.jsonl` (complete manifest and playbook runs): what a tool examining the output should find, derived from the ledger and the model, one fact per line: each object `created`, `modified` (content), `renamed` (with `from`), `deleted`, `stomped` (a `mace`, with the fields it set), each named `stream` written, and each object that ends with an `mtime_before_crtime` (a copy has one without being stomped, as copies do). Directories made only as missing parents are not listed as created. `TestAnswerKeyEntries` checks every kind of fact.
 - `run-info.json`: what is not reproducible: build revision, host, OS, file system, the host's last-access-time policy, absolute paths and start and finish times.
 
 **Examples:**
@@ -442,6 +447,16 @@ the volume's resolution fails the run and lists the differences. On Windows
 the times are set through handles opened relative to the output root, all
 four in one call (`FILE_BASIC_INFO`).
 
+The resolution is 100 ns on NTFS and ReFS, and FAT's and exFAT's own where
+the volume is one of those. Elsewhere on Unix it is read from the output
+directory's change time, which only the kernel sets: on a volume that keeps
+whole seconds (ext3, ext4 with 128-byte inodes, which `mkfs.ext4` picks below
+512 MB, HFS+) it always falls on a whole second, and there times are checked
+to the second; otherwise to the microsecond
+(`TestGranularityFromRootChangeTime`, run on tmpfs, btrfs and such an ext4).
+The ledger and the modelled timeline keep the fractions the scenario asked
+for either way.
+
 What can be set:
 
 | | Windows (NTFS, ReFS) | Windows (FAT, exFAT) | Linux, macOS, FreeBSD |
@@ -469,7 +484,17 @@ Limits:
   again a few times before failing, and the error says so.
 - `mode` is applied when a file is written; times are stamped after it, so a
   chmod does not disturb them. Windows honours only the write bit; the field
-  matters on Linux output.
+  matters on Linux output. An explicit `mode` on a directory `create` is for
+  that directory; missing parents get the default `0755`.
+- Other software can change the output after fsagen finishes. On Windows 10,
+  Windows Search adds an `OECustomProperty` stream to `.eml` files in indexed
+  folders (the user profile outside `AppData`) within seconds, and holds it
+  open while it does; Defender's machine-learning detection has flagged
+  fsagen itself (`Trojan:Win32/Bearfoos.B!ml`) while it wrote the persistence
+  artifacts of `playbook-malware-lifecycle.yaml`, and removes files it
+  suspects. Generate into a folder that is neither indexed nor scanned; the
+  ledger, answer key and modelled timeline describe what fsagen wrote either
+  way.
 
 Verified by `TestCreateSetsCreationTime`, `TestMaceSetsFourTimes`,
 `TestMaceLeavesUnnamedTimes`, `TestQuilldropLiteStompCount`,
@@ -482,8 +507,9 @@ Verified by `TestCreateSetsCreationTime`, `TestMaceSetsFourTimes`,
 `TestDroppedTimeFieldRecorded`, `TestRunManifestTimeCapabilities`,
 `TestSettleRetriesOnlyForAccessTimes`,
 `TestChangeTimeSticks` and `TestTimelinePassKeepsAtime`. The creation and
-change time tests run on Windows; on Linux and macOS they are skipped, and
-the release check runs the rest there.
+change time tests run on Windows (11 and 10); on Linux they are skipped, and
+the rest pass on Fedora 40, on tmpfs and btrfs. macOS is part of the release
+check.
 
 ## Determinism contract
 
@@ -498,7 +524,8 @@ is recorded in `run-manifest.json`), the same `--seed` and the same **inputs**
    `SHA256SUMS`;
 2. set of relative paths;
 3. `--dry-run` listing (with each operation's intended times),
-   `ledger.jsonl` and `run-manifest.json`.
+   `ledger.jsonl`, `answer-key.jsonl` and `run-manifest.json`;
+4. the modelled timeline (`--timeline-source modelled`), in every format.
 
 This holds on every platform, for every operation the platform supports.
 Which operations were skipped as unsupported is recorded, and follows from the
@@ -511,7 +538,8 @@ its iteration and batch, the field, the token), so adding, removing or
 reordering an unrelated action changes nothing else. Nothing reads the wall
 clock except `start: now`, which marks the run as not reproducible.
 
-**Not covered:** anything read back from the live file system: timelines;
+**Not covered:** anything read back from the live file system: observed
+timelines;
 the times on disk themselves (the ledger states what they are meant to be,
 and the verify pass checks them within the run); times the ledger lists as
 uncontrolled; NTFS `$FILE_NAME` times; file IDs, allocation and directory order; `run-info.json`; runs with
@@ -519,11 +547,14 @@ uncontrolled; NTFS `$FILE_NAME` times; file IDs, allocation and directory order;
 
 Verified by `TestDeterminismHarness` (every example and bulk mode, two runs
 into different directories, and a different seed), the version-pinned goldens
-(`TestExampleContentGoldens`, which also pins each example's ledger, and
-`TestDryRunGoldens`), `TestBulkDeterministic`,
+(`TestExampleContentGoldens`, which also pins each example's ledger, answer
+key and modelled bodyfile, and `TestDryRunGoldens`), `TestBulkDeterministic`,
 `TestNoWallClockInContent`, `TestInsertingUnrelatedActionLeavesOtherFilesUnchanged`
-and `TestCrossCapabilityContentEquality`. It has been run on Windows; the
-Linux and macOS runs are part of the release check.
+`TestModelledTimelineIdenticalAcrossRuns` and
+`TestCrossCapabilityContentEquality`. The whole suite has been run on Windows
+11, Windows 10 and Fedora 40 (Linux goldens recorded there: every file is
+byte-identical to Windows, less the NTFS streams); macOS is part of the
+release check.
 
 ## Supported File Types
 
@@ -545,66 +576,92 @@ formats they refuse to fake.
 
 ## Forensic Timeline Generation
 
-After generating artifacts, fsagen can automatically create forensic timelines for analysis:
+After generating, fsagen can write a timeline of the output, from one of two
+sources:
+
+- **observed** (the default): read back from the file system after the run,
+  as a tool examining the output would see it. It is not covered by the
+  determinism contract: inode numbers, directory sizes and anything another
+  process touched afterwards differ from run to run.
+- **modelled** (`--timeline-source modelled`): built from the run's model and
+  ledger, reading nothing from disk: the times, sizes and digests the scenario
+  intends, **including the objects it deleted**, marked `(deleted)` as The
+  Sleuth Kit marks them, which an observed timeline can never show. It is the
+  same bytes on every run with the same inputs and capability set
+  (`TestModelledTimelineIdenticalAcrossRuns`, and the determinism harness on
+  every example). Its inode column is the ledger's object number, its mode is
+  the one fsagen requests (before any umask), a directory's size is 0, and a
+  time the platform cannot set is unknown rather than the scenario's wish. The
+  text formats say which source they are; the run manifest records the source
+  of every timeline, and the digest of a modelled one.
 
 ```pwsh
-fsagen --playbook scenario.yaml --timeline output.csv ./artifacts
+fsagen --seed 42 --playbook scenario.yaml --timeline case.body ./artifacts
+fsagen --seed 42 --playbook scenario.yaml --timeline intended.body --timeline-source modelled ./artifacts2
 ```
 
-**Timeline Formats:**
+**Formats** (from `--timeline-format` or the extension; an unknown extension is
+an error, never a silent fall-back):
 
-- **CSV** (`.csv`): Structured data with all metadata (path, size, mode, timestamps, MD5, type, ADS)
-- **TXT** (`.txt`): Human-readable format with detailed file information
-- **Bodyfile** (`.bodyfile` or `.body`): The Sleuth Kit's bodyfile layout, for `mactime -b`
-- **MACB** (`.macb`): modified, accessed and changed events listed separately
+- **Bodyfile** (`.bodyfile`, `.body`): The Sleuth Kit's bodyfile,
+  `MD5|name|inode|mode|UID|GID|size|atime|mtime|ctime|crtime`: names from the
+  output root with a leading `/` and no root entry, `name:stream` for each
+  named stream and `name (deleted)` for a deleted object (modelled only), TSK
+  mode strings (`r/rrw-r--r--`), times in whole seconds, and `0` for an
+  unknown time or an MD5 that was not computed. `mactime` reads it
+  (`TestMactimeAccepts`, run on Linux with The Sleuth Kit 4.12.1);
+  `TestBodyfileStrictParserRoundTrip` parses every line of an observed and a
+  modelled bodyfile strictly.
+- **MACB** (`.macb`): one line per entry and distinct instant, in time order,
+  as `mactime` prints it: the flags say which of the entry's times fall then
+  (`MACB` when all four agree, `M...` and `.A.B` when they do not;
+  `TestMACBSixteenCombinations` covers every combination).
+- **CSV** (`.csv`): one row per entry: path, stream, type, size, mode, UID,
+  GID, inode, the four times (RFC 3339 with fractions, empty when unknown),
+  MD5 and deleted.
+- **JSON lines** (`.jsonl`): the same fields, one object per entry, with an
+  octal mode.
+- **Text** (`.txt`): a readable listing, one block per entry.
 
-The format comes from `--timeline-format` or the extension; an unknown extension
-is an error, never a silent fall-back. The timeline file must lie outside the
-output directory, or it would describe itself.
+**Every entry has four times**: accessed, modified, changed (metadata) and
+born (created), each read from its own source and never copied into another:
+`FILE_BASIC_INFO` on Windows, `statx` on Linux (the birth time only where the
+file system keeps one), `lstat` on macOS and FreeBSD
+(`TestBodyfileCrtimeNotCtime`, `TestLinuxBtimeFromStatxOrZero`). Every named
+stream is its own entry, with its size and MD5 and its file's times
+(`TestStreamsQuillAndSpaceNameWithSizes`). The inode is the NTFS MFT record
+number on Windows and the inode number on Unix; UID and GID are the owner on
+Unix and 0 on Windows. On Windows the mode is written as The Sleuth Kit writes
+it for NTFS (`rwxrwxrwx`, less the write bits of a read-only file).
 
-**Timeline Features:**
+**Reading does not change what is read**: every digest and directory listing
+goes through a handle that leaves access times alone (Windows; Linux when you
+own the files; `TestTimelinePassKeepsAtime`). Anything the walk cannot read is
+an error that names it, never a shorter timeline (`TestWalkErrorReported`).
+The whole timeline is built before its file is written. Entries are sorted by
+modification time, then path; all times are UTC.
 
-- MD5 hash calculation for all files (except files > 100MB)
-- Access and modification times, plus a third time that is the creation time on Windows and the inode change time on Unix (the bodyfile currently writes it in both its ctime and crtime columns)
-- Every named NTFS stream on each file (Windows; `TestTimelineListsEveryStream`)
-- Reading files for their digests and listing directories does not move their access times (Windows; Linux when you own the files; `TestTimelinePassKeepsAtime`)
-- Chronologically sorted by modification time (equal times by path); all times in UTC
-- **Timeline-only mode**: Generate timelines from an existing directory without regenerating it
+**Checked against The Sleuth Kit** (by hand, 2026-09-26; not part of the test
+suite): a scenario with renames, a copy, a timestomp, streams, explicit
+creation and change times and a deletion was generated onto a fresh ext4 image
+(Fedora 40) and onto an NTFS volume (Windows 10), and each image was read with
+`fls -r -m` (TSK 4.12.1). Every file and stream record of the observed
+bodyfile matched `fls` in inode, mode, owner, size and all four times; the
+only difference was the size of directories on NTFS, which Windows does not
+report and TSK reads from the directory index. The modelled bodyfile's times
+matched every live record, and on NTFS `fls` recovered the deleted file's MFT
+record with the same size and four times as the modelled `(deleted)` entry.
 
-**Example workflows:**
+**Timeline-only mode**: `fsagen --timeline FILE DIR` writes an observed
+timeline of an existing directory without generating anything.
 
 ```pwsh
-# Generate ransomware scenario with CSV timeline
-fsagen --seed 999 --playbook examples/playbook-comprehensive-ransomware.yaml --timeline ransomware.csv ./scene
-
-# Create timeline compatible with mactime
-fsagen --playbook examples/playbook-malware-lifecycle.yaml --timeline evidence.bodyfile ./analysis
-mactime -b evidence.bodyfile -d > detailed-timeline.txt
-
-# Generate MACB timeline for temporal analysis
-fsagen --playbook examples/playbook-insider-threat-exfil.yaml --timeline investigation.macb ./case
-
-# Timeline-only mode: generate timeline from existing artifacts (no regeneration)
-fsagen --timeline existing-timeline.csv ./already-generated-folder
+fsagen --timeline existing.csv ./already-generated-folder
+fsagen --timeline evidence.body ./investigation
+mactime -b evidence.body -d > detailed-timeline.txt
 ```
 
-**Timeline-only mode:**
-
-If you've already generated artifacts but forgot to create a timeline, you can generate one later without regenerating the artifacts:
-
-```pwsh
-# Generate timeline from existing folder
-fsagen --timeline my-timeline.csv ./existing-artifacts
-
-# Different formats
-fsagen --timeline analysis.txt ./crime-scene
-fsagen --timeline evidence.bodyfile ./investigation
-fsagen --timeline temporal.macb ./case-folder
-```
-
-This scans the folder, collects all file metadata, calculates MD5 hashes, and outputs the timeline in your chosen format—no artifact regeneration needed.
-
-See `examples/TIMELINE_EXAMPLES.md` for more timeline generation examples.
+See `examples/TIMELINE_EXAMPLES.md` for more.
 
 ## Bulk Generation (no YAML)
 

@@ -7,6 +7,9 @@
 //     the same generator version, toolchain, seed, inputs and capability set
 //     give the same bytes on any machine.
 //   - SHA256SUMS: the digest of every file and named stream in the output.
+//   - ledger.jsonl: what each operation did (see package ledger).
+//   - answer-key.jsonl: what a tool examining the output should find,
+//     derived from the ledger and the model.
 //   - run-info.json: everything about the run that is not deterministic
 //     (build revision, host, platform, absolute paths, wall-clock times).
 package runinfo
@@ -62,7 +65,19 @@ type Manifest struct {
 	Operations       int             `json:"operations"`
 	Skipped          []Skipped       `json:"skipped,omitempty"`
 	Outputs          *Outputs        `json:"outputs,omitempty"`
+	Timeline         *Timeline       `json:"timeline,omitempty"`
 	Failure          string          `json:"failure,omitempty"`
+}
+
+// Timeline records the timeline written after a complete run. Its digest
+// is recorded only for a modelled timeline: an observed one is read back
+// from the file system and differs from run to run.
+type Timeline struct {
+	Source    string `json:"source"`
+	Format    string `json:"format"`
+	File      string `json:"file"`
+	HashLimit int64  `json:"hash_limit,omitempty"`
+	SHA256    string `json:"sha256,omitempty"`
 }
 
 // Options are the flags that change what is generated.
@@ -111,7 +126,8 @@ type Outputs struct {
 	SHA256SUMS string `json:"sha256sums"` // SHA-256 of the SHA256SUMS file
 	Files      int    `json:"files"`
 	Streams    int    `json:"streams"`
-	Ledger     string `json:"ledger_sha256,omitempty"` // SHA-256 of ledger.jsonl
+	Ledger     string `json:"ledger_sha256,omitempty"`     // SHA-256 of ledger.jsonl
+	AnswerKey  string `json:"answer_key_sha256,omitempty"` // SHA-256 of answer-key.jsonl
 }
 
 // New starts a run manifest.
@@ -203,6 +219,15 @@ func WriteLedger(dir string, entries []ledger.Entry) (string, error) {
 	data := ledger.Bytes(entries)
 	return digest(data), writeAtomic(dir, ledger.FileName, data)
 }
+
+// WriteAnswerKey writes answer-key.jsonl into dir and returns its SHA-256.
+func WriteAnswerKey(dir string, facts []ledger.Fact) (string, error) {
+	data := ledger.FactBytes(facts)
+	return digest(data), writeAtomic(dir, ledger.AnswerKeyFileName, data)
+}
+
+// Digest is the SHA-256 of data in hex.
+func Digest(data []byte) string { return digest(data) }
 
 // Sums lists the SHA-256 of every file and named stream under fsys in
 // sha256sum's format ("<hex>  <path>"), with slash paths, a stream written

@@ -1,6 +1,180 @@
 # Changelog
 
-## Unreleased: P2, timestamps that mean what the scenario says
+## Unreleased: P3, timelines and ground truth
+
+Generator version: **4**. File and stream contents and the dry-run listing are
+unchanged for every example (the v4 goldens equal v3's). The ledger gains
+fields, the answer key is new, and the modelled timeline is a new covered
+output, which is why the version moves.
+
+### Timelines
+
+- **Four times per entry, each from its own source** (F-TL-2): access,
+  modification, metadata change and birth, read with `FILE_BASIC_INFO` on
+  Windows, `statx` on Linux (birth only where `STATX_BTIME` is reported) and
+  `lstat` on the BSDs. Before, a third column held the creation time on Windows
+  and the change time elsewhere, and the bodyfile wrote it as both ctime and
+  crtime. An unknown time is 0 in the bodyfile and never copied from another.
+- **Every named stream is its own record** (F-TL-4), `name:stream`, with its
+  size and MD5 and its file's times, as The Sleuth Kit lists them.
+- **The bodyfile is The Sleuth Kit's** (F-TL-6): names with a leading `/` and
+  no root entry, TSK mode strings, `0` for an MD5 not computed, real inode
+  numbers (the MFT record number on NTFS) and, on Unix, UID and GID. Files
+  are hashed as streams of any size; `--hash-limit N` is the explicit cap
+  (the silent 100 MB cut-off is gone). A name with `|` or a line break is an
+  error, not a broken line. On Windows the mode is written as TSK writes it
+  for NTFS.
+- **MACB groups an entry's times by instant** (F-TL-7): one line per entry
+  and distinct time, with `MACB`, `M.C.`, `...B` and so on.
+- **A walk error is an error** (F-TL-8), naming the path, instead of a
+  silently shorter timeline; the timeline is built in full before its file is
+  written. Stream digests now go through quiet handles as well.
+- **`--timeline-source modelled`** (D-2, F-TL-5): the timeline the scenario
+  intends, built from the model and the ledger without reading the disk. It
+  lists deleted objects as `name (deleted)`, its inode column is the ledger's
+  object number, and it is the same bytes on every run with the same inputs
+  and capability set, in every format. `--timeline-source observed` (the
+  default) is the old behaviour, read back from disk.
+- **New format `jsonl`** (`.jsonl`); CSV and text rewritten for the four
+  times and streams. The text formats say which source they are; the run
+  manifest records the source, format and file name of the timeline, and the
+  digest of a modelled one.
+
+### Ground truth
+
+- **`answer-key.jsonl`** in the sidecar, derived from the ledger and the
+  model: every object `created`, `modified`, `renamed` (with `from`) and
+  `deleted`, every `stream` written, every `stomped` (a `mace`, with the
+  fields it set), and every object that ends with an `mtime_before_crtime`.
+  Only a complete run has one; its digest is in the run manifest.
+- **Ledger** additions: `md5_after` and stream `md5` (for timelines),
+  `kind` on a delete, `stream` on `ads`/`motw`, `moved` on a rotate (the
+  object moved aside), and `explicit` (the time fields an operation stated
+  and that were applied).
+- **API:** `manifest.ExecuteFile` returns a `Result` (ledger, model,
+  capabilities) with `Timeline()` and `AnswerKey()`; `compile.Options` gains
+  `SkipUnsupported`; `timeline.Generate` takes `Options`; new
+  `timeline.Modelled`, `ledger.AnswerKey`; `sandbox.FS.Meta` and
+  `OpenStreamQuiet`.
+
+### Fixes to earlier phases, found by running on Linux and Windows 10
+
+The suite had only run on the Windows 11 development machine. Run on the lab
+VMs (Fedora 40 and Windows 10 22H2), it found:
+
+- **Verify failed on volumes that keep whole seconds** (P2). On Unix the time
+  resolution was assumed to be a microsecond, so on ext4 with 128-byte inodes
+  (what `mkfs.ext4` picks below 512 MB) and ext3 every fraction of a second a
+  scenario asked for (`subsecond_jitter`, `start: now`) failed the run. The
+  resolution now comes from the output directory's change time, which only
+  the kernel sets; FAT and exFAT are known by name.
+- **Tests that could not run on Linux** (P2): four time tests asked for
+  creation times or streams before checking the platform, and the example and
+  determinism tests did not skip unsupported operations. They now check first,
+  or skip what the platform cannot do and record it.
+- **Linux goldens** recorded on Fedora: every example's files are
+  byte-identical to Windows', less the NTFS streams.
+- **Modes**: an explicit `mode` on a directory `create` now applies to that
+  directory only (missing parents get `0755`), and a `rotate`'s `mode` is set
+  exactly rather than narrowed by the umask. Unix metadata only.
+
+### Checked against The Sleuth Kit
+
+By hand, not in the suite: a scenario with a rename, a copy, a timestomp,
+streams, explicit creation and change times and a deletion was generated onto
+an ext4 image (Fedora 40) and an NTFS volume (Windows 10) and read with
+`fls -r -m` (TSK 4.12.1). Every file and stream record of the observed
+bodyfile matched `fls` in inode, mode, owner, size and all four times, except
+directory sizes on NTFS (Windows reports none; TSK reads the index size). The
+modelled bodyfile's times matched every live record. On NTFS, `fls` recovered
+the deleted file's MFT record with the same size and four times as the
+modelled `(deleted)` entry, and listed the uncontrolled `$FILE_NAME` times as
+the wall-clock time of the run. `mactime` reads fsagen's bodyfile
+(`TestMactimeAccepts`, run on Fedora).
+
+### Found, documented, not changed
+
+- **Windows Search adds a stream.** On Windows 10 it wrote an
+  `OECustomProperty` stream to `.eml` files in an indexed folder within
+  twenty seconds, and held it open (which failed a bulk test with a sharing
+  violation). The corpus fsagen wrote is correct when the run ends; an
+  observed timeline or `sha256sum -c` taken later sees the extra stream.
+- **Defender flagged fsagen.** Its machine-learning detection removed a test
+  binary as `Trojan:Win32/Bearfoos.B!ml` while it wrote the persistence
+  artifacts of `playbook-malware-lifecycle.yaml`.
+- README: generate into a folder that is neither indexed nor scanned.
+
+### Documentation
+
+README's timeline section, `TIMELINE_FEATURE.md`, `examples/TIMELINE_EXAMPLES.md`
+and `examples/INVESTIGATION_WORKFLOW.md` rewritten. They had claimed that the
+same seed gives the same timeline (true only of the modelled one now),
+graceful handling of unreadable files, a 100 MB hash limit and imports into
+tools nothing verified. The workflow also regenerated into the same
+non-empty directory four times, which P0 refuses.
+
+### Evidence that each test can fail
+
+41 mutations, all killed; the Linux ones were built here and run on Fedora.
+Two first survived and are recorded as such: inventing a Linux birth time
+where statx reports none survived on btrfs and tmpfs, which both report one,
+and was killed on an ext4 with 128-byte inodes; treating a whole-second
+volume as a microsecond one survived against the examples, which use whole
+seconds, and was killed by the test aimed at it.
+
+| Finding | Mutation | Where | Test |
+|---|---|---|---|
+| F-TL-2 | change time read from the creation time | Windows | TestBodyfileCrtimeNotCtime |
+| F-TL-2 | Linux birth time copied from the change time | Fedora btrfs | TestLinuxBtimeFromStatxOrZero |
+| F-TL-2 | Linux birth time invented where statx has none | Fedora ext4 | TestLinuxBtimeFromStatxOrZero |
+| F-TL-2 | crtime column filled from ctime (the old bug) | Windows | TestBodyfileGolden |
+| F-TL-4 | streams left out | Windows | TestStreamsQuillAndSpaceNameWithSizes |
+| F-TL-4 | a stream given its file's size | Windows | TestStreamsQuillAndSpaceNameWithSizes |
+| F-TIME-4 | stream digests move the access time | Windows | TestTimelinePassKeepsAtime |
+| F-TL-6 | names without the leading slash | Windows | TestBodyfileGolden, TestBodyfileStrictParserRoundTrip |
+| F-TL-6 | an uncomputed MD5 written empty | Windows | TestBodyfileGolden, TestBodyfileStrictParserRoundTrip |
+| F-TL-6 | directories written as files | Windows | TestBodyfileGolden |
+| F-TL-6 | a `\|` in a name written into a bodyfile | Windows | TestUnsafeNameRefused |
+| F-TL-7 | MACB times not grouped | Windows | TestMACBSixteenCombinations |
+| F-TL-7 | unknown times get a MACB line | Windows | TestMACBSixteenCombinations |
+| F-TL-8 | an unreadable file left without a digest | Windows | TestWalkErrorReported |
+| F-TL-6 | hash limit ignored | Windows | TestHashLimit |
+| F-TL-5 | deleted objects left out of the modelled timeline | Windows | TestModelledBodyfileMarksDeleted |
+| F-TL-5 | modelled timeline claims birth times the platform cannot set | Windows | TestDefaultCrtimeRecordedUncontrolled |
+| F-DET-4 | modelled timeline depends on the run | Windows | TestModelledTimelineIdenticalAcrossRuns |
+| D-2 | modelled text formats labelled observed | Windows | TestFormatsGolden |
+| D-2 | an observed timeline's digest recorded | Windows | TestTimelineRecorded |
+| D-2 | modelled timeline accepted without a model | Windows | TestTimelineFlagErrors |
+| formats | JSON crtime from the change time | Windows | TestFormatsGolden |
+| formats | CSV born column from the change time | Windows | TestFormatsGolden |
+| answer key | rotate names the new file as the one moved | Windows | TestAnswerKeyEntries |
+| answer key | modified without a content change | Windows | TestAnswerKeyEntries |
+| answer key | deleted objects never mtime_before_crtime | Windows | TestAnswerKeyEntries |
+| answer key | stomp without its fields | Windows | TestAnswerKeyEntries |
+| answer key | digest not in the run manifest | Windows | TestRunManifestTimeCapabilities |
+| answer key | written for a failed run | Windows | TestFailedRunMarksSidecarFailed |
+| ledger | MD5 not recorded | Windows | TestModelledMatchesObserved |
+| ledger | explicit lists a dropped field | Windows | TestDroppedTimeFieldRecorded |
+| ledger | a deleted object's kind forgotten | Windows | TestAnswerKeyEntries |
+| modes | model ignores an explicit mode | Windows | TestModelledModes |
+| modes | an explicit directory mode not applied exactly | Fedora | TestDirAndRotateModesAreApplied |
+| modes | a rotate's mode narrowed by the umask | Fedora | TestDirAndRotateModesAreApplied |
+| modes | Windows modes not written as TSK writes them | Windows | TestObservedModeAndDirSize |
+| sizes | directory sizes forced to 0 | Fedora | TestObservedModeAndDirSize |
+| resolution | whole-second volumes verified to the microsecond | Fedora ext4 | TestGranularityFromRootChangeTime, TestModelledMatchesObserved |
+| examples | ExecuteFile ignores SkipUnsupported | Fedora | TestExampleContentGoldens |
+| version | ledger bytes changed without a bump | Windows | TestExampleContentGoldens |
+
+### Where it has run
+
+The full suite passes on Windows 11 (the development machine, with `-race`),
+Windows 10 22H2 (last-access updates on) and Fedora 40 on tmpfs, btrfs and a
+whole-second ext4 without birth times. The only skips are what a platform
+cannot do (streams, creation and change times on Linux; POSIX modes on
+Windows; `mactime` where The Sleuth Kit is not installed). macOS remains the
+owner's.
+
+## P2: timestamps that mean what the scenario says (af6356e)
 
 Generator version: **3**. File and stream contents are unchanged for every
 example (the v3 content goldens equal v2's); only a `copy` of a file with

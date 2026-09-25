@@ -1,0 +1,6 @@
+{"path":"docs","type":"dir","size":0,"mode":"0755","uid":0,"gid":0,"inode":"2","atime":"2021-03-01T09:00:01Z","mtime":"2021-03-01T09:00:04Z","ctime":"2021-03-01T09:00:04Z","crtime":"2021-03-01T09:00:01Z"}
+{"path":"docs/a.txt","type":"file","size":5,"mode":"0644","uid":0,"gid":0,"inode":"3","atime":"2021-03-01T09:00:01Z","mtime":"2021-03-01T09:00:02Z","ctime":"2021-03-01T09:00:03Z","crtime":"2021-03-01T09:00:01Z","md5":"5d41402abc4b2a76b9719d911017c592"}
+{"path":"docs/a.txt","stream":"quill","type":"stream","size":7,"mode":"0644","uid":0,"gid":0,"inode":"3","atime":"2021-03-01T09:00:01Z","mtime":"2021-03-01T09:00:02Z","ctime":"2021-03-01T09:00:03Z","crtime":"2021-03-01T09:00:01Z","md5":"321c3cf486ed509164edec1e1981fec8"}
+{"path":"docs/gone.txt","type":"file","size":0,"mode":"0600","uid":0,"gid":0,"inode":"4","mtime":"2021-03-01T09:00:03Z","md5":"d41d8cd98f00b204e9800998ecf8427e","deleted":true}
+{"path":"docs/big.bin","type":"file","size":1099511627776,"mode":"0444","uid":1000,"gid":100,"inode":"5","atime":"2021-03-01T09:00:05Z","mtime":"2021-03-01T09:00:05Z"}
+{"path":"link","type":"link","size":0,"mode":"0777","uid":0,"gid":0,"inode":"6"}

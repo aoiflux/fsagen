@@ -23,10 +23,11 @@ func runPB(t *testing.T, body string) (*sandbox.FS, []ledger.Entry) {
 		t.Fatal(err)
 	}
 	p := writeFile(t, dir, "pb.yaml", body)
-	entries, err := ExecuteFile(compile.ModePlaybook, root, p, compile.Options{Seed: 1})
+	res, err := ExecuteFile(compile.ModePlaybook, root, p, compile.Options{Seed: 1})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
+	entries := res.Ledger
 	fsys, err := sandbox.Open(root)
 	if err != nil {
 		t.Fatal(err)
@@ -68,10 +69,30 @@ func expect(t *testing.T, fsys *sandbox.FS, name string, want sandbox.Times) {
 
 func all(t time.Time) sandbox.Times { return sandbox.Times{Atime: t, Mtime: t, Ctime: t, Btime: t} }
 
-func needWindowsTimes(t *testing.T, fsys *sandbox.FS) {
+// volume reports what the volume holding the test's temporary directories
+// can do, so a test can skip before it asks for what it cannot have (an
+// explicit creation time on Linux is refused before anything is written).
+func volume(t *testing.T) (sandbox.TimeCaps, bool) {
 	t.Helper()
-	if c := fsys.TimeCaps(); !c.Birth || !c.Change {
+	fsys, err := sandbox.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fsys.Close()
+	return fsys.TimeCaps(), fsys.SupportsStreams()
+}
+
+func needWindowsTimes(t *testing.T) {
+	t.Helper()
+	if c, _ := volume(t); !c.Birth || !c.Change {
 		t.Skip("creation and change times can only be set on Windows NTFS/ReFS")
+	}
+}
+
+func needStreams(t *testing.T) {
+	t.Helper()
+	if _, ok := volume(t); !ok {
+		t.Skip("no named streams on this volume")
 	}
 }
 
@@ -79,11 +100,11 @@ func needWindowsTimes(t *testing.T, fsys *sandbox.FS) {
 // directory created to hold it. Creating a file that already exists makes it
 // anew: it is born again.
 func TestCreateSetsCreationTime(t *testing.T) {
+	needWindowsTimes(t)
 	fsys, _ := runPB(t, pb+`  - { actor: u, offset: 5m, actions: [ { action: create, path: d/a.txt, content: x } ] }
   - { actor: u, offset: 6m, actions: [ { action: create, path: d/b.txt, content: x } ] }
   - { actor: u, offset: 9m, actions: [ { action: create, path: d/b.txt, content: y } ] }
 `)
-	needWindowsTimes(t, fsys)
 	expect(t, fsys, "d/a.txt", all(at(5)))
 	expect(t, fsys, "d/b.txt", all(at(9)))
 	expect(t, fsys, "d", sandbox.Times{Atime: at(5), Mtime: at(6), Ctime: at(6), Btime: at(5)})
@@ -91,13 +112,13 @@ func TestCreateSetsCreationTime(t *testing.T) {
 
 // F-TIME-2: mace sets exactly the times it names, all four of them.
 func TestMaceSetsFourTimes(t *testing.T) {
+	needWindowsTimes(t)
 	fsys, _ := runPB(t, pb+`  - { actor: u, actions: [ { action: create, path: a.txt, content: x } ] }
   - actor: u
     offset: 10m
     actions:
       - { action: mace, path: a.txt, atime: "2019-01-01T01:00:00Z", mtime: "2019-01-01T02:00:00Z", ctime: "2019-01-01T03:00:00Z", crtime: "2019-01-01T04:00:00Z" }
 `)
-	needWindowsTimes(t, fsys)
 	ts := func(h int) time.Time { return time.Date(2019, 1, 1, h, 0, 0, 0, time.UTC) }
 	expect(t, fsys, "a.txt", sandbox.Times{Atime: ts(1), Mtime: ts(2), Ctime: ts(3), Btime: ts(4)})
 }
@@ -116,6 +137,7 @@ func TestMaceLeavesUnnamedTimes(t *testing.T) {
 // is earlier than its creation time. Four of six files are stomped, so
 // exactly four show mtime < crtime.
 func TestQuilldropLiteStompCount(t *testing.T) {
+	needWindowsTimes(t)
 	var b strings.Builder
 	b.WriteString(pb + "  - actor: u\n    batch_count: 6\n    actions: [ { action: create, path: 'stage/doc-${BATCH}.docx', content: x } ]\n")
 	b.WriteString("  - actor: u\n    offset: 30m\n    actions:\n")
@@ -123,7 +145,6 @@ func TestQuilldropLiteStompCount(t *testing.T) {
 		b.WriteString("      - { action: mace, path: stage/doc-" + string(rune('0'+n)) + ".docx, mtime: \"2019-06-01T00:00:00Z\" }\n")
 	}
 	fsys, _ := runPB(t, b.String())
-	needWindowsTimes(t, fsys)
 	stomped := 0
 	for i := 0; i < 6; i++ {
 		got := timesOf(t, fsys, "stage/doc-"+string(rune('0'+i))+".docx")
@@ -139,6 +160,8 @@ func TestQuilldropLiteStompCount(t *testing.T) {
 // F-TIME-3: writing a stream does not undo a timestomp, and neither does a
 // mark of the web.
 func TestAdsAndMotwKeepTimes(t *testing.T) {
+	needWindowsTimes(t)
+	needStreams(t)
 	fsys, _ := runPB(t, pb+`  - { actor: u, actions: [ { action: create, path: a.exe, content: MZ } ] }
   - { actor: u, offset: 10m, actions: [ { action: mace, path: a.exe, mtime: "2019-01-01T00:00:00Z", crtime: "2019-01-01T00:00:00Z" } ] }
   - actor: u
@@ -147,12 +170,8 @@ func TestAdsAndMotwKeepTimes(t *testing.T) {
       - { action: ads, path: a.exe, stream: quill, content: payload }
       - { action: motw, path: a.exe, zone_id: 3, host_url: "https://evil.test/a.exe" }
 `)
-	needWindowsTimes(t, fsys)
 	old := time.Date(2019, 1, 1, 0, 0, 0, 0, time.UTC)
 	expect(t, fsys, "a.exe", sandbox.Times{Atime: t0, Mtime: old, Ctime: t0, Btime: old})
-	if !fsys.SupportsStreams() {
-		t.Fatal("NTFS without streams")
-	}
 	if b, err := fsys.ReadStream("a.exe", "quill"); err != nil || string(b) != "payload" {
 		t.Errorf("stream = %q, %v", b, err)
 	}
@@ -205,13 +224,11 @@ func TestCopySemantics(t *testing.T) {
 }
 
 func TestCopyCarriesStreams(t *testing.T) {
+	needStreams(t)
 	fsys, entries := runPB(t, pb+`  - { actor: u, offset: 1m, actions: [ { action: create, path: a.exe, content: MZ } ] }
   - { actor: u, offset: 2m, actions: [ { action: motw, path: a.exe, zone_id: 3 } ] }
   - { actor: u, offset: 3m, actions: [ { action: copy, path: a.exe, new_path: b.exe } ] }
 `)
-	if !fsys.SupportsStreams() {
-		t.Skip("no named streams on this volume")
-	}
 	if b, err := fsys.ReadStream("b.exe", "Zone.Identifier"); err != nil || !strings.Contains(string(b), "ZoneId=3") {
 		t.Errorf("copied Zone.Identifier = %q, %v", b, err)
 	}
@@ -223,16 +240,31 @@ func TestCopyCarriesStreams(t *testing.T) {
 // F-TIME-5: times keep their fraction of a second, to the 100 ns NTFS
 // stores.
 func TestNanoPrecisionRoundTrip(t *testing.T) {
-	fsys, _ := runPB(t, pb+`  - { actor: u, actions: [ { action: create, path: a.txt, content: x, mtime: "2021-03-01T09:00:00.1234567Z", crtime: "2021-03-01T08:59:59.7654321Z" } ] }
-`)
-	want := sandbox.Times{Mtime: time.Date(2021, 3, 1, 9, 0, 0, 123456700, time.UTC)}
-	if fsys.TimeCaps().Birth {
+	// An explicit creation time only where it can be set: elsewhere it is
+	// refused before anything is written.
+	crtime, want := "", sandbox.Times{Mtime: time.Date(2021, 3, 1, 9, 0, 0, 123456700, time.UTC)}
+	if c, _ := volume(t); c.Birth {
+		crtime = `, crtime: "2021-03-01T08:59:59.7654321Z"`
 		want.Btime = time.Date(2021, 3, 1, 8, 59, 59, 765432100, time.UTC)
 	}
-	if fsys.Granularity().Mtime > 100 {
-		t.Skipf("%s stores times at %v", fsys.FilesystemName(), fsys.Granularity().Mtime)
+	fsys, _ := runPB(t, pb+`  - { actor: u, actions: [ { action: create, path: a.txt, content: x, mtime: "2021-03-01T09:00:00.1234567Z"`+crtime+` } ] }
+`)
+	// Compared to the volume's resolution: 100 ns on NTFS, nanoseconds on
+	// most Linux file systems (checked to a microsecond).
+	g, got := fsys.Granularity(), timesOf(t, fsys, "a.txt")
+	if g.Mtime >= time.Second {
+		t.Skipf("%s keeps whole seconds", fsys.Dir())
 	}
-	expect(t, fsys, "a.txt", want)
+	within := func(field string, got, want time.Time, res time.Duration) {
+		if d := got.Sub(want); !want.IsZero() && (d >= res || d <= -res) {
+			t.Errorf("%s = %s, want %s (resolution %v)", field, got.Format(time.RFC3339Nano), want.Format(time.RFC3339Nano), res)
+		}
+	}
+	within("mtime", got.Mtime, want.Mtime, g.Mtime)
+	within("crtime", got.Btime, want.Btime, g.Btime)
+	if got.Mtime.Nanosecond() == 0 {
+		t.Errorf("mtime %v lost its fraction of a second", got.Mtime)
+	}
 }
 
 // F-TIME-5: sub-second jitter is seeded (the same on every run), is applied
@@ -244,20 +276,30 @@ func TestJitterDeterministicAndNeverOnExplicit(t *testing.T) {
       - { action: create, path: a.txt, content: x }
       - { action: create, path: b.txt, content: x, mtime: "2020-01-01T00:00:00Z" }
 `
-	fa, _ := runPB(t, body)
-	fb, _ := runPB(t, body)
-	a1, a2 := timesOf(t, fa, "a.txt"), timesOf(t, fb, "a.txt")
-	if !a1.Mtime.Equal(a2.Mtime) || !a1.Atime.Equal(a2.Atime) {
-		t.Errorf("jitter differs between runs: %v vs %v", a1.Mtime, a2.Mtime)
+	// The intended times are read from the ledger, which keeps their
+	// fractions on any volume; the verify pass has already checked the disk
+	// against them, to the volume's resolution.
+	_, ea := runPB(t, body)
+	_, eb := runPB(t, body)
+	ts := func(s string) time.Time {
+		v, err := time.Parse(time.RFC3339Nano, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
 	}
-	if a1.Mtime.Nanosecond() == 0 || a1.Mtime.Truncate(time.Second) != at(1) {
-		t.Errorf("derived mtime %v has no jitter within its second", a1.Mtime)
+	a1, a2 := ea[0].Times, eb[0].Times
+	if *a1 != *a2 {
+		t.Errorf("jitter differs between runs: %+v vs %+v", a1, a2)
 	}
-	b := timesOf(t, fa, "b.txt")
-	if !b.Mtime.Equal(time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)) {
+	if m := ts(a1.Mtime); m.Nanosecond() == 0 || m.Truncate(time.Second) != at(1) {
+		t.Errorf("derived mtime %v has no jitter within its second", m)
+	}
+	b := ea[1].Times
+	if !ts(b.Mtime).Equal(time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)) {
 		t.Errorf("explicit mtime was jittered: %v", b.Mtime)
 	}
-	if b.Atime.Nanosecond() == 0 {
+	if ts(b.Atime).Nanosecond() == 0 {
 		t.Errorf("derived atime of b.txt %v has no jitter", b.Atime)
 	}
 }
@@ -327,6 +369,12 @@ func TestDefaultCrtimeRecordedUncontrolled(t *testing.T) {
 	}
 	if got := strings.Join(entries[0].Uncontrolled, ","); got != "ctime,crtime" {
 		t.Errorf("uncontrolled = %q, want ctime,crtime", got)
+	}
+	// Nor does the modelled timeline: those columns are unknown.
+	for _, e := range ModelledTimeline(prog.Model, entries, linux).Entries {
+		if !e.Ctime.IsZero() || !e.Btime.IsZero() || e.Mtime.IsZero() {
+			t.Errorf("modelled %s: ctime %v crtime %v mtime %v", e.Path, e.Ctime, e.Btime, e.Mtime)
+		}
 	}
 }
 

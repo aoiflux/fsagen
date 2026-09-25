@@ -13,6 +13,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -70,6 +71,8 @@ type config struct {
 	bulkStart      string
 	timeline       string
 	timelineFormat string
+	timelineSource string
+	hashLimit      int64
 	varsFile       string
 	vars           varList
 	clean          bool
@@ -120,7 +123,9 @@ func parseFlags(args []string) (*config, error) {
 	fl.IntVar(&c.depth, "depth", 1, "bulk generation: directory depth")
 	fl.StringVar(&c.bulkStart, "bulk-start", "", "bulk generation: RFC 3339 reference time for dates inside files (default 2021-01-01T00:00:00Z)")
 	fl.StringVar(&c.timeline, "timeline", "", "write a timeline of the output tree to this file (outside the tree)")
-	fl.StringVar(&c.timelineFormat, "timeline-format", "", "timeline format: csv, txt, bodyfile or macb (default: from the extension)")
+	fl.StringVar(&c.timelineFormat, "timeline-format", "", "timeline format: csv, txt, bodyfile, macb or jsonl (default: from the extension)")
+	fl.StringVar(&c.timelineSource, "timeline-source", "", "timeline source: observed (read back from disk, the default) or modelled (what the scenario intends, including deleted objects)")
+	fl.Int64Var(&c.hashLimit, "hash-limit", 0, "observed timeline: skip the MD5 of files and streams larger than this many bytes (default: hash everything)")
 	fl.StringVar(&c.varsFile, "vars-file", "", "YAML map of variables exposed as ${VAR:name}")
 	fl.Var(&c.vars, "var", "set a variable as key=value (repeatable; overrides --vars-file)")
 	fl.BoolVar(&c.clean, "clean", false, "empty a non-empty output directory before generating")
@@ -186,6 +191,18 @@ func execute(c *config, stdout io.Writer) error {
 		return usagef("--validate and --dry-run do not write a timeline")
 	case c.timelineFormat != "" && c.timeline == "":
 		return usagef("--timeline-format needs --timeline")
+	case c.timelineSource != "" && c.timeline == "":
+		return usagef("--timeline-source needs --timeline")
+	case c.timelineSource != "" && c.timelineSource != timelinepkg.SourceObserved && c.timelineSource != timelinepkg.SourceModelled:
+		return usagef("--timeline-source must be observed or modelled, not %q", c.timelineSource)
+	case c.timelineSource == timelinepkg.SourceModelled && c.manifest == "" && c.playbook == "":
+		return usagef("--timeline-source=modelled describes what a manifest or playbook intends; it needs --manifest or --playbook (bulk mode and timeline-only mode have no model)")
+	case c.hashLimit < 0:
+		return usagef("--hash-limit must not be negative")
+	case c.hashLimit != 0 && c.timeline == "":
+		return usagef("--hash-limit needs --timeline")
+	case c.hashLimit != 0 && c.timelineSource == timelinepkg.SourceModelled:
+		return usagef("--hash-limit applies to observed timelines; a modelled timeline takes its digests from the ledger")
 	case c.bulkStart != "" && c.bulk == 0:
 		return usagef("--bulk-start needs --bulk")
 	}
@@ -195,12 +212,17 @@ func execute(c *config, stdout io.Writer) error {
 		}
 	}
 
-	var tlFormat string
+	var tl *timelineRequest
 	if c.timeline != "" {
-		var err error
-		if tlFormat, err = timelineFormat(c.timelineFormat, c.timeline); err != nil {
+		format, err := timelineFormat(c.timelineFormat, c.timeline)
+		if err != nil {
 			return err
 		}
+		source := c.timelineSource
+		if source == "" {
+			source = timelinepkg.SourceObserved
+		}
+		tl = &timelineRequest{file: c.timeline, format: format, source: source, hashLimit: c.hashLimit}
 	}
 
 	vars, varsInput, err := loadVariables(c.varsFile, c.vars)
@@ -238,16 +260,11 @@ func execute(c *config, stdout io.Writer) error {
 			return fmt.Errorf("timeline-only mode needs a directory, and %s is a file", absOut)
 		}
 		fmt.Fprintf(stdout, "Scanning existing artifacts in %s...\n", absOut)
-		return writeTimeline(stdout, absOut, c.timeline, tlFormat)
-	}
-
-	if err := generate(c, absOut, vars, varsInput, stdout); err != nil {
+		_, err = tl.write(stdout, absOut, nil)
 		return err
 	}
-	if c.timeline != "" {
-		return writeTimeline(stdout, absOut, c.timeline, tlFormat)
-	}
-	return nil
+
+	return generate(c, absOut, vars, varsInput, tl, stdout)
 }
 
 // check implements --validate and --dry-run: compile, simulate and
@@ -300,7 +317,7 @@ func inputFile(c *config) string {
 
 // generate prepares the output root, compiles and checks the input, and only
 // then writes, recording the run beside the root.
-func generate(c *config, absOut string, vars map[string]string, varsInput *sandbox.Input, stdout io.Writer) error {
+func generate(c *config, absOut string, vars map[string]string, varsInput *sandbox.Input, tl *timelineRequest, stdout io.Writer) error {
 	metaDir := c.meta
 	if metaDir == "" {
 		metaDir = absOut + ".fsagen"
@@ -441,13 +458,13 @@ func generate(c *config, absOut string, vars map[string]string, varsInput *sandb
 	var (
 		ectx      manifestpkg.ExecContext
 		ledgerSum string
+		entries   []ledger.Entry
 	)
 	if mode == "bulk" {
 		start, _ := time.Parse(time.RFC3339, rm.Options.BulkStart)
 		err = libgenpkg.Generate(fsys, c.bulk, c.depth, libgenpkg.Options{Seed: c.seed, Start: start})
 	} else {
 		ectx = manifestpkg.ExecContext{FS: fsys, Sources: prog.Sources, Caps: caps}
-		var entries []ledger.Entry
 		entries, err = manifestpkg.Execute(ectx, prog.Ops)
 		rm.Sources = prog.Sources.Inputs()
 		// The ledger is written even when the run fails: it says how far the
@@ -472,6 +489,15 @@ func generate(c *config, absOut string, vars map[string]string, varsInput *sandb
 	if err == nil && mode != "bulk" {
 		err = manifestpkg.SettleAndVerify(ectx, prog.Model)
 	}
+	// The answer key describes a finished scenario, so a failed run has
+	// none; the ledger says how far it got.
+	if err == nil && mode != "bulk" {
+		sum, kerr := runinfo.WriteAnswerKey(metaDir, manifestpkg.AnswerKey(prog.Model, entries, caps))
+		if kerr != nil {
+			err = fmt.Errorf("write %s: %w", ledger.AnswerKeyFileName, kerr)
+		}
+		rm.Outputs.AnswerKey = sum
+	}
 	rinfo.Finished = time.Now().UTC().Format(time.RFC3339Nano)
 	if ierr := rinfo.Write(metaDir); ierr != nil && err == nil {
 		err = fmt.Errorf("write run info: %w", ierr)
@@ -491,6 +517,24 @@ func generate(c *config, absOut string, vars map[string]string, varsInput *sandb
 		fmt.Fprintf(stdout, "Skipped %d unsupported operation(s); see %s\n", len(rm.Skipped), filepath.Join(metaDir, runinfo.FileName))
 	}
 	fmt.Fprintln(stdout, "Done!")
+
+	if tl == nil {
+		return nil
+	}
+	// The timeline comes after the run is recorded complete: the output is
+	// finished whether or not the timeline can be written.
+	var modelled *timelinepkg.Timeline
+	if tl.source == timelinepkg.SourceModelled {
+		modelled = manifestpkg.ModelledTimeline(prog.Model, entries, caps)
+	}
+	rec, err := tl.write(stdout, absOut, modelled)
+	if err != nil {
+		return fmt.Errorf("%w (the output in %s is complete; only the timeline is missing)", err, absOut)
+	}
+	rm.Timeline = rec
+	if err := rm.Write(metaDir); err != nil {
+		return fmt.Errorf("write run manifest: %w", err)
+	}
 	return nil
 }
 
@@ -552,6 +596,7 @@ var timelineExtensions = map[string]string{
 	".bodyfile": "bodyfile",
 	".body":     "bodyfile",
 	".macb":     "macb",
+	".jsonl":    "jsonl",
 }
 
 // timelineFormat picks the timeline format from the flag, or else from the
@@ -559,44 +604,49 @@ var timelineExtensions = map[string]string{
 // fall-back to CSV.
 func timelineFormat(flagValue, file string) (string, error) {
 	if flagValue != "" {
-		switch flagValue {
-		case "csv", "txt", "bodyfile", "macb":
+		if slices.Contains(timelinepkg.Formats, flagValue) {
 			return flagValue, nil
 		}
-		return "", usagef("unknown --timeline-format %q (want csv, txt, bodyfile or macb)", flagValue)
+		return "", usagef("unknown --timeline-format %q (want csv, txt, bodyfile, macb or jsonl)", flagValue)
 	}
 	ext := strings.ToLower(filepath.Ext(file))
 	if f, ok := timelineExtensions[ext]; ok {
 		return f, nil
 	}
-	return "", usagef("cannot tell the timeline format from %q; use .csv, .txt, .bodyfile, .body or .macb, or pass --timeline-format", file)
+	return "", usagef("cannot tell the timeline format from %q; use .csv, .txt, .bodyfile, .body, .macb or .jsonl, or pass --timeline-format", file)
 }
 
-func writeTimeline(stdout io.Writer, root, file, format string) error {
-	fmt.Fprintln(stdout, "\nGenerating forensic timeline...")
-	tl, err := timelinepkg.Generate(root)
-	if err != nil {
-		return fmt.Errorf("generate timeline: %w", err)
+// timelineRequest is a --timeline and the flags that shape it.
+type timelineRequest struct {
+	file, format, source string
+	hashLimit            int64
+}
+
+// write writes the timeline: modelled when one is given, else observed
+// from root. The whole timeline is built before the file is created, so a
+// failure leaves no partial timeline behind.
+func (r *timelineRequest) write(stdout io.Writer, root string, modelled *timelinepkg.Timeline) (*runinfo.Timeline, error) {
+	fmt.Fprintf(stdout, "\nGenerating %s timeline...\n", r.source)
+	tl := modelled
+	if tl == nil {
+		var err error
+		if tl, err = timelinepkg.Generate(root, timelinepkg.Options{HashLimit: r.hashLimit}); err != nil {
+			return nil, err
+		}
 	}
 	var buf bytes.Buffer
-	switch format {
-	case "csv":
-		err = tl.WriteCSV(&buf)
-	case "txt":
-		err = tl.WriteTXT(&buf)
-	case "bodyfile":
-		err = tl.WriteBodyfile(&buf)
-	case "macb":
-		err = tl.WriteMACB(&buf)
+	if err := tl.Write(&buf, r.format); err != nil {
+		return nil, fmt.Errorf("write timeline: %w", err)
 	}
-	if err != nil {
-		return fmt.Errorf("write timeline: %w", err)
+	if err := os.WriteFile(r.file, buf.Bytes(), 0o644); err != nil {
+		return nil, fmt.Errorf("write timeline: %w", err)
 	}
-	if err := os.WriteFile(file, buf.Bytes(), 0o644); err != nil {
-		return fmt.Errorf("write timeline: %w", err)
+	fmt.Fprintf(stdout, "Timeline written to: %s\n", r.file)
+	rec := &runinfo.Timeline{Source: r.source, Format: r.format, File: filepath.Base(r.file), HashLimit: r.hashLimit}
+	if r.source == timelinepkg.SourceModelled {
+		rec.SHA256 = runinfo.Digest(buf.Bytes())
 	}
-	fmt.Fprintf(stdout, "Timeline written to: %s\n", file)
-	return nil
+	return rec, nil
 }
 
 func printVersion(w io.Writer) {
@@ -633,9 +683,9 @@ Generation:
                             (generate the rest and record each skipped operation)
   --allow-nonportable       allow paths that only work on some platforms
   --allow-external-sources  allow content_file etc. outside the YAML's directory
-  --meta DIR                where to write run-manifest.json, SHA256SUMS and
-                            run-info.json (default: <output-path>.fsagen,
-                            beside the output)
+  --meta DIR                where to write run-manifest.json, SHA256SUMS,
+                            ledger.jsonl, answer-key.jsonl and run-info.json
+                            (default: <output-path>.fsagen, beside the output)
 
 Checking without writing:
   --validate                check the input and exit
@@ -644,10 +694,17 @@ Checking without writing:
 Timeline:
   --timeline FILE           write a timeline of the output (FILE must be
                             outside the output directory)
-  --timeline-format F       csv, txt, bodyfile or macb (default: from the
-                            extension: .csv .txt .bodyfile .body .macb)
+  --timeline-format F       csv, txt, bodyfile, macb or jsonl (default: from
+                            the extension: .csv .txt .bodyfile .body .macb
+                            .jsonl)
+  --timeline-source S       observed (default): read back from the output;
+                            modelled: what the scenario intends, including
+                            deleted objects, the same bytes on every run
+                            (needs --manifest or --playbook)
+  --hash-limit N            observed timeline: no MD5 for files and streams
+                            over N bytes (default: hash everything)
   If --timeline is given without an input, fsagen only scans the existing
-  directory and writes the timeline (timeline-only mode).
+  directory and writes an observed timeline (timeline-only mode).
 
 Other:
   --generate-schema         write JSON schemas and exit (--schema-out DIR,

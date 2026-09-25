@@ -1,0 +1,28 @@
+Modelled timeline: the times, sizes and digests the scenario intends, including what it deleted
+Times are UTC; - is a time the scenario does not control.
+Entries: 6
+====================================================================================================
+
+2021-03-01 09:00:04.000000000 [dir   ] /docs
+    size 0 | mode d/drwxr-xr-x | uid 0 | gid 0 | inode 2 | md5 -
+    accessed 2021-03-01 09:00:01.000000000 | modified 2021-03-01 09:00:04.000000000 | changed 2021-03-01 09:00:04.000000000 | born 2021-03-01 09:00:01.000000000
+
+2021-03-01 09:00:02.000000000 [file  ] /docs/a.txt
+    size 5 | mode r/rrw-r--r-- | uid 0 | gid 0 | inode 3 | md5 5d41402abc4b2a76b9719d911017c592
+    accessed 2021-03-01 09:00:01.000000000 | modified 2021-03-01 09:00:02.000000000 | changed 2021-03-01 09:00:03.000000000 | born 2021-03-01 09:00:01.000000000
+
+2021-03-01 09:00:02.000000000 [stream] /docs/a.txt:quill
+    size 7 | mode r/rrw-r--r-- | uid 0 | gid 0 | inode 3 | md5 321c3cf486ed509164edec1e1981fec8
+    accessed 2021-03-01 09:00:01.000000000 | modified 2021-03-01 09:00:02.000000000 | changed 2021-03-01 09:00:03.000000000 | born 2021-03-01 09:00:01.000000000
+
+2021-03-01 09:00:03.000000000 [file  ] /docs/gone.txt (deleted)
+    size 0 | mode r/rrw------- | uid 0 | gid 0 | inode 4 | md5 d41d8cd98f00b204e9800998ecf8427e
+    accessed - | modified 2021-03-01 09:00:03.000000000 | changed - | born -
+
+2021-03-01 09:00:05.000000000 [file  ] /docs/big.bin
+    size 1099511627776 | mode r/rr--r--r-- | uid 1000 | gid 100 | inode 5 | md5 -
+    accessed 2021-03-01 09:00:05.000000000 | modified 2021-03-01 09:00:05.000000000 | changed - | born -
+
+-                             [link  ] /link
+    size 0 | mode l/lrwxrwxrwx | uid 0 | gid 0 | inode 6 | md5 -
+    accessed - | modified - | changed - | born -

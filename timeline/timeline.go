@@ -1,335 +1,270 @@
+// Package timeline describes a tree as a forensic timeline, in five formats:
+// CSV, text, The Sleuth Kit's bodyfile, a mactime-style MACB listing and
+// JSON lines.
+//
+// A timeline has one of two sources. An observed timeline (Generate) is read
+// back from the file system after the run; it is what a tool examining the
+// output would see, and it is not covered by the determinism contract. A
+// modelled timeline (Modelled) is built from the run's model and ledger: the
+// times, sizes and digests the scenario intends, including the objects it
+// deleted, which the observed timeline can never show. It is the same bytes
+// on every run with the same inputs and capability set.
+//
+// Every entry carries four times, each of which may be unknown: access,
+// modification, metadata change and birth (creation). An unknown time is
+// never filled in from another one; the bodyfile writes it as 0, as The
+// Sleuth Kit does.
 package timeline
 
 import (
 	"crypto/md5"
-	"encoding/csv"
+	"encoding/hex"
 	"fmt"
 	"io"
-	"os"
+	"io/fs"
 	"path"
-	"path/filepath"
 	"runtime"
 	"sort"
-	"strings"
+	"strconv"
 	"time"
 
 	"github.com/aoiflux/fsagen/sandbox"
 )
 
-// Entry represents a single timeline entry for a file or directory
+// Sources.
+const (
+	SourceObserved = "observed"
+	SourceModelled = "modelled"
+)
+
+// Formats lists the formats Write accepts.
+var Formats = []string{"csv", "txt", "bodyfile", "macb", "jsonl"}
+
+// Type is what an entry describes.
+type Type string
+
+const (
+	TypeFile   Type = "file"
+	TypeDir    Type = "dir"
+	TypeLink   Type = "link"
+	TypeStream Type = "stream" // a named data stream of Path
+	TypeOther  Type = "other"
+)
+
+// Entry is one timeline record: a file, directory or link, or one named
+// stream of a file or directory (with its object's times, as NTFS keeps
+// them per file).
 type Entry struct {
-	Path     string
-	Size     int64
-	Mode     os.FileMode
-	Atime    time.Time
-	Mtime    time.Time
-	Ctime    time.Time // Change time (on Windows, this is creation time)
-	MD5      string
-	IsDir    bool
-	ADSNames []string // Alternate Data Stream names (Windows only)
+	// Path is slash-separated and relative to the root.
+	Path string
+	// Stream names the stream when Type is TypeStream.
+	Stream string
+	Type   Type
+	// Mode holds the permission bits (and, for directories, fs.ModeDir).
+	Mode fs.FileMode
+	Size int64
+	// UID and GID are the owner on Unix; 0 elsewhere.
+	UID, GID int
+	// Inode identifies the object: its MFT record number or inode number
+	// when observed, its ledger object number when modelled. "" is unknown.
+	Inode string
+	// Object is the ledger's object number (modelled timelines only).
+	Object int
+	// The four times; zero is unknown.
+	Atime, Mtime, Ctime, Btime time.Time
+	// MD5 of the content; "" when not computed (directories, links, files
+	// over the hash limit).
+	MD5 string
+	// Deleted marks an object the scenario deleted (modelled timelines only).
+	Deleted bool
 }
 
-// Timeline holds all timeline entries
+// Timeline holds all entries, sorted.
 type Timeline struct {
+	// Source is SourceObserved or SourceModelled.
+	Source string
+	// Root is the directory an observed timeline was read from; empty for a
+	// modelled one, which does not depend on where the output went.
 	Root    string
 	Entries []Entry
 }
 
-// Generate walks the tree under root and records every file and directory.
+// Options tune an observed timeline.
+type Options struct {
+	// HashLimit skips the MD5 of files and streams larger than this many
+	// bytes; 0 hashes everything.
+	HashLimit int64
+}
+
+// Generate walks the tree under root and records every file, directory,
+// link and named stream in it (the root itself is not an entry).
 //
 // It reads the tree through the sandbox, so it cannot leave root, and every
-// directory listing and file digest goes through a handle that leaves access
+// directory listing and digest goes through a handle that leaves access
 // times alone where the platform allows (Windows always; Linux when the
 // caller owns the file). Reading the corpus therefore does not change the
-// times it is reading.
-func Generate(root string) (*Timeline, error) {
-	tl := &Timeline{
-		Root:    root,
-		Entries: make([]Entry, 0),
-	}
-
+// times it is reading. Anything it cannot read is an error that names the
+// path: a timeline with holes in it would pass for a complete one.
+func Generate(root string, opts Options) (*Timeline, error) {
 	fsys, err := sandbox.Open(root)
 	if err != nil {
 		return nil, err
 	}
 	defer fsys.Close()
 
-	// The root itself, described as the file system reports it: its times
-	// belong to whoever created it.
-	if info, err := os.Lstat(root); err == nil {
-		e := Entry{Path: ".", Size: info.Size(), Mode: info.Mode(), IsDir: info.IsDir()}
-		if stat, ok := getFileTimes(info); ok {
-			e.Atime, e.Mtime, e.Ctime = utc(stat.Atime), utc(stat.Mtime), utc(stat.Ctime)
-		} else {
-			e.Mtime = utc(info.ModTime())
-		}
-		tl.Entries = append(tl.Entries, e)
-	}
-
-	var walk func(dir string)
-	walk = func(dir string) {
+	tl := &Timeline{Source: SourceObserved, Root: fsys.Dir()}
+	var walk func(dir string) error
+	walk = func(dir string) error {
 		entries, err := fsys.ReadDirQuiet(dir)
 		if err != nil {
-			return // skip what cannot be read
+			return fmt.Errorf("list %s: %w", dir, err)
 		}
 		for _, d := range entries {
 			name := path.Join(dir, d.Name())
 			info, err := d.Info()
 			if err != nil {
-				continue
+				return fmt.Errorf("%s: %w", name, err)
 			}
-			entry := Entry{
-				Path:  filepath.FromSlash(name),
+			meta, err := fsys.Meta(name)
+			if err != nil {
+				return err
+			}
+			mode := info.Mode() & (fs.ModePerm | fs.ModeDir)
+			if runtime.GOOS == "windows" {
+				// Windows has no permission bits, only a read-only flag.
+				// Write them as The Sleuth Kit does for NTFS: everything,
+				// less the write bits of a read-only file.
+				mode |= 0o555
+			}
+			e := Entry{
+				Path:  name,
+				Type:  typeOf(info.Mode()),
+				Mode:  mode,
 				Size:  info.Size(),
-				Mode:  info.Mode(),
-				IsDir: info.IsDir(),
+				UID:   meta.UID,
+				GID:   meta.GID,
+				Inode: meta.ID,
+				Atime: meta.Atime, Mtime: meta.Mtime, Ctime: meta.Ctime, Btime: meta.Btime,
 			}
-			// Times in UTC, so the output does not depend on the machine's
-			// time zone. The Ctime column holds the creation time on
-			// Windows and the change time elsewhere, as it always has.
-			if t, err := fsys.Times(name); err == nil {
-				entry.Atime, entry.Mtime = utc(t.Atime), utc(t.Mtime)
-				if runtime.GOOS == "windows" {
-					entry.Ctime = utc(t.Btime)
-				} else {
-					entry.Ctime = utc(t.Ctime)
+			if e.Type == TypeFile && hashable(e.Size, opts) {
+				if e.MD5, err = digest(func() (io.ReadCloser, error) { return fsys.OpenQuiet(name) }); err != nil {
+					return fmt.Errorf("%s: %w", name, err)
 				}
-			} else {
-				entry.Mtime = utc(info.ModTime())
 			}
+			tl.Entries = append(tl.Entries, e)
 
-			if !info.IsDir() && info.Size() > 0 && info.Size() < 100*1024*1024 { // Skip files > 100MB
-				if hash, err := calculateMD5(fsys, name); err == nil {
-					entry.MD5 = hash
+			if e.Type == TypeFile || e.Type == TypeDir {
+				streams, err := fsys.Streams(name)
+				if err != nil {
+					return err
 				}
-			}
-			if !info.IsDir() {
-				if streams, err := fsys.Streams(name); err == nil {
-					for _, s := range streams {
-						entry.ADSNames = append(entry.ADSNames, s.Name)
+				for _, s := range streams {
+					se := e
+					se.Type, se.Stream, se.Size, se.MD5 = TypeStream, s.Name, s.Size, ""
+					if hashable(s.Size, opts) {
+						if se.MD5, err = digest(func() (io.ReadCloser, error) { return fsys.OpenStreamQuiet(name, s.Name) }); err != nil {
+							return fmt.Errorf("%s:%s: %w", name, s.Name, err)
+						}
 					}
+					tl.Entries = append(tl.Entries, se)
 				}
 			}
-
-			tl.Entries = append(tl.Entries, entry)
-			if info.IsDir() {
-				walk(name)
+			if e.Type == TypeDir {
+				if err := walk(name); err != nil {
+					return err
+				}
 			}
 		}
+		return nil
 	}
-	walk(".")
-
+	if err := walk("."); err != nil {
+		return nil, fmt.Errorf("timeline of %s: %w", root, err)
+	}
 	sortEntries(tl.Entries)
 	return tl, nil
 }
 
-// sortEntries orders entries by modification time, and entries with the
-// same time by path, so equal times never come out in a varying order.
+func hashable(size int64, opts Options) bool { return opts.HashLimit <= 0 || size <= opts.HashLimit }
+
+func typeOf(m fs.FileMode) Type {
+	switch {
+	case m.IsRegular():
+		return TypeFile
+	case m.IsDir():
+		return TypeDir
+	case m&fs.ModeSymlink != 0:
+		return TypeLink
+	}
+	return TypeOther
+}
+
+// digest is the MD5 of what open returns, read as a stream.
+func digest(open func() (io.ReadCloser, error)) (string, error) {
+	f, err := open()
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := md5.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// sortEntries orders entries by modification time (unknown first), then by
+// path and stream, so equal times never come out in a varying order. The
+// sort is stable, and both sources build their entries in a fixed order.
 func sortEntries(entries []Entry) {
 	sort.SliceStable(entries, func(i, j int) bool {
 		a, b := entries[i], entries[j]
 		if !a.Mtime.Equal(b.Mtime) {
 			return a.Mtime.Before(b.Mtime)
 		}
-		return a.Path < b.Path
+		if a.Path != b.Path {
+			return a.Path < b.Path
+		}
+		return a.Stream < b.Stream
 	})
 }
 
-func utc(t time.Time) time.Time {
-	if t.IsZero() {
-		return t
+// Name is the entry's name as The Sleuth Kit writes it: a leading slash,
+// ":stream" for a stream, and " (deleted)" for a deleted object.
+func (e Entry) Name() string {
+	n := "/" + e.Path
+	if e.Type == TypeStream {
+		n += ":" + e.Stream
 	}
-	return t.UTC()
+	if e.Deleted {
+		n += " (deleted)"
+	}
+	return n
 }
 
-// WriteCSV writes timeline to CSV format
-func (tl *Timeline) WriteCSV(w io.Writer) error {
-	writer := csv.NewWriter(w)
-	defer writer.Flush()
-
-	// Header
-	if err := writer.Write([]string{
-		"Path",
-		"Size",
-		"Mode",
-		"Accessed",
-		"Modified",
-		"Changed/Created",
-		"MD5",
-		"Type",
-		"ADS",
-	}); err != nil {
-		return err
+// TSKMode is the mode as The Sleuth Kit writes it: the type from the
+// directory entry, a slash, then the type and permissions from the metadata
+// ("r/rrw-r--r--", "d/drwxr-xr-x").
+func (e Entry) TSKMode() string {
+	c := "-"
+	switch e.Type {
+	case TypeFile, TypeStream:
+		c = "r"
+	case TypeDir:
+		c = "d"
+	case TypeLink:
+		c = "l"
 	}
-
-	for _, e := range tl.Entries {
-		fileType := "file"
-		if e.IsDir {
-			fileType = "dir"
-		}
-
-		adsStr := ""
-		if len(e.ADSNames) > 0 {
-			adsStr = strings.Join(e.ADSNames, ";")
-		}
-
-		if err := writer.Write([]string{
-			e.Path,
-			fmt.Sprintf("%d", e.Size),
-			e.Mode.String(),
-			e.Atime.Format(time.RFC3339),
-			e.Mtime.Format(time.RFC3339),
-			e.Ctime.Format(time.RFC3339),
-			e.MD5,
-			fileType,
-			adsStr,
-		}); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return c + "/" + c + e.Mode.Perm().String()[1:]
 }
 
-// WriteTXT writes a human-readable timeline
-func (tl *Timeline) WriteTXT(w io.Writer) error {
-	fmt.Fprintf(w, "Forensic Timeline for: %s\n", tl.Root)
-	fmt.Fprintln(w, "Times are UTC.")
-	fmt.Fprintf(w, "Total entries: %d\n", len(tl.Entries))
-	fmt.Fprintln(w, strings.Repeat("=", 120))
-	fmt.Fprintln(w)
-
-	for _, e := range tl.Entries {
-		typeStr := "[FILE]"
-		if e.IsDir {
-			typeStr = "[DIR ]"
-		}
-
-		if e.IsDir {
-			fmt.Fprintf(w, "%s %s %s\n", e.Mtime.Format("2006-01-02 15:04:05"), typeStr, e.Path)
-		} else {
-			fmt.Fprintf(w, "%s %s %s\n", e.Mtime.Format("2006-01-02 15:04:05"), typeStr, e.Path)
-			fmt.Fprintf(w, "         Size: %d bytes | Mode: %s | MD5: %s\n", e.Size, e.Mode.String(), e.MD5)
-			fmt.Fprintf(w, "         Access: %s | Modified: %s | Changed: %s\n",
-				e.Atime.Format("2006-01-02 15:04:05"),
-				e.Mtime.Format("2006-01-02 15:04:05"),
-				e.Ctime.Format("2006-01-02 15:04:05"))
-			if len(e.ADSNames) > 0 {
-				fmt.Fprintf(w, "         ADS: %s\n", strings.Join(e.ADSNames, ", "))
-			}
-		}
-		fmt.Fprintln(w)
+func (e Entry) inode() string {
+	if e.Inode == "" {
+		return "0"
 	}
-
-	return nil
+	return e.Inode
 }
 
-// WriteBodyfile writes timeline in bodyfile format (compatible with mactime from The Sleuth Kit)
-// Format: MD5|name|inode|mode_as_string|UID|GID|size|atime|mtime|ctime|crtime
-func (tl *Timeline) WriteBodyfile(w io.Writer) error {
-	for _, e := range tl.Entries {
-		// For simplicity, use 0 for inode, UID, GID (not meaningful in our context)
-		inode := 0
-		uid := 0
-		gid := 0
-
-		// Mode as octal string
-		modeStr := fmt.Sprintf("%o", e.Mode.Perm())
-
-		// Times as Unix timestamps
-		atime := e.Atime.Unix()
-		mtime := e.Mtime.Unix()
-		ctime := e.Ctime.Unix()
-		crtime := e.Ctime.Unix() // Use ctime as creation time
-
-		if atime == 0 {
-			atime = mtime
-		}
-		if ctime == 0 {
-			ctime = mtime
-		}
-
-		fmt.Fprintf(w, "%s|%s|%d|%s|%d|%d|%d|%d|%d|%d|%d\n",
-			e.MD5,
-			e.Path,
-			inode,
-			modeStr,
-			uid,
-			gid,
-			e.Size,
-			atime,
-			mtime,
-			ctime,
-			crtime)
-	}
-
-	return nil
-}
-
-// WriteMACB writes a MACB (Modified, Accessed, Changed, Birth) timeline format
-func (tl *Timeline) WriteMACB(w io.Writer) error {
-	type macbEntry struct {
-		timestamp time.Time
-		macbType  string
-		path      string
-		size      int64
-		md5       string
-	}
-
-	var entries []macbEntry
-
-	for _, e := range tl.Entries {
-		if !e.Mtime.IsZero() {
-			entries = append(entries, macbEntry{e.Mtime, "M...", e.Path, e.Size, e.MD5})
-		}
-		if !e.Atime.IsZero() && !e.Atime.Equal(e.Mtime) {
-			entries = append(entries, macbEntry{e.Atime, ".A..", e.Path, e.Size, e.MD5})
-		}
-		if !e.Ctime.IsZero() && !e.Ctime.Equal(e.Mtime) && !e.Ctime.Equal(e.Atime) {
-			entries = append(entries, macbEntry{e.Ctime, "..C.", e.Path, e.Size, e.MD5})
-		}
-	}
-
-	// Sort by timestamp; the same instant keeps path order.
-	sort.SliceStable(entries, func(i, j int) bool {
-		a, b := entries[i], entries[j]
-		if !a.timestamp.Equal(b.timestamp) {
-			return a.timestamp.Before(b.timestamp)
-		}
-		return a.path < b.path
-	})
-
-	fmt.Fprintf(w, "MACB Timeline for: %s\n", tl.Root)
-	fmt.Fprintln(w, "Times are UTC.")
-	fmt.Fprintln(w, strings.Repeat("=", 120))
-	fmt.Fprintf(w, "%-20s %-6s %-60s %12s %s\n", "Timestamp", "Type", "Path", "Size", "MD5")
-	fmt.Fprintln(w, strings.Repeat("-", 120))
-
-	for _, e := range entries {
-		fmt.Fprintf(w, "%-20s %-6s %-60s %12d %s\n",
-			e.timestamp.Format("2006-01-02 15:04:05"),
-			e.macbType,
-			e.path,
-			e.size,
-			e.md5)
-	}
-
-	return nil
-}
-
-// calculateMD5 computes the MD5 hash of a file without moving its access
-// time where the platform allows.
-func calculateMD5(fsys *sandbox.FS, name string) (string, error) {
-	f, err := fsys.OpenQuiet(name)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-
-	h := md5.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
-	}
-
-	return fmt.Sprintf("%x", h.Sum(nil)), nil
+// octal is the permission bits as four octal digits.
+func (e Entry) octal() string {
+	return fmt.Sprintf("%04s", strconv.FormatUint(uint64(e.Mode.Perm()), 8))
 }

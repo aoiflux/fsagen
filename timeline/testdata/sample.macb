@@ -1,0 +1,13 @@
+Modelled timeline: the times, sizes and digests the scenario intends, including what it deleted
+MACB: M modified, A accessed, C changed (metadata), B born (created). Times are UTC.
+Date                                  Size MACB Mode         UID    GID    Inode      Name
+2021-03-01 09:00:01.000000000            0 .A.B d/drwxr-xr-x 0      0      2          /docs
+2021-03-01 09:00:01.000000000            5 .A.B r/rrw-r--r-- 0      0      3          /docs/a.txt
+2021-03-01 09:00:01.000000000            7 .A.B r/rrw-r--r-- 0      0      3          /docs/a.txt:quill
+2021-03-01 09:00:02.000000000            5 M... r/rrw-r--r-- 0      0      3          /docs/a.txt
+2021-03-01 09:00:02.000000000            7 M... r/rrw-r--r-- 0      0      3          /docs/a.txt:quill
+2021-03-01 09:00:03.000000000            5 ..C. r/rrw-r--r-- 0      0      3          /docs/a.txt
+2021-03-01 09:00:03.000000000            7 ..C. r/rrw-r--r-- 0      0      3          /docs/a.txt:quill
+2021-03-01 09:00:03.000000000            0 M... r/rrw------- 0      0      4          /docs/gone.txt (deleted)
+2021-03-01 09:00:04.000000000            0 M.C. d/drwxr-xr-x 0      0      2          /docs
+2021-03-01 09:00:05.000000000 1099511627776 MA.. r/rr--r--r-- 1000   100    5          /docs/big.bin

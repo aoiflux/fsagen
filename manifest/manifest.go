@@ -11,6 +11,7 @@
 package manifest
 
 import (
+	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -28,6 +30,7 @@ import (
 	"github.com/aoiflux/fsagen/model"
 	"github.com/aoiflux/fsagen/sandbox"
 	"github.com/aoiflux/fsagen/spec"
+	"github.com/aoiflux/fsagen/timeline"
 	"github.com/aoiflux/fsagen/util"
 )
 
@@ -52,30 +55,60 @@ func ExecuteManifest(root, manifestPath string, opts compile.Options) error {
 	return err
 }
 
+// Result is what a run knows beyond the files it wrote: its ledger, the
+// model of the tree the scenario intends, and the capability set it ran
+// with, from which the modelled timeline and the answer key follow.
+type Result struct {
+	Ledger []ledger.Entry
+	Model  *model.Tree
+	Caps   compile.Caps
+}
+
+// Timeline is the modelled timeline of the run.
+func (r Result) Timeline() *timeline.Timeline { return ModelledTimeline(r.Model, r.Ledger, r.Caps) }
+
+// AnswerKey is the run's answer key.
+func (r Result) AnswerKey() []ledger.Fact { return AnswerKey(r.Model, r.Ledger, r.Caps) }
+
+// ModelledTimeline is the timeline the scenario intends, with the times
+// caps cannot set left unknown.
+func ModelledTimeline(tree *model.Tree, entries []ledger.Entry, caps compile.Caps) *timeline.Timeline {
+	return timeline.Modelled(tree, entries, timeline.Controlled{Birth: caps.BirthTime, Change: caps.ChangeTime})
+}
+
+// AnswerKey derives the answer key from the ledger and the final state of
+// the model.
+func AnswerKey(tree *model.Tree, entries []ledger.Entry, caps compile.Caps) []ledger.Fact {
+	return ledger.AnswerKey(entries, ModelledTimeline(tree, entries, caps).Finals())
+}
+
 // ExecuteFile compiles a manifest or playbook, applies it under root,
-// settles and verifies the times, and returns the ledger.
-func ExecuteFile(mode compile.Mode, root, file string, opts compile.Options) ([]ledger.Entry, error) {
+// settles and verifies the times, and returns the ledger and model. On a
+// failure after execution began, the ledger holds what was done.
+func ExecuteFile(mode compile.Mode, root, file string, opts compile.Options) (Result, error) {
 	prog, err := compile.Load(mode, file, opts)
 	if err != nil {
-		return nil, err
+		return Result{}, err
 	}
 	defer prog.Close()
 
 	fsys, err := sandbox.Open(root)
 	if err != nil {
-		return nil, err
+		return Result{}, err
 	}
 	defer fsys.Close()
 
-	if err := compile.Preflight(prog, Caps(fsys), false); err != nil {
-		return nil, err
+	caps := Caps(fsys)
+	if err := compile.Preflight(prog, caps, opts.SkipUnsupported); err != nil {
+		return Result{}, err
 	}
-	ctx := ExecContext{FS: fsys, Sources: prog.Sources, Caps: Caps(fsys)}
+	ctx := ExecContext{FS: fsys, Sources: prog.Sources, Caps: caps}
 	entries, err := Execute(ctx, prog.Ops)
+	res := Result{Ledger: entries, Model: prog.Model, Caps: caps}
 	if err != nil {
-		return entries, err
+		return res, err
 	}
-	return entries, SettleAndVerify(ctx, prog.Model)
+	return res, SettleAndVerify(ctx, prog.Model)
 }
 
 // Caps is the capability set of an output root.
@@ -152,7 +185,16 @@ func newEntry(i int, op compile.Op, caps compile.Caps) ledger.Entry {
 		NewPath: op.NewPath,
 		ID:      op.ID,
 		Object:  op.Object,
+		Moved:   op.Moved,
+		Kind:    kindName(op.Kind),
 	}
+	switch op.Action {
+	case "ads":
+		e.Stream = op.Stream
+	case "motw":
+		e.Stream = "Zone.Identifier"
+	}
+	e.Explicit = explicit(op)
 	if !op.At.IsZero() {
 		e.At = op.At.UTC().Format(time.RFC3339Nano)
 	}
@@ -164,6 +206,29 @@ func newEntry(i int, op compile.Op, caps compile.Caps) ledger.Entry {
 		e.Uncontrolled = uncontrolled(op.Times, caps)
 	}
 	return e
+}
+
+func kindName(k model.Kind) string {
+	switch k {
+	case model.File:
+		return "file"
+	case model.Dir:
+		return "dir"
+	}
+	return ""
+}
+
+// explicit lists the time fields op states, less those dropped because the
+// platform cannot set them.
+func explicit(op compile.Op) []string {
+	var out []string
+	for i, v := range []string{op.Atime, op.Mtime, op.Ctime, op.Crtime} {
+		f := compile.TimeFields[i]
+		if strings.TrimSpace(v) != "" && !slices.Contains(op.Dropped, f) {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // uncontrolled lists the times the file system keeps as it likes: those the
@@ -198,7 +263,7 @@ func target(op compile.Op) string {
 }
 
 // describe records the object's digest, size and streams after the
-// operation. Reads go through OpenQuiet, which leaves access times alone
+// operation. Reads go through quiet handles, which leave access times alone
 // where the platform allows.
 func describe(fs *sandbox.FS, op compile.Op, e *ledger.Entry, digests map[int]string) error {
 	e.SHA256Before = digests[op.Object]
@@ -207,41 +272,45 @@ func describe(fs *sandbox.FS, op compile.Op, e *ledger.Entry, digests map[int]st
 		delete(digests, op.Object)
 		return nil
 	}
-	if op.Dir {
-		e.Kind = "dir"
-		return nil
+	if op.Kind == model.File {
+		f, err := fs.OpenQuiet(p)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		sha, md, n, err := sums(f)
+		if err != nil {
+			return err
+		}
+		e.SHA256After, e.MD5After, e.Size = sha, md, &n
+		digests[op.Object] = e.SHA256After
 	}
-	f, err := fs.OpenQuiet(p)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	if fi, err := f.Stat(); err == nil && fi.IsDir() {
-		e.Kind = "dir"
-		return nil
-	}
-	e.Kind = "file"
-	h := sha256.New()
-	n, err := io.Copy(h, f)
-	if err != nil {
-		return err
-	}
-	e.SHA256After = hex.EncodeToString(h.Sum(nil))
-	e.Size = &n
-	digests[op.Object] = e.SHA256After
 	streams, err := fs.Streams(p)
 	if err != nil {
 		return err
 	}
 	for _, s := range streams {
-		data, err := fs.ReadStream(p, s.Name)
+		f, err := fs.OpenStreamQuiet(p, s.Name)
 		if err != nil {
 			return err
 		}
-		sum := sha256.Sum256(data)
-		e.Streams = append(e.Streams, ledger.Stream{Name: s.Name, Size: len(data), SHA256: hex.EncodeToString(sum[:])})
+		sha, md, n, err := sums(f)
+		f.Close()
+		if err != nil {
+			return err
+		}
+		e.Streams = append(e.Streams, ledger.Stream{Name: s.Name, Size: int(n), SHA256: sha, MD5: md})
 	}
 	return nil
+}
+
+// sums reads r to the end and returns its SHA-256, MD5 and length.
+func sums(r io.Reader) (sha, md string, n int64, err error) {
+	hs, hm := sha256.New(), md5.New()
+	if n, err = io.Copy(io.MultiWriter(hs, hm), r); err != nil {
+		return "", "", 0, err
+	}
+	return hex.EncodeToString(hs.Sum(nil)), hex.EncodeToString(hm.Sum(nil)), n, nil
 }
 
 // Settle stamps every object in the tree with its final intended times,
@@ -374,7 +443,12 @@ func executeOp(ctx ExecContext, c compile.Op) error {
 	switch op.Action {
 	case "create":
 		if c.Dir {
-			return fs.MkdirAll(target, dirModeFor(op))
+			// Missing parents get the default mode; an explicit mode is for
+			// the directory the operation names.
+			if err := fs.MkdirAll(target, sandbox.DirMode); err != nil {
+				return err
+			}
+			return applyMode(fs, op, target)
 		}
 		content, err := renderContent(op, contentOf(c))
 		if err != nil {
@@ -449,7 +523,10 @@ func executeOp(ctx ExecContext, c compile.Op) error {
 		if err != nil {
 			return err
 		}
-		return f.Close()
+		if err := f.Close(); err != nil {
+			return err
+		}
+		return applyMode(fs, op, target)
 
 	case "email":
 		return writeEmail(ctx, c, target)
@@ -619,19 +696,12 @@ func applyMode(fs *sandbox.FS, op spec.Operation, target string) error {
 	return fs.Chmod(target, mode)
 }
 
-// fileModeFor and dirModeFor read a mode that compile has already validated.
+// fileModeFor reads a mode that compile has already validated.
 func fileModeFor(op spec.Operation) os.FileMode {
 	if mode, ok, _ := util.ParseFileMode(op.Mode); ok {
 		return mode
 	}
 	return sandbox.FileMode
-}
-
-func dirModeFor(op spec.Operation) os.FileMode {
-	if mode, ok, _ := util.ParseFileMode(op.Mode); ok {
-		return mode
-	}
-	return sandbox.DirMode
 }
 
 // contentOf returns what the operation writes: its random text when compile

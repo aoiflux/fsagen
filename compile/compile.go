@@ -52,7 +52,11 @@ type Op struct {
 	// leaves behind (for a delete, the one it removes), and Times are that
 	// object's intended times afterwards (for a delete, just before).
 	Object int
+	Kind   model.Kind
 	Times  model.Times
+	// Moved is, for a rotate, the object renamed to NewPath; Object is then
+	// the empty file left at Path.
+	Moved int
 	// Pre are stamped just before the operation runs: a deleted object gets
 	// its final times first, so what is left of it carries scenario times.
 	// Stamps are applied just after it.
@@ -101,6 +105,10 @@ type Options struct {
 	Existing *model.Tree
 	// Seed keys every random value.
 	Seed int64
+	// SkipUnsupported makes manifest.ExecuteFile's pre-flight skip what the
+	// platform cannot do and record it, as --on-unsupported=skip does,
+	// instead of refusing the run.
+	SkipUnsupported bool
 	// Now is read only for start: now. Nil means time.Now.
 	Now func() time.Time
 }

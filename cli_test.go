@@ -104,7 +104,7 @@ func TestRuntimeErrorExit1Stderr(t *testing.T) {
 
 func TestVersion(t *testing.T) {
 	code, out, _ := runCLI(t, "--version")
-	if code != exitOK || !strings.Contains(out, "generator version 3") || !strings.Contains(out, runtime.GOOS) {
+	if code != exitOK || !strings.Contains(out, "generator version 4") || !strings.Contains(out, runtime.GOOS) {
 		t.Errorf("code=%d out=%q", code, out)
 	}
 }
@@ -192,6 +192,14 @@ func TestTimelineFormats(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(txt); strings.Count(strings.SplitN(string(data), "\n", 2)[0], "|") != 10 {
 		t.Error("--timeline-format did not override the extension")
+	}
+
+	jl := filepath.Join(dir, "case.jsonl")
+	if code, _, errOut := runCLI(t, "--manifest", m, "--timeline", jl, filepath.Join(dir, "o4")); code != exitOK {
+		t.Fatalf("code=%d %s", code, errOut)
+	}
+	if data, _ := os.ReadFile(jl); !strings.HasPrefix(string(data), `{"path":`) {
+		t.Errorf(".jsonl did not produce JSON lines: %q", data)
 	}
 
 	foo := filepath.Join(dir, "case.foo")
@@ -319,10 +327,14 @@ func TestFailedRunMarksSidecarFailed(t *testing.T) {
 	if rm.Status != runinfo.StatusFailed || !strings.Contains(rm.Failure, "locked.txt") {
 		t.Errorf("status=%q failure=%q", rm.Status, rm.Failure)
 	}
-	// The ledger says how far the run got.
+	// The ledger says how far the run got; there is no answer key for a
+	// scenario that did not finish.
 	led, err := os.ReadFile(filepath.Join(out+".fsagen", ledger.FileName))
 	if err != nil || strings.Count(string(led), "\n") != 1 || !strings.Contains(string(led), `"path":"first.txt"`) {
 		t.Errorf("ledger of the failed run = %q, %v", led, err)
+	}
+	if _, err := os.Stat(filepath.Join(out+".fsagen", ledger.AnswerKeyFileName)); !os.IsNotExist(err) {
+		t.Errorf("a failed run wrote an answer key (%v)", err)
 	}
 }
 
@@ -356,6 +368,65 @@ func TestRunManifestTimeCapabilities(t *testing.T) {
 	if rm.Outputs == nil || rm.Outputs.Ledger != sha(led) {
 		t.Errorf("run manifest ledger digest %+v, ledger sha %s", rm.Outputs, sha(led))
 	}
+	key, err := os.ReadFile(filepath.Join(out+".fsagen", ledger.AnswerKeyFileName))
+	if err != nil || rm.Outputs.AnswerKey != sha(key) || !strings.Contains(string(key), `"event":"created"`) {
+		t.Errorf("answer key %q (%v), recorded digest %s", key, err, rm.Outputs.AnswerKey)
+	}
+}
+
+// D-2: the timeline source and format are recorded in the run manifest; a
+// modelled timeline, being deterministic, with its digest.
+func TestTimelineRecorded(t *testing.T) {
+	dir := t.TempDir()
+	m := writeYAML(t, dir, "m.yaml", simpleManifest)
+	for _, source := range []string{"observed", "modelled"} {
+		out := filepath.Join(dir, source)
+		tl := filepath.Join(dir, source+".jsonl")
+		if code, _, errOut := runCLI(t, "--manifest", m, "--timeline", tl, "--timeline-source", source, out); code != exitOK {
+			t.Fatalf("%s: %d %s", source, code, errOut)
+		}
+		data, err := os.ReadFile(tl)
+		if err != nil || !strings.Contains(string(data), `"path":"docs/a.txt"`) {
+			t.Fatalf("%s timeline %q, %v", source, data, err)
+		}
+		rec := readManifest(t, out+".fsagen").Timeline
+		want := &runinfo.Timeline{Source: source, Format: "jsonl", File: source + ".jsonl"}
+		if source == "modelled" {
+			want.SHA256 = sha(data)
+		}
+		if rec == nil || *rec != *want {
+			t.Errorf("%s: recorded %+v, want %+v", source, rec, want)
+		}
+	}
+}
+
+// The timeline flags are checked before anything is written.
+func TestTimelineFlagErrors(t *testing.T) {
+	dir := t.TempDir()
+	m := writeYAML(t, dir, "m.yaml", simpleManifest)
+	out := filepath.Join(dir, "out")
+	tl := filepath.Join(dir, "tl.csv")
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--manifest", m, "--timeline-source", "modelled", out}, "needs --timeline"},
+		{[]string{"--manifest", m, "--timeline", tl, "--timeline-source", "guessed", out}, "observed or modelled"},
+		{[]string{"--bulk", "1", "--timeline", tl, "--timeline-source", "modelled", out}, "needs --manifest or --playbook"},
+		{[]string{"--timeline", tl, "--timeline-source", "modelled", dir}, "needs --manifest or --playbook"},
+		{[]string{"--manifest", m, "--timeline", tl, "--hash-limit", "-1", out}, "must not be negative"},
+		{[]string{"--manifest", m, "--hash-limit", "10", out}, "needs --timeline"},
+		{[]string{"--manifest", m, "--timeline", tl, "--timeline-source", "modelled", "--hash-limit", "10", out}, "applies to observed"},
+		{[]string{"--manifest", m, "--timeline", tl, "--timeline-format", "xml", out}, "csv, txt, bodyfile, macb or jsonl"},
+	} {
+		code, _, errOut := runCLI(t, c.args...)
+		if code != exitUsage || !strings.Contains(errOut, c.want) {
+			t.Errorf("%v: code=%d %s", c.args, code, errOut)
+		}
+	}
+	if _, err := os.Stat(out); !os.IsNotExist(err) {
+		t.Error("a refused command still generated output")
+	}
 }
 
 // F-PLAT-2 for times: an explicit creation time where none can be set fails
@@ -363,7 +434,7 @@ func TestRunManifestTimeCapabilities(t *testing.T) {
 // and the dropped field is recorded.
 func TestDroppedTimeFieldRecorded(t *testing.T) {
 	dir := t.TempDir()
-	m := writeYAML(t, dir, "m.yaml", "operations:\n  - { action: create, path: a.txt, content: x, crtime: 2020-01-01T00:00:00Z }\n")
+	m := writeYAML(t, dir, "m.yaml", "operations:\n  - { action: create, path: a.txt, content: x, mtime: 2020-01-02T00:00:00Z, crtime: 2020-01-01T00:00:00Z }\n")
 	capsOverride = &compile.Caps{NamedStreams: true}
 	defer func() { capsOverride = nil }()
 
@@ -386,6 +457,10 @@ func TestDroppedTimeFieldRecorded(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(out, "a.txt")); err != nil {
 		t.Errorf("the operation itself was skipped: %v", err)
+	}
+	// The ledger does not claim the dropped time was stated and applied.
+	if led := string(sidecar(t, out, ledger.FileName)); !strings.Contains(led, `"explicit":["mtime"]`) {
+		t.Errorf("ledger explicit fields: %s", led)
 	}
 }
 

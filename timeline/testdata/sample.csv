@@ -1,0 +1,7 @@
+Path,Stream,Type,Size,Mode,UID,GID,Inode,Accessed,Modified,Changed,Born,MD5,Deleted
+docs,,dir,0,d/drwxr-xr-x,0,0,2,2021-03-01T09:00:01Z,2021-03-01T09:00:04Z,2021-03-01T09:00:04Z,2021-03-01T09:00:01Z,,
+docs/a.txt,,file,5,r/rrw-r--r--,0,0,3,2021-03-01T09:00:01Z,2021-03-01T09:00:02Z,2021-03-01T09:00:03Z,2021-03-01T09:00:01Z,5d41402abc4b2a76b9719d911017c592,
+docs/a.txt,quill,stream,7,r/rrw-r--r--,0,0,3,2021-03-01T09:00:01Z,2021-03-01T09:00:02Z,2021-03-01T09:00:03Z,2021-03-01T09:00:01Z,321c3cf486ed509164edec1e1981fec8,
+docs/gone.txt,,file,0,r/rrw-------,0,0,4,,2021-03-01T09:00:03Z,,,d41d8cd98f00b204e9800998ecf8427e,true
+docs/big.bin,,file,1099511627776,r/rr--r--r--,1000,100,5,2021-03-01T09:00:05Z,2021-03-01T09:00:05Z,,,,
+link,,link,0,l/lrwxrwxrwx,0,0,6,,,,,,

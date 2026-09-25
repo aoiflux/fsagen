@@ -1,0 +1,16 @@
+# input-sha256 0fd31353e0492d45527d56a93105f7d716598b628560e2f8970dbb342a346054
+d Users/
+d Users/priyan.nair/
+d Users/priyan.nair/AppData/
+d Users/priyan.nair/AppData/Local/
+d Users/priyan.nair/AppData/Local/Microsoft/
+d Users/priyan.nair/AppData/Local/Microsoft/Outlook/
+d Users/priyan.nair/AppData/Local/Microsoft/Outlook/Attachments/
+f a7ff10f8f40c812b53e777fbdbfb45d554ee4bd43ee4e049dc34a2e373f11146 1908 Users/priyan.nair/AppData/Local/Microsoft/Outlook/Attachments/JD_Senior_Threat_Detection_Engineer.pdf
+d Users/priyan.nair/AppData/Local/Microsoft/Outlook/Inbox/
+f 3b9ac2546a4ed9538626672f42cb04d51a88a1aa9874d5462707f4a02fb8706b 4812 Users/priyan.nair/AppData/Local/Microsoft/Outlook/Inbox/0001-intro.eml
+f 8ae7b9cfafe60075483ab1082ab287f99b87c05969d510225802fbb18eda844a 1815 Users/priyan.nair/AppData/Local/Microsoft/Outlook/Inbox/0003-assessment.eml
+d Users/priyan.nair/AppData/Local/Microsoft/Outlook/Sent/
+f 5066411d7352e9ca233b6c8578e749746d05d9f8a3dd02d94279721ead2520ac 786 Users/priyan.nair/AppData/Local/Microsoft/Outlook/Sent/0002-reply.eml
+f 54a01c37547af0d5b5ece647759e252670a6473ec537c5f91f47259414d1bdcd 699 Users/priyan.nair/AppData/Local/Microsoft/Outlook/Sent/0004-confirm.eml
+f 4dd0e632f8f6612967cf31841aa6d19c72fa929a2df58118ceca3db205b95ff1 8206 Users/priyan.nair/AppData/Local/Microsoft/Outlook/thread.mbox

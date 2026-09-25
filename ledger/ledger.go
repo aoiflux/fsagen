@@ -33,15 +33,29 @@ type Entry struct {
 	ID      string `json:"id,omitempty"`
 	// Object is the model's serial number for the object the operation left
 	// behind (for a delete, the one it removed); it survives renames.
-	Object       int      `json:"object,omitempty"`
-	Kind         string   `json:"kind,omitempty"`
-	SHA256Before string   `json:"sha256_before,omitempty"`
-	SHA256After  string   `json:"sha256_after,omitempty"`
-	Size         *int64   `json:"size,omitempty"`
-	Streams      []Stream `json:"streams,omitempty"`
+	Object int `json:"object,omitempty"`
+	// Moved is, for a rotate, the object renamed to new_path; object is then
+	// the empty file that takes its place at path.
+	Moved int `json:"moved,omitempty"`
+	// Kind is "file" or "dir".
+	Kind string `json:"kind,omitempty"`
+	// Stream is the stream an ads or motw operation wrote.
+	Stream       string `json:"stream,omitempty"`
+	SHA256Before string `json:"sha256_before,omitempty"`
+	SHA256After  string `json:"sha256_after,omitempty"`
+	// MD5After is the MD5 of the same content, for timelines, which carry
+	// MD5 as The Sleuth Kit does.
+	MD5After string   `json:"md5_after,omitempty"`
+	Size     *int64   `json:"size,omitempty"`
+	Streams  []Stream `json:"streams,omitempty"`
 	// Times are the object's intended times after the operation (for a
 	// delete, just before it).
 	Times *Times `json:"times,omitempty"`
+	// Explicit lists the times the operation stated itself (atime, mtime,
+	// ctime, crtime) and that were applied; the rest were derived from the
+	// operation's time. A delete's explicit times are the times of the
+	// directory it deleted from.
+	Explicit []string `json:"explicit,omitempty"`
 	// Uncontrolled lists the times of the object the file system keeps as
 	// it likes: the scenario does not say, or this platform cannot set them.
 	Uncontrolled []string `json:"uncontrolled,omitempty"`
@@ -54,6 +68,7 @@ type Stream struct {
 	Name   string `json:"name"`
 	Size   int    `json:"size"`
 	SHA256 string `json:"sha256"`
+	MD5    string `json:"md5"`
 }
 
 // Times are RFC 3339 times with nanoseconds.

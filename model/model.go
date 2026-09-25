@@ -18,6 +18,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"path"
 	"sort"
 	"strings"
@@ -48,6 +49,9 @@ type Object struct {
 	Path    string
 	Streams map[string]bool
 	Times   Times
+	// Mode is the permission set fsagen gives the object; zero means its
+	// default for the kind (the caller knows what that is).
+	Mode    fs.FileMode
 	removed bool
 }
 
@@ -61,10 +65,11 @@ type Tree struct {
 	// has none. New objects and directory events are stamped with it.
 	Clock time.Time
 
-	byPath map[string]*Object
-	byFold map[string]string
-	ids    map[string][]*Object
-	serial int
+	byPath  map[string]*Object
+	byFold  map[string]string
+	ids     map[string][]*Object
+	serial  int
+	removed []*Object
 }
 
 // New returns an empty tree.
@@ -198,6 +203,7 @@ func (t *Tree) Remove(p string) error {
 		}
 	}
 	o.removed = true
+	t.removed = append(t.removed, o)
 	delete(t.byPath, p)
 	t.unindex(p)
 	t.touchDir(path.Dir(p))
@@ -324,6 +330,10 @@ func (t *Tree) Settle() []*Object {
 	})
 	return append(files, dirs...)
 }
+
+// Removed lists the objects that were deleted, in the order they were, each
+// with the path and times it had when it went.
+func (t *Tree) Removed() []*Object { return t.removed }
 
 // Paths lists every path in the tree, sorted.
 func (t *Tree) Paths() []string {

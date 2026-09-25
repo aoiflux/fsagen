@@ -3,9 +3,12 @@
 package sandbox
 
 import (
+	"encoding/binary"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 	"unsafe"
@@ -21,7 +24,14 @@ func timeCaps(fsName string) TimeCaps {
 	return TimeCaps{Birth: true}
 }
 
-var defaultGranularity = Granularity{2 * time.Second, 2 * time.Second, 2 * time.Second, 2 * time.Second}
+// volumeGranularity is the resolution of the volume by its name, or two
+// seconds (FAT's, the coarsest) for one Windows does not name.
+func volumeGranularity(_ *os.Root, fsName string) Granularity {
+	if g, ok := namedGranularity(fsName); ok {
+		return g
+	}
+	return Granularity{2 * time.Second, 2 * time.Second, 2 * time.Second, 2 * time.Second}
+}
 
 // fileBasicInfo mirrors FILE_BASIC_INFO: four FILETIMEs as 100 ns ticks
 // since 1601, then the attributes (0 leaves them unchanged). A zero time
@@ -117,22 +127,50 @@ func setTimes(r *os.Root, name string, t Times, caps TimeCaps) error {
 	return windows.SetFileInformationByHandle(h, windows.FileBasicInfo, (*byte)(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info)))
 }
 
-func getTimes(r *os.Root, name string) (Times, error) {
+// fileIDInfo mirrors FILE_ID_INFO: the volume serial number and a 128-bit
+// file ID. On NTFS the low 64 bits are the file reference: the MFT record
+// number in the low 48 bits and a sequence number above them.
+type fileIDInfo struct {
+	VolumeSerialNumber uint64
+	FileID             [16]byte
+}
+
+func getMeta(r *os.Root, name, fsName string) (Meta, error) {
 	h, err := openRel(r, name, windows.FILE_READ_ATTRIBUTES, 0)
 	if err != nil {
-		return Times{}, err
+		return Meta{}, err
 	}
 	defer windows.CloseHandle(h)
 	var info fileBasicInfo
 	if err := windows.GetFileInformationByHandleEx(h, windows.FileBasicInfo, (*byte)(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil {
-		return Times{}, err
+		return Meta{}, err
 	}
-	return Times{
+	m := Meta{Times: Times{
 		Atime: fromFiletime(info.LastAccessTime),
 		Mtime: fromFiletime(info.LastWriteTime),
 		Ctime: fromFiletime(info.ChangeTime),
 		Btime: fromFiletime(info.CreationTime),
-	}, nil
+	}}
+	var id fileIDInfo
+	if err := windows.GetFileInformationByHandleEx(h, windows.FileIdInfo, (*byte)(unsafe.Pointer(&id)), uint32(unsafe.Sizeof(id))); err == nil {
+		m.ID = fileID(id.FileID, fsName)
+	}
+	return m, nil
+}
+
+// fileID writes a file ID the way forensic tools name the object: the MFT
+// record number on NTFS, else the ID in decimal (or hex when it needs more
+// than 64 bits, as on ReFS).
+func fileID(id [16]byte, fsName string) string {
+	lo := binary.LittleEndian.Uint64(id[:8])
+	hi := binary.LittleEndian.Uint64(id[8:])
+	switch {
+	case strings.EqualFold(fsName, "NTFS") && hi == 0:
+		return strconv.FormatUint(lo&(1<<48-1), 10)
+	case hi == 0:
+		return strconv.FormatUint(lo, 10)
+	}
+	return fmt.Sprintf("0x%016x%016x", hi, lo)
 }
 
 // openQuiet opens name for reading and tells NTFS not to update its last
@@ -149,4 +187,19 @@ func openQuiet(r *os.Root, name string) (*os.File, error) {
 		return nil, &os.PathError{Op: "suspend access time", Path: name, Err: err}
 	}
 	return os.NewFile(uintptr(h), name), nil
+}
+
+// openStreamQuiet opens a named stream for reading with access-time updates
+// suspended on the handle, as openQuiet does for a file.
+func openStreamQuiet(r *os.Root, name, stream string) (*os.File, error) {
+	f, err := openStream(r, name, stream, windows.FILE_GENERIC_READ|windows.FILE_WRITE_ATTRIBUTES, windows.FILE_OPEN)
+	if err != nil {
+		return nil, err
+	}
+	suspend := windows.Filetime{LowDateTime: 0xFFFFFFFF, HighDateTime: 0xFFFFFFFF}
+	if err := windows.SetFileTime(windows.Handle(f.Fd()), nil, &suspend, nil); err != nil {
+		f.Close()
+		return nil, &os.PathError{Op: "suspend access time", Path: name + ":" + stream, Err: err}
+	}
+	return f, nil
 }

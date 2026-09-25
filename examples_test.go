@@ -41,34 +41,44 @@ func exampleMode(path string) compile.Mode {
 }
 
 // runExample generates one shipped example into root with the example seed
-// and returns its ledger.
-func runExample(t *testing.T, path, root string) []ledger.Entry {
+// and returns the run's ledger and model. Where the platform cannot do
+// everything an example asks (named streams, creation times), the rest is
+// generated and the skips are recorded, as --on-unsupported=skip does.
+func runExample(t *testing.T, path, root string) manifestpkg.Result {
 	t.Helper()
-	entries, err := manifestpkg.ExecuteFile(exampleMode(path), root, path, compile.Options{Seed: exampleSeed})
+	res, err := manifestpkg.ExecuteFile(exampleMode(path), root, path, compile.Options{Seed: exampleSeed, SkipUnsupported: runtime.GOOS != "windows"})
 	if err != nil {
 		t.Fatalf("%s: %v", path, err)
 	}
-	return entries
+	return res
 }
 
 // TestExampleContentGoldens pins the names, bytes and streams every shipped
-// example produces for the example seed, and its ledger (digests, intended
-// times, what the platform leaves uncontrolled). It is what proves a change
-// did not alter output for an unchanged input: if it did, GeneratorVersion
-// must be bumped and a new golden directory recorded.
+// example produces for the example seed; its ledger (digests, intended
+// times, what the platform leaves uncontrolled); its answer key; and its
+// modelled bodyfile. It is what proves a change did not alter output for an
+// unchanged input: if it did, GeneratorVersion must be bumped and a new
+// golden directory recorded.
 func TestExampleContentGoldens(t *testing.T) {
 	for _, path := range exampleFiles(t) {
 		name := strings.TrimSuffix(filepath.Base(path), ".yaml")
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
-			entries := runExample(t, path, root)
+			res := runExample(t, path, root)
 			got, err := testutil.Fingerprint(root)
 			if err != nil {
 				t.Fatal(err)
 			}
+			var body bytes.Buffer
+			if err := res.Timeline().WriteBodyfile(&body); err != nil {
+				t.Fatal(err)
+			}
 			dir := filepath.Join("testdata", "golden", fmt.Sprintf("v%d", constant.GeneratorVersion), runtime.GOOS)
-			testutil.CheckGolden(t, filepath.Join(dir, "examples", name+".txt"), testutil.InputHash(t, path), got, *update)
-			testutil.CheckGolden(t, filepath.Join(dir, "ledger", name+".jsonl"), testutil.InputHash(t, path), string(ledger.Bytes(entries)), *update)
+			in := testutil.InputHash(t, path)
+			testutil.CheckGolden(t, filepath.Join(dir, "examples", name+".txt"), in, got, *update)
+			testutil.CheckGolden(t, filepath.Join(dir, "ledger", name+".jsonl"), in, string(ledger.Bytes(res.Ledger)), *update)
+			testutil.CheckGolden(t, filepath.Join(dir, "answer-key", name+".jsonl"), in, string(ledger.FactBytes(res.AnswerKey())), *update)
+			testutil.CheckGolden(t, filepath.Join(dir, "bodyfile", name+".body"), in, body.String(), *update)
 		})
 	}
 }

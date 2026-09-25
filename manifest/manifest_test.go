@@ -168,6 +168,30 @@ operations:
 	}
 }
 
+// An explicit mode on a directory create is for that directory; missing
+// parents get the default. A rotate's mode is for the new empty file, set
+// exactly (not narrowed by the umask).
+func TestDirAndRotateModesAreApplied(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows maps only the write bit; mode is meaningful on the Linux tree")
+	}
+	root, _ := runManifest(t, `
+operations:
+  - { action: create, path: a/b/, type: dir, mode: "0777" }
+  - { action: append, path: logs/app.log, content: "x" }
+  - { action: rotate, path: logs/app.log, new_path: logs/app.log.1, mode: "0666" }
+`, nil)
+	for p, want := range map[string]os.FileMode{"a": 0o755, "a/b": 0o777, "logs/app.log": 0o666} {
+		info, err := os.Stat(filepath.Join(root, filepath.FromSlash(p)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Errorf("%s: mode %o, want %o", p, got, want)
+		}
+	}
+}
+
 func TestDefaultFileModeIsNot0777(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows does not carry POSIX permission bits")

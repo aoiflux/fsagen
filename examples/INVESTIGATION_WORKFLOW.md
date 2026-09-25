@@ -21,47 +21,49 @@ This creates:
 - Lateral movement artifacts
 - Data staging and exfiltration
 - Anti-forensics activities
-- Timeline in CSV format
+- An observed timeline in CSV format, and beside the output
+  (`apt-investigation.fsagen/`) the run manifest, `SHA256SUMS`, the ledger of
+  every operation and the answer key of what a tool should find
 
-### Step 2: Generate Multiple Timeline Formats
+### Step 2: More Timeline Formats
+
+A tree that exists already gets another timeline without being regenerated
+(timeline-only mode):
 
 ```bash
-# CSV for spreadsheet analysis
-fsagen --seed 12345 --playbook examples/playbook-malware-lifecycle.yaml \
-  --timeline apt-timeline.csv ./apt-investigation
+fsagen --timeline apt-report.txt ./apt-investigation        # readable report
+fsagen --timeline apt-evidence.body ./apt-investigation     # The Sleuth Kit bodyfile
+fsagen --timeline apt-macb.macb ./apt-investigation         # MACB events
+fsagen --timeline apt-entries.jsonl ./apt-investigation     # JSON lines
+```
 
-# Human-readable report
-fsagen --seed 12345 --playbook examples/playbook-malware-lifecycle.yaml \
-  --timeline apt-report.txt ./apt-investigation
+The ground truth, including the files the scenario deleted, is the modelled
+timeline of a second run with the same seed:
 
-# Bodyfile for mactime
+```bash
 fsagen --seed 12345 --playbook examples/playbook-malware-lifecycle.yaml \
-  --timeline apt-evidence.bodyfile ./apt-investigation
-
-# MACB timeline for temporal analysis
-fsagen --seed 12345 --playbook examples/playbook-malware-lifecycle.yaml \
-  --timeline apt-macb.macb ./apt-investigation
+  --timeline apt-intended.body --timeline-source modelled ./apt-reference
 ```
 
 ### Step 3: Analyze with The Sleuth Kit
 
 ```bash
-# Convert bodyfile to human-readable timeline
-mactime -b apt-evidence.bodyfile -d > apt-mactime.txt
+# Readable timeline, one line per file and instant
+mactime -b apt-evidence.body -z UTC > apt-mactime.txt
 
-# Filter to specific time window (first 2 hours of infection)
-mactime -b apt-evidence.bodyfile -d 2024-09-01 2024-09-01-02:00:00 > apt-initial-infection.txt
+# The first three minutes of the infection, as CSV
+mactime -b apt-evidence.body -d -y -z UTC 2024-09-01T00:00:00..2024-09-01T00:03:00 > apt-initial-infection.csv
 ```
 
-### Step 4: Import to Forensic Tools
+### Step 4: Score a Tool
 
-The generated timeline files can be imported into:
-
-- **Autopsy**: Import CSV as timeline data source
-- **EnCase**: Use bodyfile format with timeline module
-- **FTK**: Import CSV for timeline analysis
-- **log2timeline/plaso**: Process bodyfile format
-- **Timesketch**: Import CSV for collaborative investigation
+Run the tool under test on `./apt-investigation` (or on an image of it) and
+compare what it reports with `apt-investigation.fsagen/answer-key.jsonl`:
+every file created, modified, renamed and deleted, every stream, every
+timestomp, and every file that ends with its modification time before its
+creation time. fsagen's tests read its bodyfile with `mactime`, and it has been
+compared by hand with `fls` on ext4 and NTFS images; it has not been tested
+with other tools.
 
 ### Step 5: Analyze Patterns
 
@@ -106,45 +108,48 @@ Look for forensic indicators in the timeline:
 
 ## Expected Timeline Output (CSV Sample)
 
+Observed on Windows (the inode is the file's MFT record number, so it differs
+from machine to machine):
+
 ```csv
-Path,Size,Mode,Accessed,Modified,Changed/Created,MD5,Type,ADS
-users/alice/AppData/Local/Temp/abc12345.exe,4096,-rwxrwxrwx,2024-09-01T00:00:00Z,2024-09-01T00:00:00Z,2024-09-01T00:00:00Z,5d41402abc4b2a76b9719d911017c592,file,Zone.Identifier
-users/alice/AppData/Local/Temp/.beacon.log,15600,-rw-rw-rw-,2024-09-01T01:40:00Z,2024-09-01T01:40:00Z,2024-09-01T00:00:30Z,098f6bcd4621d373cade4e832627b4f6,file,
-users/alice/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/WindowsUpdate.lnk,256,-rw-rw-rw-,2024-09-01T00:02:00Z,2024-08-15T10:00:00Z,2024-09-01T00:02:00Z,ad0234829205b9033196ba818f7a872b,file,
+Path,Stream,Type,Size,Mode,UID,GID,Inode,Accessed,Modified,Changed,Born,MD5,Deleted
+users/alice/AppData/Local/Temp/wupdmgr32.exe,,file,4096,r/rrwxrwxrwx,0,0,4085524,2024-09-01T00:00:00Z,2024-09-01T00:00:00Z,2024-09-01T00:00:00Z,2024-09-01T00:00:00Z,52bc474abf21adf05c3dbbec0823a7d8,
+users/alice/AppData/Local/Temp/wupdmgr32.exe,Zone.Identifier,stream,26,r/rrwxrwxrwx,0,0,4085524,2024-09-01T00:00:00Z,2024-09-01T00:00:00Z,2024-09-01T00:00:00Z,2024-09-01T00:00:00Z,fbccf14d504b7b2dbcb5a5bda75bd93b,
+users/alice/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/WindowsUpdate.lnk,,file,256,r/rrwxrwxrwx,0,0,4085579,2024-09-01T00:02:00Z,2024-08-15T10:00:00Z,2024-09-01T00:02:00Z,2024-09-01T00:02:00Z,e3eff4082bc514751e2c3297565cd2d8,
 ...
 ```
 
 ## Expected MACB Output (Sample)
 
+The timestomped shortcut shows its modification time two weeks before its
+birth:
+
 ```
-MACB Timeline for: ./apt-investigation
-Generated: 2024-10-21T12:00:00Z
-========================================================================================================================
-Timestamp            Type   Path                                                         Size MD5
-------------------------------------------------------------------------------------------------------------------------
-2024-09-01 00:00:00  M...   users/alice/AppData/Local/Temp/abc12345.exe                    4096 5d41402abc4b2a76b9719d911017c592
-2024-09-01 00:00:00  .A..   users/alice/AppData/Local/Temp/abc12345.exe                    4096 5d41402abc4b2a76b9719d911017c592
-2024-09-01 00:00:30  M...   users/alice/AppData/Local/Temp/.beacon.log                      156 098f6bcd4621d373cade4e832627b4f6
-2024-09-01 00:01:00  M...   users/alice/AppData/Local/Temp/.beacon.log                      312 098f6bcd4621d373cade4e832627b4f6
+Date                                  Size MACB Mode         UID    GID    Inode      Name
+2024-08-15 10:00:00.000000000          256 M... r/rrwxrwxrwx 0      0      4085579    /users/alice/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/WindowsUpdate.lnk
+2024-09-01 00:00:00.000000000         4096 MACB r/rrwxrwxrwx 0      0      4085524    /users/alice/AppData/Local/Temp/wupdmgr32.exe
+2024-09-01 00:00:00.000000000           26 MACB r/rrwxrwxrwx 0      0      4085524    /users/alice/AppData/Local/Temp/wupdmgr32.exe:Zone.Identifier
+2024-09-01 00:00:30.000000000           54 ...B r/rrwxrwxrwx 0      0      4085538    /users/alice/AppData/Local/Temp/.beacon.log
+2024-09-01 00:02:00.000000000          256 .ACB r/rrwxrwxrwx 0      0      4085579    /users/alice/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/WindowsUpdate.lnk
 ...
 ```
 
 ## Deterministic Verification
 
-Generate the same scene twice and compare:
+Generate the same scene twice and compare what the determinism contract covers
+(an observed timeline differs between runs: inode numbers, and anything that
+touched the files afterwards):
 
 ```bash
-# First generation
-fsagen --seed 12345 --playbook examples/playbook-malware-lifecycle.yaml --timeline timeline1.csv ./scene1
+fsagen --seed 12345 --playbook examples/playbook-malware-lifecycle.yaml --timeline t1.body --timeline-source modelled ./scene1
+fsagen --seed 12345 --playbook examples/playbook-malware-lifecycle.yaml --timeline t2.body --timeline-source modelled ./scene2
 
-# Second generation with same seed
-fsagen --seed 12345 --playbook examples/playbook-malware-lifecycle.yaml --timeline timeline2.csv ./scene2
-
-# Compare timelines (should be identical)
-diff timeline1.csv timeline2.csv
+diff t1.body t2.body
+diff scene1.fsagen/SHA256SUMS scene2.fsagen/SHA256SUMS
+diff scene1.fsagen/answer-key.jsonl scene2.fsagen/answer-key.jsonl
 ```
 
-No differences = perfect determinism achieved!
+No output from the three diffs means the two corpora are the same.
 
 ## Use Cases
 

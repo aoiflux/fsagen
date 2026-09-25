@@ -1,0 +1,4 @@
+# input-sha256 4c42ae0b051664ebb8a793eacce54e8a5d9cf10dd5721dcb05e7b60e939e5910
+{"event":"created","n":1,"at":"2021-11-01T10:00:00Z","object":4,"kind":"file","path":"users/winuser/downloads/installer.exe","size":256,"sha256":"3fc621a6ca43e68dc4e4ee7bebe6eecc984182b108a9d6cbb2390f41732918a2"}
+{"event":"stream","n":2,"at":"2021-11-01T10:05:00Z","object":4,"path":"users/winuser/downloads/installer.exe","stream":"Note","size":21,"sha256":"5dc229b109279c02820c1c84139314c791d923d0882b189c549dd27e68c30839"}
+{"event":"stream","n":3,"at":"2021-11-01T10:05:00Z","object":4,"path":"users/winuser/downloads/installer.exe","stream":"Zone.Identifier","size":113,"sha256":"b287082dd830d786d9f290e6758d2751ca18accb679d017ddc1891319fc5105e"}

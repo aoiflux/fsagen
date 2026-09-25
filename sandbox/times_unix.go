@@ -14,7 +14,22 @@ import (
 // setattrlist is not used until it is verified on a Mac).
 func timeCaps(string) TimeCaps { return TimeCaps{} }
 
-var defaultGranularity = Granularity{time.Microsecond, time.Microsecond, time.Microsecond, time.Microsecond}
+// volumeGranularity works out how finely the volume keeps times. FAT and
+// exFAT are known by name. Otherwise the root directory's change time
+// decides, since only the kernel sets it: a volume that keeps nanoseconds
+// (btrfs, xfs, tmpfs, ext4 with large inodes, APFS) all but never records
+// one on a whole second, and one that keeps whole seconds (ext3, ext4 with
+// 128-byte inodes, the default below 512 MB, HFS+) always does. Anything
+// else is taken to keep microseconds.
+func volumeGranularity(r *os.Root, fsName string) Granularity {
+	if g, ok := namedGranularity(fsName); ok {
+		return g
+	}
+	if m, err := statMeta(r, "."); err == nil && !m.Ctime.IsZero() && m.Ctime.Nanosecond() == 0 {
+		return wholeSeconds
+	}
+	return Granularity{time.Microsecond, time.Microsecond, time.Microsecond, time.Microsecond}
+}
 
 func setTimes(r *os.Root, name string, t Times, _ TimeCaps) error {
 	if t.Atime.IsZero() && t.Mtime.IsZero() {
@@ -23,15 +38,7 @@ func setTimes(r *os.Root, name string, t Times, _ TimeCaps) error {
 	return r.Chtimes(name, t.Atime, t.Mtime)
 }
 
-func getTimes(r *os.Root, name string) (Times, error) {
-	fi, err := r.Lstat(name)
-	if err != nil {
-		return Times{}, err
-	}
-	t := statTimes(fi)
-	t.Mtime = fi.ModTime().UTC()
-	return t, nil
-}
+func getMeta(r *os.Root, name, _ string) (Meta, error) { return statMeta(r, name) }
 
 func openQuiet(r *os.Root, name string) (*os.File, error) {
 	if noatime != 0 {

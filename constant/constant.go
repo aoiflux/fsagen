@@ -18,16 +18,19 @@ const (
 
 // GeneratorVersion identifies the byte output of this build. It is bumped by
 // every change that alters a covered output (file and stream content, the
-// dry-run listing, the run manifest) for some seed and input, and is never
-// reused for different bytes.
+// dry-run listing, the ledger, the answer key, the modelled timeline, the
+// run manifest) for some seed and input, and is never reused for different
+// bytes.
 //
 // Version 1 matches 7accc8d for valid inputs. Version 2 draws every random
 // value from a stream keyed by the operation (prng), reads no wall clock,
 // writes empty content as empty and runs playbooks in time order. Version 3
 // sets all four times from the scenario, settles and verifies them, copies
 // streams with a copy, writes a ledger, and lists intended times in the
-// dry-run listing.
-const GeneratorVersion = 3
+// dry-run listing. Version 4 adds MD5s, the kind of a deleted object, the
+// stream an ads or motw wrote, the object a rotate moves and the explicit
+// time fields to the ledger, and writes the answer key.
+const GeneratorVersion = 4
 
 const (
 	TxtExtension    = ".txt"

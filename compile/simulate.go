@@ -8,6 +8,7 @@ import (
 
 	"github.com/aoiflux/fsagen/model"
 	"github.com/aoiflux/fsagen/pathpolicy"
+	"github.com/aoiflux/fsagen/util"
 )
 
 // simulate runs the operations, in execution order, against an in-memory
@@ -177,7 +178,7 @@ func apply(t *model.Tree, op *Op, opts Options) error {
 			return fmt.Errorf("delete: %s does not exist (set missing_ok: true if that is expected)", p)
 		}
 		op.Pre = []Stamp{{Path: p, Times: o.Times}}
-		op.Object, op.Times = o.Serial, o.Times
+		op.Object, op.Kind, op.Times = o.Serial, o.Kind, o.Times
 		if err := t.Remove(p); err != nil {
 			return err
 		}
@@ -224,6 +225,7 @@ func apply(t *model.Tree, op *Op, opts Options) error {
 		}
 		// The rotated file is renamed and keeps its times; the empty file
 		// that takes its place is new, and is what explicit times describe.
+		op.Moved = t.Get(p).Serial
 		if err := renameErr(t.Rename(p, op.NewPath), p, op.NewPath); err != nil {
 			return err
 		}
@@ -290,7 +292,11 @@ func apply(t *model.Tree, op *Op, opts Options) error {
 	}
 	if op.Action != "delete" {
 		if o := t.Get(primary); o != nil {
-			op.Object, op.Times = o.Serial, o.Times
+			// The executor applies an explicit mode to exactly this object.
+			if mode, ok, _ := util.ParseFileMode(op.Mode); ok {
+				o.Mode = mode
+			}
+			op.Object, op.Kind, op.Times = o.Serial, o.Kind, o.Times
 		}
 	}
 	op.Stamps = stampsAfter(t, p, op.NewPath, primary)

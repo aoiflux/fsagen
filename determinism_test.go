@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -44,6 +45,9 @@ func genRun(t *testing.T, dir, name string, args ...string) string {
 
 func dryRun(t *testing.T, args ...string) string {
 	t.Helper()
+	if runtime.GOOS != "windows" {
+		args = append(args, "--on-unsupported=skip")
+	}
 	code, out, errOut := runCLI(t, append(args, "--dry-run")...)
 	if code != exitOK {
 		t.Fatalf("dry run: %d %s", code, errOut)
@@ -53,8 +57,9 @@ func dryRun(t *testing.T, args ...string) string {
 
 // TestDeterminismHarness is the determinism contract, checked on every
 // shipped example and on bulk mode: two runs with the same seed into
-// different directories give identical SHA256SUMS, run manifests and dry-run
-// listings, and another seed gives different output.
+// different directories give identical SHA256SUMS, run manifests, dry-run
+// listings, ledgers, answer keys and modelled timelines, and another seed
+// gives different output.
 func TestDeterminismHarness(t *testing.T) {
 	type scenario struct {
 		name string
@@ -70,13 +75,27 @@ func TestDeterminismHarness(t *testing.T) {
 		t.Run(sc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			seeded := func(seed int) []string { return append([]string{"--seed", fmt.Sprint(seed)}, sc.args...) }
-			a := genRun(t, dir, "a", seeded(42)...)
-			b := genRun(t, filepath.Join(dir, "elsewhere"), "b", seeded(42)...)
+			// A modelled timeline of each run, beside it, under the same name
+			// (the run manifest records the name).
+			modelled := func(where string, args []string) []string {
+				if sc.name == "bulk" {
+					return args
+				}
+				return append(slices.Clone(args), "--timeline", filepath.Join(where, "modelled.body"), "--timeline-source", "modelled")
+			}
+			elsewhere := filepath.Join(dir, "elsewhere")
+			a := genRun(t, dir, "a", modelled(dir, seeded(42))...)
+			b := genRun(t, elsewhere, "b", modelled(elsewhere, seeded(42))...)
 			c := genRun(t, dir, "c", seeded(43)...)
 
 			files := []string{runinfo.SumsFileName, runinfo.FileName}
 			if sc.name != "bulk" {
-				files = append(files, ledger.FileName)
+				files = append(files, ledger.FileName, ledger.AnswerKeyFileName)
+				ta, _ := os.ReadFile(filepath.Join(dir, "modelled.body"))
+				tb, _ := os.ReadFile(filepath.Join(elsewhere, "modelled.body"))
+				if len(ta) == 0 || !bytes.Equal(ta, tb) {
+					t.Errorf("modelled timelines differ between two runs with the same seed:\n%s\n%s", ta, tb)
+				}
 			}
 			for _, name := range files {
 				if !bytes.Equal(sidecar(t, a, name), sidecar(t, b, name)) {

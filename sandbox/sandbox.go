@@ -39,6 +39,7 @@ type FS struct {
 	dir     string
 	streams bool
 	fsName  string
+	gran    Granularity
 }
 
 // Open opens dir, which must already exist, as a confined output root.
@@ -53,6 +54,7 @@ func Open(dir string) (*FS, error) {
 	}
 	f := &FS{root: r, dir: abs}
 	f.streams, f.fsName = probeVolume(r)
+	f.gran = volumeGranularity(r, f.fsName)
 	return f, nil
 }
 
@@ -65,8 +67,8 @@ func (f *FS) Dir() string { return f.dir }
 // SupportsStreams reports whether the volume stores named data streams.
 func (f *FS) SupportsStreams() bool { return f.streams }
 
-// FilesystemName is the volume's file-system name (NTFS, ReFS, ...), or ""
-// where the platform does not report one.
+// FilesystemName is the volume's file-system name (NTFS, ReFS, ext4,
+// btrfs, ...), or "" where the platform does not report one.
 func (f *FS) FilesystemName() string { return f.fsName }
 
 func native(name string) string { return filepath.FromSlash(name) }

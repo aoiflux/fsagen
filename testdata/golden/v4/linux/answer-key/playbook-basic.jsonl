@@ -1,0 +1,8 @@
+# input-sha256 daa033543b2f7c8181f05a2de3d221c3678a2cbccaedcdc7297687c3e3f57381
+{"event":"created","n":1,"at":"2021-01-01T09:00:00Z","object":4,"kind":"file","path":"users/alice/docs/report-0.txt","size":37,"sha256":"d4869fb6db075d60a01b27187b95a3282af7d84b4a67425a5d01310291ed0ba4"}
+{"event":"modified","n":2,"at":"2021-01-01T09:05:00Z","object":4,"kind":"file","path":"users/alice/docs/report-0.txt","size":64,"sha256_before":"d4869fb6db075d60a01b27187b95a3282af7d84b4a67425a5d01310291ed0ba4","sha256":"6eb004785b728749ed6db83dd0646a43144b19407c2a0f2be4f290be82682bb8"}
+{"event":"created","n":3,"at":"2021-01-01T09:15:00Z","object":5,"kind":"file","path":"users/alice/docs/report-1.txt","size":37,"sha256":"34596426cd5cfcf836ac78ded6384f0cd7dabaf4898d5f4b2178b0ade9113eba"}
+{"event":"modified","n":4,"at":"2021-01-01T09:20:00Z","object":5,"kind":"file","path":"users/alice/docs/report-1.txt","size":64,"sha256_before":"34596426cd5cfcf836ac78ded6384f0cd7dabaf4898d5f4b2178b0ade9113eba","sha256":"79b320d3ba258aa0dfdc49b849e4da73a53798c31eeac283efb2789367ac2053"}
+{"event":"created","n":5,"at":"2021-01-01T09:30:00Z","object":8,"kind":"dir","path":"users/bob/media/photos"}
+{"event":"created","n":6,"at":"2021-01-01T09:32:00Z","object":9,"kind":"file","path":"users/bob/media/photos/pic-6.jpg","size":256,"sha256":"33ccc84b0d7a4bc04ba2475dca113b3d513c3039f18f8318422d2d99db0075a1"}
+{"event":"deleted","n":7,"at":"2021-01-01T09:40:00Z","object":9,"kind":"file","path":"users/bob/media/photos/pic-6.jpg","sha256":"33ccc84b0d7a4bc04ba2475dca113b3d513c3039f18f8318422d2d99db0075a1"}

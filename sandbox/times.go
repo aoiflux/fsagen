@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/aoiflux/fsagen/pathpolicy"
 )
 
 // Times are an object's four timestamps: last access, last modification,
@@ -42,19 +44,24 @@ type Granularity struct {
 }
 
 // Granularity reports the time resolution of this root's volume.
-func (f *FS) Granularity() Granularity { return granularity(f.fsName) }
+func (f *FS) Granularity() Granularity { return f.gran }
 
-func granularity(fsName string) Granularity {
+// namedGranularity is the resolution of the file systems whose name says
+// it.
+func namedGranularity(fsName string) (Granularity, bool) {
 	switch strings.ToUpper(fsName) {
 	case "NTFS", "REFS":
-		return Granularity{100, 100, 100, 100}
+		return Granularity{100, 100, 100, 100}, true
 	case "FAT", "FAT12", "FAT16", "FAT32", "VFAT":
-		return Granularity{Atime: 24 * time.Hour, Mtime: 2 * time.Second, Ctime: 2 * time.Second, Btime: 10 * time.Millisecond}
+		return Granularity{Atime: 24 * time.Hour, Mtime: 2 * time.Second, Ctime: 2 * time.Second, Btime: 10 * time.Millisecond}, true
 	case "EXFAT":
-		return Granularity{Atime: 2 * time.Second, Mtime: 10 * time.Millisecond, Ctime: 10 * time.Millisecond, Btime: 10 * time.Millisecond}
+		return Granularity{Atime: 2 * time.Second, Mtime: 10 * time.Millisecond, Ctime: 10 * time.Millisecond, Btime: 10 * time.Millisecond}, true
 	}
-	return defaultGranularity
+	return Granularity{}, false
 }
+
+// wholeSeconds is the resolution of a volume that keeps whole seconds.
+var wholeSeconds = Granularity{time.Second, time.Second, time.Second, time.Second}
 
 // SetTimes sets name's times in one step. Zero times are left alone, and so
 // are the times TimeCaps says this platform cannot set. The root itself is
@@ -75,11 +82,31 @@ func (f *FS) SetTimes(name string, t Times) error {
 // Times reads name's times without following a final symlink. Times this
 // platform does not report are zero.
 func (f *FS) Times(name string) (Times, error) {
-	t, err := getTimes(f.root, native(name))
+	m, err := f.Meta(name)
+	return m.Times, err
+}
+
+// Meta is what a timeline records about an object besides its content.
+type Meta struct {
+	// Times are the four times; one the platform or volume does not report
+	// is zero (Linux reports a birth time only where statx has one).
+	Times
+	// ID identifies the object on its volume: the MFT record number on
+	// NTFS, the file ID elsewhere on Windows, the inode number on Unix.
+	ID string
+	// UID and GID own the object on Unix. Windows has no numeric owner, and
+	// they are 0 there, as The Sleuth Kit writes them for NTFS.
+	UID, GID int
+}
+
+// Meta reads name's times, identity and owner without following a final
+// symlink, reading only metadata (no access time moves).
+func (f *FS) Meta(name string) (Meta, error) {
+	m, err := getMeta(f.root, native(name), f.fsName)
 	if err != nil {
-		return Times{}, &os.PathError{Op: "read times", Path: name, Err: err}
+		return Meta{}, &os.PathError{Op: "read metadata", Path: name, Err: err}
 	}
-	return t, nil
+	return m, nil
 }
 
 // OpenQuiet opens name for reading in a way that does not move its access
@@ -87,6 +114,18 @@ func (f *FS) Times(name string) (Times, error) {
 // updates are suspended, on Linux the file is opened with O_NOATIME when the
 // caller owns it. Elsewhere it is an ordinary read.
 func (f *FS) OpenQuiet(name string) (*os.File, error) { return openQuiet(f.root, native(name)) }
+
+// OpenStreamQuiet opens a named stream for reading without moving its
+// file's access time (see OpenQuiet).
+func (f *FS) OpenStreamQuiet(name, stream string) (*os.File, error) {
+	if err := pathpolicy.Stream(stream); err != nil {
+		return nil, err
+	}
+	if !f.streams {
+		return nil, ErrStreamsUnsupported
+	}
+	return openStreamQuiet(f.root, native(name), stream)
+}
 
 // ReadDirQuiet lists a directory, sorted by name, through a handle that
 // does not move the directory's access time where the platform allows (see

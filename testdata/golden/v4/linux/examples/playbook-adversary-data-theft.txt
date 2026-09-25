@@ -1,0 +1,10 @@
+# input-sha256 44f6a30a49972617690848942229971524c3b95ecdc7bc91d763083572171362
+d users/
+d users/alice/
+d users/alice/docs/
+d users/alice/logs/
+f 2964cef22ea3842dcdab0b5eef69cdb6083062436bb28a3c8e87a7ace97ae0e5 138 users/alice/logs/exfil.log
+d users/alice/staging/
+f 7d607a179c5d2bfa4cc7cea4215cf1eb71ecc97b19e79bda31f7e397e3b7174a 512 users/alice/staging/customers.csv
+f e0e4f6324b5a38e9e06fd31a2289479b1608dec0904b21d89d9cd7ee3842e4fc 1024 users/alice/staging/data.zip
+f d26478ad4e827af19d7b17d813a044e2c256675acb45db004a2651f43be76b23 512 users/alice/staging/quarterly.csv
