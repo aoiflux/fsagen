@@ -1,0 +1,10 @@
+# input-sha256 801d9121d055c9e2aec3d1add4866582f69196bd415622f2bc6330b1a3c7a4da
+d systems/
+d systems/workstation01/
+d systems/workstation01/Artifacts/
+f 2774cae9967e88f358d0c260ca94a1d283ccea9b9c488576392d1b571ce31e57 153 systems/workstation01/Artifacts/persistence.reg
+d systems/workstation01/Users/
+d systems/workstation01/Users/Public/
+d systems/workstation01/Users/Public/Startup/
+f d459e35e239a008e3e84d262622671034374224e07ef81234628d618b0530464 28 systems/workstation01/Users/Public/Startup/helper.bat
+f 7ad2aa09da83b17c85fc6f92f89ca395e83c9132a990188ff456f3e5252b7edb 44 systems/workstation01/Users/Public/Startup/readme.md

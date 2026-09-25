@@ -1,0 +1,7 @@
+# input-sha256 4c42ae0b051664ebb8a793eacce54e8a5d9cf10dd5721dcb05e7b60e939e5910
+d users/
+d users/winuser/
+d users/winuser/downloads/
+f 3fc621a6ca43e68dc4e4ee7bebe6eecc984182b108a9d6cbb2390f41732918a2 256 users/winuser/downloads/installer.exe
+s 5dc229b109279c02820c1c84139314c791d923d0882b189c549dd27e68c30839 21 users/winuser/downloads/installer.exe:Note
+s b287082dd830d786d9f290e6758d2751ca18accb679d017ddc1891319fc5105e 113 users/winuser/downloads/installer.exe:Zone.Identifier

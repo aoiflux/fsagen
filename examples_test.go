@@ -17,7 +17,6 @@ import (
 	manifestpkg "github.com/aoiflux/fsagen/manifest"
 	"github.com/aoiflux/fsagen/runinfo"
 	"github.com/aoiflux/fsagen/sandbox"
-	"github.com/aoiflux/fsagen/util"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files whose input changed")
@@ -43,12 +42,11 @@ func exampleMode(path string) compile.Mode {
 // runExample generates one shipped example into root with the example seed.
 func runExample(t *testing.T, path, root string) {
 	t.Helper()
-	util.Seed(exampleSeed)
 	var err error
 	if exampleMode(path) == compile.ModeManifest {
-		err = manifestpkg.ExecuteManifest(root, path, nil)
+		err = manifestpkg.ExecuteManifest(root, path, compile.Options{Seed: exampleSeed})
 	} else {
-		err = manifestpkg.ExecutePlaybook(root, path, nil)
+		err = manifestpkg.ExecutePlaybook(root, path, compile.Options{Seed: exampleSeed})
 	}
 	if err != nil {
 		t.Fatalf("%s: %v", path, err)
@@ -81,8 +79,7 @@ func TestDryRunGoldens(t *testing.T) {
 	for _, path := range exampleFiles(t) {
 		name := strings.TrimSuffix(filepath.Base(path), ".yaml")
 		t.Run(name, func(t *testing.T) {
-			util.Seed(exampleSeed)
-			prog, err := compile.Load(exampleMode(path), path, compile.Options{})
+			prog, err := compile.Load(exampleMode(path), path, compile.Options{Seed: exampleSeed})
 			if err != nil {
 				t.Fatal(err)
 			}

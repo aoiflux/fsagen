@@ -71,8 +71,8 @@ func WriteDryRun(w io.Writer, p *Program) error {
 			sum := sha256.Sum256([]byte(op.Content))
 			line.ContentBytes = &n
 			line.ContentSHA256 = hex.EncodeToString(sum[:])
-		case randomContent(&op) || (op.Action == "ads" && op.Content == ""):
-			line.RandomBytes = randomLength(&op)
+		case op.Random > 0:
+			line.RandomBytes = op.Random
 		}
 		if op.Action == "motw" {
 			z := op.ZoneID
@@ -86,18 +86,4 @@ func WriteDryRun(w io.Writer, p *Program) error {
 		}
 	}
 	return nil
-}
-
-// randomLength mirrors the executor's defaults for generated content.
-func randomLength(op *Op) int {
-	if op.ContentLen > 0 {
-		return op.ContentLen
-	}
-	switch op.Action {
-	case "append":
-		return 256
-	case "ads":
-		return 128
-	}
-	return 1024
 }

@@ -69,6 +69,11 @@ func simulate(ops []Op, t *model.Tree, opts Options) ([]Op, error) {
 		for _, p := range targets {
 			o := *op
 			o.Path, o.Ref, o.Refs = p, "", ""
+			if op.Refs != "" {
+				// One action over many files: each file draws its own
+				// random content, keyed by its path.
+				o.Rand = op.Rand.Derive("target", p)
+			}
 			if err := apply(t, &o, opts); err != nil {
 				field := "path"
 				if op.Ref != "" {

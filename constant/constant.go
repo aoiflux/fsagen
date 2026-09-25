@@ -19,8 +19,12 @@ const (
 // GeneratorVersion identifies the byte output of this build. It is bumped by
 // every change that alters a covered output (file and stream content, the
 // dry-run listing, the run manifest) for some seed and input, and is never
-// reused for different bytes. Version 1 matches 7accc8d for valid inputs.
-const GeneratorVersion = 1
+// reused for different bytes.
+//
+// Version 1 matches 7accc8d for valid inputs. Version 2 draws every random
+// value from a stream keyed by the operation (prng), reads no wall clock,
+// writes empty content as empty and runs playbooks in time order.
+const GeneratorVersion = 2
 
 const (
 	TxtExtension    = ".txt"

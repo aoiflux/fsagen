@@ -11,7 +11,6 @@ import (
 	"github.com/aoiflux/fsagen/render"
 	"github.com/aoiflux/fsagen/sandbox"
 	"github.com/aoiflux/fsagen/spec"
-	"github.com/aoiflux/fsagen/util"
 )
 
 func load(t *testing.T, mode Mode, body string, opts Options) (*Program, error) {
@@ -21,7 +20,6 @@ func load(t *testing.T, mode Mode, body string, opts Options) (*Program, error) 
 	if err := os.WriteFile(file, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	util.Seed(1)
 	p, err := Load(mode, file, opts)
 	if p != nil {
 		t.Cleanup(func() { p.Close() })
@@ -236,10 +234,6 @@ func TestValueRules(t *testing.T) {
 	mustFail(t, ModeManifest, "operations:\n  - action: create\n    path: a\n    stream: s\n    content: x\n", "stream", "does not apply to create")
 	mustFail(t, ModeManifest, "operations:\n  - action: create\n    path: a\n    content: x\n  - action: rename\n    path: a\n    new_path: b\n    mtime: 2020-01-01T00:00:00Z\n", "mtime", "does not apply to rename")
 	mustFail(t, ModeManifest, "operations:\n  - action: mace\n    path: a\n", "at least one of atime and mtime")
-	// Generator version 1 writes random text for empty content; asking for an
-	// empty file must be refused, not silently answered with 1024 characters.
-	mustFail(t, ModeManifest, "operations:\n  - action: create\n    path: var/log/access.log\n    content: ''\n", "content", "is empty", "random text")
-	mustFail(t, ModeManifest, "operations:\n  - action: append\n    path: a.log\n    content: \"${VAR:empty}\"\nvariables: { empty: \"\" }\n", "is empty")
 	mustFail(t, ModeManifest, "operations:\n  - action: ansible-vault\n    path: v.yml\n    content: x\n    vault: { password: p, salt: abc }\n", "salt")
 }
 
@@ -286,7 +280,7 @@ func TestRandomContentWithTypedExtension(t *testing.T) {
 	for _, p := range []string{"a/dropper.exe", "a/exfil.zip", "History.sqlite", "a.pdf", "img.JPG"} {
 		mustFail(t, ModeManifest, "operations:\n  - action: create\n    path: "+p+"\n    content_len: 4096\n", "cannot generate", "format: text")
 	}
-	p := mustLoad(t, ModeManifest, "operations:\n  - action: create\n    path: a/dropper.exe\n    format: text\n    content_len: 16\n  - action: create\n    path: lure.exe\n    content: MZ\n  - action: create\n    path: r.pdf\n    format: pdf\n    content_len: 64\n")
+	p := mustLoad(t, ModeManifest, "start: 2026-01-01T00:00:00Z\noperations:\n  - action: create\n    path: a/dropper.exe\n    format: text\n    content_len: 16\n  - action: create\n    path: lure.exe\n    content: MZ\n  - action: create\n    path: r.pdf\n    format: pdf\n    content_len: 64\n")
 	if len(p.Ops) != 3 {
 		t.Fatal(len(p.Ops))
 	}
@@ -323,8 +317,8 @@ func TestContentFileConfined(t *testing.T) {
 }
 
 func TestSourceRootMustExistInOutput(t *testing.T) {
-	mustFail(t, ModeManifest, "operations:\n  - action: email\n    path: m.eml\n    email: { from: a@x, attachments: [ { source_root: ../../outside_secret.txt } ] }\n", "source_root", "escapes")
-	mustFail(t, ModeManifest, "operations:\n  - action: email\n    path: m.eml\n    email: { from: a@x, attachments: [ { source_root: report.pdf } ] }\n", "does not exist in the output at this point")
+	mustFail(t, ModeManifest, "start: 2026-01-01T00:00:00Z\noperations:\n  - action: email\n    path: m.eml\n    email: { from: a@x, attachments: [ { source_root: ../../outside_secret.txt } ] }\n", "source_root", "escapes")
+	mustFail(t, ModeManifest, "start: 2026-01-01T00:00:00Z\noperations:\n  - action: email\n    path: m.eml\n    email: { from: a@x, attachments: [ { source_root: report.pdf } ] }\n", "does not exist in the output at this point")
 }
 
 // F-IN-14: every string field is templated, in manifests and playbooks alike,
@@ -449,9 +443,17 @@ func TestErrorShape(t *testing.T) {
 	}
 }
 
-// Generator version 1 writes random text for empty content; that is refused
-// rather than left to surprise anyone expecting an empty file.
-func TestEmptyContentRefused(t *testing.T) {
-	mustFail(t, ModeManifest, "operations:\n  - action: create\n    path: empty.log\n    content: ''\n", "content", "random text")
-	mustFail(t, ModeManifest, "operations:\n  - action: append\n    path: a.log\n    content: \"${VAR:x}\"\nvariables: { x: '' }\n", "content", "random text")
+// An explicit content, even an empty one, is written exactly; random text is
+// drawn only when the operation gives no content of its own. (Generator
+// version 1 wrote 1024 random characters for content: ”.)
+func TestEmptyContentIsEmpty(t *testing.T) {
+	p := mustLoad(t, ModeManifest, "variables: { x: '' }\noperations:\n  - action: create\n    path: empty.log\n    content: ''\n  - action: append\n    path: a.log\n    content: \"${VAR:x}\"\n  - action: create\n    path: r.txt\n  - action: append\n    path: r.txt\n  - action: create\n    path: n.txt\n    content_len: 9\n")
+	for i, want := range []int{0, 0, 1024, 256, 9} {
+		if got := p.Ops[i].Random; got != want {
+			t.Errorf("op %d: Random = %d, want %d", i+1, got, want)
+		}
+	}
+	if p.Ops[0].Content != "" {
+		t.Errorf("content = %q", p.Ops[0].Content)
+	}
 }

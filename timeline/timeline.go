@@ -57,14 +57,15 @@ func Generate(root string) (*Timeline, error) {
 			IsDir: info.IsDir(),
 		}
 
-		// Get timestamps
+		// Get timestamps, in UTC so the output does not depend on the
+		// machine's time zone.
 		if stat, ok := getFileTimes(info); ok {
-			entry.Atime = stat.Atime
-			entry.Mtime = stat.Mtime
-			entry.Ctime = stat.Ctime
+			entry.Atime = utc(stat.Atime)
+			entry.Mtime = utc(stat.Mtime)
+			entry.Ctime = utc(stat.Ctime)
 		} else {
 			// Fallback to ModTime
-			entry.Mtime = info.ModTime()
+			entry.Mtime = utc(info.ModTime())
 		}
 
 		// Calculate MD5 for files only
@@ -89,12 +90,27 @@ func Generate(root string) (*Timeline, error) {
 		return nil, err
 	}
 
-	// Sort by modification time
-	sort.Slice(tl.Entries, func(i, j int) bool {
-		return tl.Entries[i].Mtime.Before(tl.Entries[j].Mtime)
-	})
-
+	sortEntries(tl.Entries)
 	return tl, nil
+}
+
+// sortEntries orders entries by modification time, and entries with the
+// same time by path, so equal times never come out in a varying order.
+func sortEntries(entries []Entry) {
+	sort.SliceStable(entries, func(i, j int) bool {
+		a, b := entries[i], entries[j]
+		if !a.Mtime.Equal(b.Mtime) {
+			return a.Mtime.Before(b.Mtime)
+		}
+		return a.Path < b.Path
+	})
+}
+
+func utc(t time.Time) time.Time {
+	if t.IsZero() {
+		return t
+	}
+	return t.UTC()
 }
 
 // WriteCSV writes timeline to CSV format
@@ -149,7 +165,7 @@ func (tl *Timeline) WriteCSV(w io.Writer) error {
 // WriteTXT writes a human-readable timeline
 func (tl *Timeline) WriteTXT(w io.Writer) error {
 	fmt.Fprintf(w, "Forensic Timeline for: %s\n", tl.Root)
-	fmt.Fprintf(w, "Generated: %s\n", time.Now().UTC().Format(time.RFC3339))
+	fmt.Fprintln(w, "Times are UTC.")
 	fmt.Fprintf(w, "Total entries: %d\n", len(tl.Entries))
 	fmt.Fprintln(w, strings.Repeat("=", 120))
 	fmt.Fprintln(w)
@@ -245,13 +261,17 @@ func (tl *Timeline) WriteMACB(w io.Writer) error {
 		}
 	}
 
-	// Sort by timestamp
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].timestamp.Before(entries[j].timestamp)
+	// Sort by timestamp; the same instant keeps path order.
+	sort.SliceStable(entries, func(i, j int) bool {
+		a, b := entries[i], entries[j]
+		if !a.timestamp.Equal(b.timestamp) {
+			return a.timestamp.Before(b.timestamp)
+		}
+		return a.path < b.path
 	})
 
 	fmt.Fprintf(w, "MACB Timeline for: %s\n", tl.Root)
-	fmt.Fprintf(w, "Generated: %s\n", time.Now().UTC().Format(time.RFC3339))
+	fmt.Fprintln(w, "Times are UTC.")
 	fmt.Fprintln(w, strings.Repeat("=", 120))
 	fmt.Fprintf(w, "%-20s %-6s %-60s %12s %s\n", "Timestamp", "Type", "Path", "Size", "MD5")
 	fmt.Fprintln(w, strings.Repeat("-", 120))

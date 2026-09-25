@@ -1,6 +1,158 @@
 # Changelog
 
-## Unreleased: P0, stop silent wrong output and unsafe writes
+## Unreleased: P1, determinism you can state in one sentence
+
+Generator version: **2**. Output changes for every seed. Corpora made by
+version 1 are reproduced with the build that made them (tag 7accc8d and
+62d759c before landing this).
+
+README's *Determinism contract* is the statement: for one generator version,
+the pinned toolchain, the same seed and the same inputs, file and stream
+contents, paths, the dry-run listing and `run-manifest.json` are
+byte-identical, on every platform, for every operation the platform supports.
+
+### Output bytes
+
+- **Every random value comes from its own keyed stream** (new `prng`
+  package). A stream's key comes from the seed plus what the value is for:
+  - the operation's `id`, or else a hash of its YAML;
+  - for playbooks, the actor, step offset, iteration and batch;
+  - the field;
+  - the token kind and its position among tokens of that kind in the field.
+
+  Adding, removing or reordering an unrelated action, field or token no
+  longer changes any other value. Skipping an unsupported operation changes
+  nothing else, so v1's placeholder draws (`drawOnly`) are gone. ChaCha8
+  (`math/rand/v2`) supplies the bits. Text, hex, UUIDs and bounded integers
+  are mapped in fsagen's own code, not by math/rand helpers that may change
+  between Go releases. `TestPRNGGoldenVectors` pins the scheme.
+- **Nothing reads the wall clock:**
+  - A manifest's `${DATE}` uses the operation's `mtime`, else the new
+    top-level `start`. With neither it is an error (v1 used the current
+    time).
+  - Unpinned `format: pdf` dates and an email with no `date` default to the
+    scheduled time in playbooks, and to `mtime`/`start` in manifests. If
+    one pdf date is given, the other copies it. With no reference time
+    these are errors. v1 used the current time, or left an email without a
+    `Date` header and dated its mbox entry 1970.
+  - Bulk mode takes `--bulk-start` (default 2021-01-01T00:00:00Z) for its
+    JSON, PDF, log, mail, zip and history dates.
+  - Only `start: now` reads the clock, and it marks the run
+    `"reproducible": false`.
+- **`content: ''` writes an empty file.** v1 wrote 1024 random characters, and
+  P0 refused it. Random content is used only when an operation gives no
+  content, content_file or template.
+- **Repeated email, pdf and vault specs are copied per occurrence.** Each
+  occurrence renders its own tokens and gets its own date. v1 rendered the
+  first occurrence in place and every later one reused it.
+- **Playbooks run in time order.** Operations are stable-sorted by scheduled
+  time, and ties keep declaration order. Overlapping repeating steps now
+  interleave; before, one step ran to completion before the next started
+  (F-IN-15). `${SEQ}` still counts in declaration order. In the examples,
+  `playbook-insider-threat-exfil` and `playbook-malware-lifecycle` run in a
+  different order.
+- **`refs` over several files draws random content per file**, keyed by path.
+- **The vault salt** comes from the operation's own stream when `salt` is not
+  given.
+- **Bulk mode is reproducible:**
+  - The plan (directories, names, per-file keys) is built in one sequential
+    pass.
+  - A bounded worker pool renders each file in memory and writes it through
+    the output root. Every worker is waited for on success and on failure.
+    The error reported comes from the first failing file in plan order.
+  - SQLite databases are built in a private temporary directory with no
+    journal and then copied in, so stray `-journal` files are gone.
+  - `.docx` comes from fsagen's own OOXML writer: stored members in a fixed
+    order. The docx library it replaces wrote its members in Go map order,
+    so the same seed gave different bytes. This writer was planned for P4
+    and moved here for that reason.
+  - `.mp4` is still placeholder text, now written directly.
+  - The 19-versus-20 goroutine count mismatch and the nil-file writes after a
+    failed create are gone with the old code (F-DET-1/2, F-GEN-6).
+
+### New
+
+- **`SHA256SUMS`** in the sidecar directory: every file and `path:stream`,
+  sorted, in `sha256sum` format. `run-manifest.json` records its digest and
+  counts.
+- **`run-manifest.json` is deterministic:**
+  - These moved out of it: module version, VCS revision, OS, architecture and
+    file system.
+  - It keeps the Go version and the capability set.
+  - The non-reproducible facts go to the new **`run-info.json`**: build,
+    host, platform, absolute paths, start and finish times.
+- **`--bulk-start`**, and a top-level **`start`** for manifests (also in the
+  schema).
+- **Timelines** are written in UTC, sort equal times by path, and carry no
+  `Generated:` wall-clock line. They record the live file system and remain
+  outside the contract.
+- **Pinned toolchain:** `go.mod` has `toolchain go1.27.0`. PDF streams and PNG
+  output go through compress/flate, so a different Go release may change
+  their bytes; the run manifest's `go_version` says which one was used.
+- **Dependencies:**
+  - `glebarez/sqlite` (GORM) is replaced by the plain `database/sql` driver
+    `glebarez/go-sqlite`;
+  - `gingfrederik/docx` is replaced by fsagen's own writer;
+  - `abema/go-mp4` is dropped: it only passed bytes through. A real container
+    is P4.
+- **API:** `manifest.ExecuteManifest`/`ExecutePlaybook` now take
+  `compile.Options`, which carries the seed. The global generator
+  (`util.Seed`, `GetRandom*`) is gone. `util.AnsibleVaultEncrypt` requires a
+  salt.
+- **Schema:** a new test checks that the hand-written top-level keys match
+  the Go types. Without it, `start` would have gone missing from the
+  manifest schema unnoticed.
+
+### Goldens
+
+The goldens under `testdata/golden/v2/` were recorded with the version bump. v1's
+goldens under `testdata/golden/v1/` are no longer read by any test. They are
+kept until the owner decides whether to remove them; the tags reproduce them.
+
+### Deferred
+
+Timestamps (P2), timeline fidelity (P3) and typed artefacts (P4) are
+unchanged. `TIMELINE_FEATURE.md` and `examples/*.md` still describe
+timelines as deterministic; P5 corrects them.
+
+### Evidence that each test can fail
+
+As in P0, every P1 test was shown to fail with its guard removed: the code
+was mutated, the test ran and failed, and the file was restored. All 26
+mutations were killed. One mutation first survived: `TestSidecarRecords`
+missed a path it did not look for, so the mutation was corrected to record
+the path that test checks. The token test gained an assertion so that it
+catches a counter shared across token kinds.
+
+| Finding | Mutation | Test |
+|---|---|---|
+| F-DET-5 | operation key includes its position (`${SEQ}`) | TestInsertingUnrelatedActionLeavesOtherFilesUnchanged |
+| F-DET-5 | one draw counter shared by all token kinds | TestTokenDrawIndependentOfOtherFields |
+| F-DET-5 | scheme name changed | TestPRNGGoldenVectors |
+| F-DET-5 | text mapping changed | TestExampleContentGoldens |
+| contract | root key ignores the seed | TestDeterminismHarness |
+| F-DET-1 | bulk content keyed by wall time | TestBulkDeterministic |
+| F-DET-2 | one file kind left out of the plan | TestBulkNoJournalExactCounts |
+| F-DET-2 | workers not awaited | TestBulkErrorReturnedNoLeak |
+| F-DET-3 | bulk JSON timestamp from the clock | TestNoWallClockInContent |
+| F-DET-3 | bulk PDF dates unpinned | TestNoWallClockInContent |
+| F-GEN-10 | manifest `${DATE}` falls back to now | TestManifestDateNeedsTime |
+| F-DET-3 | `start: now` ignores the injected clock | TestStartNowFlagged |
+| F-DET-4 | timeline in local time | TestTimelineZoneIndependent |
+| F-TL-9 | equal times ordered against path | TestTimelineTieOrder |
+| F-DET-4 | `Generated:` wall-clock line | TestNoWallClockInTimeline |
+| F-IN-15 | playbook left in declaration order | TestPlaybookRunsInTimeOrder |
+| empty content | `content: ''` treated as absent | TestEmptyContentIsEmpty, TestEmptyContentWritesEmptyFile |
+| shared specs | email spec not copied per occurrence | TestRepeatedEmailRendersPerIteration |
+| refs | refs targets share one key | TestRefsTargetsDrawOwnContent |
+| SHA256SUMS | streams left out | TestCrossCapabilityContentEquality |
+| SHA256SUMS | a file left out | TestSidecarRecords |
+| run manifest | absolute input path recorded | TestSidecarRecords |
+| schema | manifest `start` missing | TestSchemaRootKeysMatchSpec |
+| D-10 | docx part renamed | TestDocxOpensWithParts |
+| vault | missing salt accepted | TestVaultNeedsSalt |
+
+## P0: stop silent wrong output and unsafe writes (b4a5d3e)
 
 Generator version: **1** (unchanged bytes for valid inputs; see below).
 

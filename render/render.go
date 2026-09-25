@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aoiflux/fsagen/util"
+	"github.com/aoiflux/fsagen/prng"
 )
 
 // Context supplies the values that tokens resolve against. Manifests leave
@@ -26,8 +26,21 @@ type Context struct {
 	BatchIdx  int
 	Iteration int
 	Actor     string
+	// Timestamp is what ${DATE:...} formats. Zero means the operation has no
+	// reference time, and ${DATE} is an error.
 	Timestamp time.Time
 	Variables map[string]string
+	// Rand is the operation's key and Field the name of the field being
+	// rendered. The n-th random token of a kind in that field draws from
+	// Rand.Derive("token", Field, kind, n), so its value depends on nothing
+	// else in the scenario.
+	Rand  prng.Key
+	Field string
+}
+
+// draw returns the stream for the n-th token of kind in the current field.
+func (c Context) draw(kind string, n int) *prng.Stream {
+	return c.Rand.Derive("token", c.Field, kind, strconv.Itoa(n)).Stream()
 }
 
 var (
@@ -53,10 +66,9 @@ const literal = "\x00fsagen-literal\x00"
 
 // Apply substitutes every supported token in s.
 //
-// The rules run in a fixed order (random strings, counters, dates, actor,
-// variables, UUIDs, IPs, hashes), which fixes the order of PRNG draws and so
-// the bytes a given seed produces. Do not reorder them without bumping the
-// generator version.
+// Random tokens are keyed by kind and position within the field (see
+// Context), so neither the order the rules run in nor the other tokens in
+// the string affect their values. ${RND} and ${RANDOM} are one kind.
 func Apply(s string, ctx Context) (string, error) {
 	if s == "" {
 		return s, nil
@@ -64,13 +76,15 @@ func Apply(s string, ctx Context) (string, error) {
 	var errs []string
 	out := strings.ReplaceAll(s, "$${", literal)
 
+	nRnd := 0
 	out = reRnd.ReplaceAllStringFunc(out, func(m string) string {
 		n, err := strconv.Atoi(reRnd.FindStringSubmatch(m)[2])
 		if err != nil || n <= 0 {
 			errs = append(errs, fmt.Sprintf("%s: length must be at least 1", m))
 			return ""
 		}
-		return util.GetRandomString(n)
+		nRnd++
+		return ctx.draw("RND", nRnd-1).Text(n)
 	})
 
 	out = reSeq.ReplaceAllString(out, strconv.Itoa(ctx.Seq))
@@ -78,6 +92,10 @@ func Apply(s string, ctx Context) (string, error) {
 	out = reIter.ReplaceAllString(out, strconv.Itoa(ctx.Iteration))
 
 	out = reDate.ReplaceAllStringFunc(out, func(m string) string {
+		if ctx.Timestamp.IsZero() {
+			errs = append(errs, fmt.Sprintf("%s has no reference time (in a manifest it is the operation's mtime, else the manifest's start)", m))
+			return ""
+		}
 		return ctx.Timestamp.Format(reDate.FindStringSubmatch(m)[1])
 	})
 
@@ -96,20 +114,24 @@ func Apply(s string, ctx Context) (string, error) {
 
 	// A well-formed v4 UUID, not the obviously synthetic zero-padded shape the
 	// playbook renderer used to emit.
+	nUUID := 0
 	out = reUUID.ReplaceAllStringFunc(out, func(string) string {
-		return util.GetRandomUUID()
+		nUUID++
+		return ctx.draw("UUID", nUUID-1).UUID()
 	})
 
 	out = reIP.ReplaceAllString(out, fmt.Sprintf("192.168.%d.%d", (ctx.Seq/256)%256, ctx.Seq%256))
 
 	// Lowercase hex: a "SHA256" containing Z or = fails the sniff test.
+	nHash := 0
 	out = reHash.ReplaceAllStringFunc(out, func(m string) string {
 		n, err := strconv.Atoi(reHash.FindStringSubmatch(m)[1])
 		if err != nil || n <= 0 {
 			errs = append(errs, fmt.Sprintf("%s: length must be at least 1", m))
 			return ""
 		}
-		return util.GetRandomHex(n)
+		nHash++
+		return ctx.draw("HASH", nHash-1).Hex(n)
 	})
 
 	for _, m := range reLeft.FindAllString(out, -1) {

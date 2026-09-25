@@ -32,6 +32,13 @@ func BuildManifestSchema() ([]byte, error) {
 		"description": "Documents fsagen manifest input files. fsagen validates input itself; this schema mirrors those rules for editors.",
 		"type":        "object",
 		"properties": map[string]any{
+			"start": map[string]any{
+				"description": "Reference time for operations without an mtime (${DATE}, unpinned pdf and email dates): RFC 3339, or \"now\" for a run that cannot be reproduced.",
+				"oneOf": []any{
+					map[string]any{"const": "now"},
+					map[string]any{"$ref": "#/$defs/Rfc3339Time"},
+				},
+			},
 			"variables": map[string]any{
 				"type":                 "object",
 				"additionalProperties": map[string]any{"type": "string"},

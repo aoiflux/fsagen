@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aoiflux/fsagen/constant"
 	"github.com/aoiflux/fsagen/pathpolicy"
 	"github.com/aoiflux/fsagen/render"
 	"github.com/aoiflux/fsagen/sandbox"
@@ -30,8 +29,8 @@ const contentFieldName = "Content"
 // their own that must survive verbatim. An explicit render: true or
 // render: false overrides either default.
 //
-// The order of work (string fields in struct order, then content_file, then
-// content, then attachment contents) fixes the order of random draws; keep it.
+// Each field's random tokens are keyed by the field's name (see
+// render.Context), so the order of work does not affect any value.
 func Prepare(op spec.Operation, src *sandbox.Sources, rctx render.Context) (spec.Operation, error) {
 	var errs ErrorList
 	renderStringFields(reflect.ValueOf(&op).Elem(), rctx, "", &errs)
@@ -55,11 +54,13 @@ func Prepare(op spec.Operation, src *sandbox.Sources, rctx render.Context) (spec
 
 	if renderContent {
 		var err error
+		rctx.Field = "content"
 		if op.Content, err = render.Apply(op.Content, rctx); err != nil {
 			errs.add(fmt.Errorf("content: %w", err))
 		}
 		for i := range attachmentsOf(&op) {
 			a := &attachmentsOf(&op)[i]
+			rctx.Field = fmt.Sprintf("email.attachments[%d].content", i)
 			if a.Content, err = render.Apply(a.Content, rctx); err != nil {
 				errs.add(fmt.Errorf("email.attachments[%d].content: %w", i, err))
 			}
@@ -105,6 +106,7 @@ func renderStringFields(v reflect.Value, rctx render.Context, where string, errs
 		// Variable maps are the source of substitution, not a target of it.
 	case reflect.String:
 		if s := v.String(); s != "" {
+			rctx.Field = where
 			out, err := render.Apply(s, rctx)
 			if err != nil {
 				errs.add(fmt.Errorf("%s: %w", where, err))
@@ -158,13 +160,6 @@ func checkValues(op *Op, src *sandbox.Sources) ErrorList {
 		if _, _, err := util.ParseFileMode(op.Mode); err != nil {
 			at("mode", "%v", err)
 		}
-	}
-	// Generator version 1 treats empty content as absent and writes random
-	// text instead of an empty file. Until the next byte-changing version
-	// fixes that, an explicitly empty body is refused rather than silently
-	// replaced.
-	if k.has("content") && op.Content == "" && (op.Action == "create" || op.Action == "update" || op.Action == "append" || op.Action == "ads") {
-		at("content", "is empty, which generator version %d would silently replace with random text; append creates a missing file, so an empty create before appending can simply be dropped", constant.GeneratorVersion)
 	}
 	if k.has("content_len") && op.ContentLen < 1 {
 		at("content_len", "must be at least 1 (use content: \"\" for an empty file)")
@@ -238,6 +233,7 @@ func checkValues(op *Op, src *sandbox.Sources) ErrorList {
 	// exactly the silent wrong output this tool must not produce: a ".exe" of
 	// base32 text is not an executable. Literal content is the author's own
 	// bytes and always allowed; format: text marks a placeholder as deliberate.
+	op.Random = randomLength(op)
 	if randomContent(op) && !k.has("format") {
 		if format, ok := typedExtensions[strings.ToLower(path.Ext(op.Path))]; ok {
 			at("path", "%s implies %s, which fsagen cannot generate from random content yet; set format: text to write placeholder text on purpose, or supply content or content_file", path.Ext(op.Path), format)
@@ -259,6 +255,7 @@ var typedExtensions = map[string]string{
 
 // randomContent reports whether an operation's file content will be drawn
 // at random (content_len, or the default length when nothing is given).
+// Stream content is not a file's, so ads is left out.
 func randomContent(op *Op) bool {
 	switch op.Action {
 	case "create":
@@ -269,8 +266,31 @@ func randomContent(op *Op) bool {
 	default:
 		return false
 	}
+	return !givesContent(op)
+}
+
+func givesContent(op *Op) bool {
 	k := op.keys
-	return !k.has("content") && !k.has("content_file") && !k.has("template")
+	return k.has("content") || k.has("content_file") || k.has("template")
+}
+
+// randomLength is how many random characters the operation writes: its
+// content_len, or a default per action, when it gives no content of its
+// own. An explicit content, even an empty one, is written as it is.
+func randomLength(op *Op) int {
+	if !randomContent(op) && !(op.Action == "ads" && !givesContent(op)) {
+		return 0
+	}
+	if op.ContentLen > 0 {
+		return op.ContentLen
+	}
+	switch op.Action {
+	case "append":
+		return 256
+	case "ads":
+		return 128
+	}
+	return 1024
 }
 
 func checkEmail(op *Op, src *sandbox.Sources) ErrorList {

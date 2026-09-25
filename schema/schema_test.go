@@ -7,9 +7,11 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/aoiflux/fsagen/compile"
+	"github.com/aoiflux/fsagen/spec"
 )
 
 // The checked-in schemas must be exactly what the generator produces, so a
@@ -95,6 +97,42 @@ func TestSchemaAllowsExactlyTheFieldMatrix(t *testing.T) {
 		sort.Strings(missing)
 		if len(missing) > 0 {
 			t.Errorf("%s: no field rules for %v", tc.def, missing)
+		}
+	}
+}
+
+// The top-level keys the schema allows are exactly the fields of the Go type
+// the input decodes into (the root schemas are written by hand).
+func TestSchemaRootKeysMatchSpec(t *testing.T) {
+	for _, tc := range []struct {
+		build func() ([]byte, error)
+		typ   reflect.Type
+	}{
+		{BuildManifestSchema, reflect.TypeOf(spec.Manifest{})},
+		{BuildPlaybookSchema, reflect.TypeOf(spec.Playbook{})},
+	} {
+		raw, err := tc.build()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc struct {
+			Properties map[string]any `json:"properties"`
+		}
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatal(err)
+		}
+		var got, want []string
+		for k := range doc.Properties {
+			got = append(got, k)
+		}
+		for i := 0; i < tc.typ.NumField(); i++ {
+			name, _, _ := strings.Cut(tc.typ.Field(i).Tag.Get("yaml"), ",")
+			want = append(want, name)
+		}
+		sort.Strings(got)
+		sort.Strings(want)
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("%s: schema root keys %v, spec fields %v", tc.typ.Name(), got, want)
 		}
 	}
 }

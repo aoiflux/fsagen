@@ -5,6 +5,7 @@
 package manifest
 
 import (
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -26,27 +27,23 @@ type ExecContext struct {
 	FS *sandbox.FS
 	// Sources reads email bodies and attachments from the YAML's directory.
 	Sources *sandbox.Sources
-	// Boundary supplies deterministic MIME boundaries.
-	Boundary func() string
 }
-
-func defaultBoundary() string { return "----=_fsagen_" + util.GetRandomHex(24) }
 
 // ExecuteManifest compiles a manifest and applies it under root with default
 // options. It is the library entry point; the CLI adds root checks, the
 // capability pre-flight and the run manifest around the same steps.
-func ExecuteManifest(root, manifestPath string, vars map[string]string) error {
-	return executeFile(compile.ModeManifest, root, manifestPath, vars)
+func ExecuteManifest(root, manifestPath string, opts compile.Options) error {
+	return executeFile(compile.ModeManifest, root, manifestPath, opts)
 }
 
 // ExecutePlaybook compiles a playbook and applies it under root with default
 // options.
-func ExecutePlaybook(root, playbookPath string, vars map[string]string) error {
-	return executeFile(compile.ModePlaybook, root, playbookPath, vars)
+func ExecutePlaybook(root, playbookPath string, opts compile.Options) error {
+	return executeFile(compile.ModePlaybook, root, playbookPath, opts)
 }
 
-func executeFile(mode compile.Mode, root, file string, vars map[string]string) error {
-	prog, err := compile.Load(mode, file, compile.Options{Vars: vars})
+func executeFile(mode compile.Mode, root, file string, opts compile.Options) error {
+	prog, err := compile.Load(mode, file, opts)
 	if err != nil {
 		return err
 	}
@@ -64,20 +61,12 @@ func executeFile(mode compile.Mode, root, file string, vars map[string]string) e
 	return Execute(ExecContext{FS: fsys, Sources: prog.Sources}, prog.Ops)
 }
 
-// Execute applies the operations in order. An operation marked NoOp is
-// skipped; one marked Skip (unsupported here) still makes the random draws
-// it would have made, so every other file's bytes match a platform that
-// performs it.
+// Execute applies the operations in order, leaving out those marked NoOp
+// and those marked Skip (unsupported here). Every operation draws from its
+// own random stream, so leaving one out changes no other file's bytes.
 func Execute(ctx ExecContext, ops []compile.Op) error {
-	if ctx.Boundary == nil {
-		ctx.Boundary = defaultBoundary
-	}
 	for _, op := range ops {
-		switch {
-		case op.NoOp != "":
-			continue
-		case op.Skip != "":
-			drawOnly(op)
+		if op.NoOp != "" || op.Skip != "" {
 			continue
 		}
 		if err := executeOp(ctx, op); err != nil {
@@ -85,13 +74,6 @@ func Execute(ctx ExecContext, ops []compile.Op) error {
 		}
 	}
 	return nil
-}
-
-// drawOnly consumes the random draws a skipped operation would have made.
-func drawOnly(op compile.Op) {
-	if op.Action == "ads" {
-		_ = contentOrRandom(op.Operation, 128)
-	}
 }
 
 func executeOp(ctx ExecContext, c compile.Op) error {
@@ -109,14 +91,14 @@ func executeOp(ctx ExecContext, c compile.Op) error {
 			}
 			return applyTimes(fs, op, target)
 		}
-		content, err := renderContent(op, contentOrRandom(op, 1024))
+		content, err := renderContent(op, contentOf(c))
 		if err != nil {
 			return err
 		}
 		return writeArtifact(fs, op, target, content)
 
 	case "update":
-		content, err := renderContent(op, contentOrRandom(op, 1024))
+		content, err := renderContent(op, contentOf(c))
 		if err != nil {
 			return err
 		}
@@ -130,7 +112,7 @@ func executeOp(ctx ExecContext, c compile.Op) error {
 		if err != nil {
 			return err
 		}
-		if _, err := f.Write(contentOrRandom(op, 256)); err != nil {
+		if _, err := f.Write(contentOf(c)); err != nil {
 			_ = f.Close()
 			return err
 		}
@@ -203,17 +185,21 @@ func executeOp(ctx ExecContext, c compile.Op) error {
 		return nil
 
 	case "email":
-		return writeEmail(ctx, op, target)
+		return writeEmail(ctx, c, target)
 
 	case "ansible-vault":
-		encrypted, err := util.AnsibleVaultEncrypt([]byte(op.Content), op.Vault.Password, op.Vault.VaultID, op.Vault.Salt)
+		salt := op.Vault.Salt
+		if strings.TrimSpace(salt) == "" {
+			salt = hex.EncodeToString(c.Rand.Derive("vault.salt").Stream().Bytes(32))
+		}
+		encrypted, err := util.AnsibleVaultEncrypt([]byte(op.Content), op.Vault.Password, op.Vault.VaultID, salt)
 		if err != nil {
 			return err
 		}
 		return writeArtifact(fs, op, target, encrypted)
 
 	case "ads":
-		if err := fs.WriteStream(target, op.Stream, contentOrRandom(op, 128)); err != nil {
+		if err := fs.WriteStream(target, op.Stream, contentOf(c)); err != nil {
 			return err
 		}
 		// Writing a stream updates the base file's mtime, so restore the times
@@ -279,7 +265,9 @@ func pdfMeta(op spec.Operation) (libgen.PDFMeta, error) {
 
 // writeEmail builds the message and either writes it as a standalone .eml or
 // appends it to an mbox. The format defaults from the path extension.
-func writeEmail(ctx ExecContext, op spec.Operation, target string) error {
+func writeEmail(ctx ExecContext, c compile.Op, target string) error {
+	op := c.Operation
+	boundaries := c.Rand.Derive("email.boundary").Stream()
 	var readSource func(string) ([]byte, error)
 	if ctx.Sources != nil {
 		readSource = ctx.Sources.ReadFile
@@ -288,7 +276,7 @@ func writeEmail(ctx ExecContext, op spec.Operation, target string) error {
 		Spec:       *op.Email,
 		ReadSource: readSource,
 		ReadOutput: ctx.FS.ReadFile,
-		Boundary:   ctx.Boundary,
+		Boundary:   func() string { return "----=_fsagen_" + boundaries.Hex(24) },
 	})
 	if err != nil {
 		return err
@@ -417,17 +405,14 @@ func dirModeFor(op spec.Operation) os.FileMode {
 	return sandbox.DirMode
 }
 
-// contentOrRandom returns the operation's content, falling back to
-// deterministic random text of content_len (or fallbackLen) when it has none.
-func contentOrRandom(op spec.Operation, fallbackLen int) []byte {
-	if len(op.Content) > 0 {
-		return []byte(op.Content)
+// contentOf returns what the operation writes: its random text when compile
+// decided it has no content of its own, else exactly its content, which may
+// be empty.
+func contentOf(c compile.Op) []byte {
+	if c.Random > 0 {
+		return []byte(c.Rand.Derive("content").Stream().Text(c.Random))
 	}
-	sz := op.ContentLen
-	if sz <= 0 {
-		sz = fallbackLen
-	}
-	return []byte(util.GetRandomString(sz))
+	return []byte(c.Content)
 }
 
 func optionalTime(value, field string) (time.Time, error) {

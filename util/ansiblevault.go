@@ -30,9 +30,9 @@ const (
 // PBKDF2-HMAC-SHA256 key derivation, AES-256-CTR encryption and an
 // HMAC-SHA256 tag, hex-encoded twice exactly as Ansible layers it.
 //
-// A non-empty vaultID selects the 1.2 header form. saltHex pins the salt for
-// reproducible output; when empty the salt is drawn from the seeded PRNG, which
-// is deterministic for a given --seed.
+// A non-empty vaultID selects the 1.2 header form. saltHex is the 32-byte salt
+// in hex; it is required, because a salt from anywhere but the caller's own
+// keyed stream would make the output irreproducible.
 func AnsibleVaultEncrypt(plaintext []byte, password, vaultID, saltHex string) ([]byte, error) {
 	if password == "" {
 		return nil, errors.New("ansible-vault requires a password")
@@ -150,7 +150,7 @@ func vaultDeriveKeys(password string, salt []byte) (cipherKey, hmacKey, iv []byt
 func vaultSalt(saltHex string) ([]byte, error) {
 	saltHex = strings.TrimSpace(saltHex)
 	if saltHex == "" {
-		return GetRandomBytes(vaultSaltLen), nil
+		return nil, errors.New("vault salt is required")
 	}
 	salt, err := hex.DecodeString(saltHex)
 	if err != nil {

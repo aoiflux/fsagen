@@ -103,7 +103,7 @@ func TestRuntimeErrorExit1Stderr(t *testing.T) {
 
 func TestVersion(t *testing.T) {
 	code, out, _ := runCLI(t, "--version")
-	if code != exitOK || !strings.Contains(out, "generator version 1") || !strings.Contains(out, runtime.GOOS) {
+	if code != exitOK || !strings.Contains(out, "generator version 2") || !strings.Contains(out, runtime.GOOS) {
 		t.Errorf("code=%d out=%q", code, out)
 	}
 }
@@ -263,7 +263,7 @@ func TestUnsupportedOpsFailBeforeAnyWrite(t *testing.T) {
 
 // With --on-unsupported=skip the rest is generated, each skip is recorded,
 // and every other file has the same bytes as on a platform that performed
-// the skipped operations: the skipped ads still consumes its random draw.
+// the skipped operations: each operation draws from its own random stream.
 func TestOnUnsupportedSkipRecordsAndKeepsOtherBytes(t *testing.T) {
 	dir := t.TempDir()
 	p := writeYAML(t, dir, "p.yaml", streamPlaybook)

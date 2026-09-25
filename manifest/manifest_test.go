@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"bytes"
+	"github.com/aoiflux/fsagen/compile"
 	"github.com/aoiflux/fsagen/sandbox"
 	"github.com/aoiflux/fsagen/util"
 	"os"
@@ -29,7 +30,7 @@ func runManifest(t *testing.T, body string, vars map[string]string) (root, baseD
 	baseDir = t.TempDir()
 	root = t.TempDir()
 	writeFile(t, baseDir, "manifest.yaml", body)
-	if err := ExecuteManifest(root, filepath.Join(baseDir, "manifest.yaml"), vars); err != nil {
+	if err := ExecuteManifest(root, filepath.Join(baseDir, "manifest.yaml"), compile.Options{Vars: vars}); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 	return root, baseDir
@@ -49,7 +50,7 @@ operations:
     content_file: content/id_rsa
 `)
 
-	if err := ExecuteManifest(root, filepath.Join(baseDir, "manifest.yaml"), map[string]string{"org": "ACME"}); err != nil {
+	if err := ExecuteManifest(root, filepath.Join(baseDir, "manifest.yaml"), compile.Options{Vars: map[string]string{"org": "ACME"}}); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 
@@ -74,7 +75,7 @@ operations:
     render: true
 `)
 
-	if err := ExecuteManifest(root, filepath.Join(baseDir, "manifest.yaml"), map[string]string{"org": "ACME Corp"}); err != nil {
+	if err := ExecuteManifest(root, filepath.Join(baseDir, "manifest.yaml"), compile.Options{Vars: map[string]string{"org": "ACME Corp"}}); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 	got, _ := os.ReadFile(filepath.Join(root, "report.md"))
@@ -108,7 +109,7 @@ operations:
     content: "inline"
     content_file: content/a.txt
 `)
-	err := ExecuteManifest(root, filepath.Join(baseDir, "manifest.yaml"), nil)
+	err := ExecuteManifest(root, filepath.Join(baseDir, "manifest.yaml"), compile.Options{})
 	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Errorf("err = %v, want a mutual-exclusion error", err)
 	}
@@ -123,7 +124,7 @@ operations:
     path: out.txt
     content_fil: typo
 `)
-	err := ExecuteManifest(root, filepath.Join(baseDir, "manifest.yaml"), nil)
+	err := ExecuteManifest(root, filepath.Join(baseDir, "manifest.yaml"), compile.Options{})
 	if err == nil || !strings.Contains(err.Error(), "content_fil") {
 		t.Errorf("err = %v, want the typo to be reported", err)
 	}
@@ -227,7 +228,7 @@ operations:
     path: deep/nested/file.txt
     content: "written"
 `)
-	err := ExecuteManifest(root, filepath.Join(baseDir, "manifest.yaml"), nil)
+	err := ExecuteManifest(root, filepath.Join(baseDir, "manifest.yaml"), compile.Options{})
 	if err == nil || !strings.Contains(err.Error(), "does not exist; use create") {
 		t.Fatalf("err = %v, want an update-of-missing-file error pointing at create", err)
 	}
@@ -275,7 +276,7 @@ operations:
       modified: "2026-03-14T02:33:12Z"
 `)
 
-	if err := ExecuteManifest(root, filepath.Join(baseDir, "manifest.yaml"), nil); err != nil {
+	if err := ExecuteManifest(root, filepath.Join(baseDir, "manifest.yaml"), compile.Options{}); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 
@@ -317,8 +318,7 @@ operations:
 
 	read := func() []byte {
 		root := t.TempDir()
-		util.Seed(1)
-		if err := ExecuteManifest(root, filepath.Join(baseDir, "manifest.yaml"), nil); err != nil {
+		if err := ExecuteManifest(root, filepath.Join(baseDir, "manifest.yaml"), compile.Options{}); err != nil {
 			t.Fatalf("execute: %v", err)
 		}
 		data, err := os.ReadFile(filepath.Join(root, "report.pdf"))
@@ -343,7 +343,7 @@ operations:
     format: xlsx
     content: "x"
 `)
-	err := ExecuteManifest(root, filepath.Join(baseDir, "manifest.yaml"), nil)
+	err := ExecuteManifest(root, filepath.Join(baseDir, "manifest.yaml"), compile.Options{})
 	if err == nil || !strings.Contains(err.Error(), "unknown format") {
 		t.Errorf("err = %v, want an unknown-format error", err)
 	}
@@ -429,7 +429,7 @@ operations:
       password: "${VAR:vault_password}"
 `)
 
-	if err := ExecuteManifest(root, filepath.Join(baseDir, "manifest.yaml"), map[string]string{"vault_password": "pw123"}); err != nil {
+	if err := ExecuteManifest(root, filepath.Join(baseDir, "manifest.yaml"), compile.Options{Vars: map[string]string{"vault_password": "pw123"}}); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 
@@ -461,7 +461,7 @@ operations:
     path: out.txt
     content: "value=${VAR:missing}"
 `)
-	err := ExecuteManifest(root, filepath.Join(baseDir, "manifest.yaml"), nil)
+	err := ExecuteManifest(root, filepath.Join(baseDir, "manifest.yaml"), compile.Options{})
 	if err == nil || !strings.Contains(err.Error(), `undefined variable "missing"`) {
 		t.Fatalf("err = %v, want an undefined-variable error", err)
 	}

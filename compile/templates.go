@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/aoiflux/fsagen/render"
-	"github.com/aoiflux/fsagen/util"
 )
 
 // getTemplate returns a predefined content template. The name has already
@@ -26,7 +25,7 @@ This is an automated message from %s.
 Message ID: %d
 `,
 			strings.ToLower(ctx.Actor),
-			util.GetRandomString(20),
+			ctx.Rand.Derive("template", "email", "subject").Stream().Text(20),
 			ctx.Timestamp.Format(time.RFC1123Z),
 			ctx.Actor,
 			ctx.Seq)
@@ -73,7 +72,7 @@ Generated content: %s
 			ctx.Actor,
 			ctx.Timestamp.Format("2006-01-02"),
 			ctx.Seq,
-			util.GetRandomString(100))
+			ctx.Rand.Derive("template", "doc", "body").Stream().Text(100))
 	}
 	panic("unchecked template " + templateName)
 }

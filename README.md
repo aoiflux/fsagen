@@ -4,7 +4,7 @@ Deterministic generator for creating diverse file-system artifacts to test foren
 
 ## Features
 
-- Deterministic output with `--seed`
+- Deterministic output with `--seed`: the same seed and inputs give byte-identical files (see *Determinism contract*)
 - Manifest mode: simple, declarative file operations (create/update/append/delete/mace/rename/copy/truncate/rotate/ads/motw/email/ansible-vault)
 - Playbook mode: complex timelines with actors, timed steps, and templating
 - Bulk mode: super-simple synthetic corpus generation with `--bulk` and `--depth`
@@ -44,6 +44,7 @@ fsagen [OPTIONS] <output-path>
 - `--playbook FILE` - Execute a YAML playbook (complex modus operandi)
 - `--bulk N` - Super-simple bulk generation: N items per level (no YAML)
 - `--depth D` - Bulk generation depth (default: 1)
+- `--bulk-start T` - Bulk generation: the RFC 3339 time the dates inside generated files count from (default `2021-01-01T00:00:00Z`)
 - `--vars-file FILE` - YAML map of variables exposed to templates as `${VAR:name}`
 - `--var k=v` - Set one template variable (repeatable; overrides `--vars-file`)
 - `--validate` - Check the manifest or playbook and exit; nothing is written
@@ -53,7 +54,7 @@ fsagen [OPTIONS] <output-path>
 - `--on-unsupported fail|skip` - What to do with operations the platform cannot perform (default `fail`, before anything is written; `skip` generates the rest and records each skipped operation)
 - `--allow-nonportable` - Allow paths that only work on some platforms (reserved device names, case-only differences, very long paths)
 - `--allow-external-sources` - Allow `content_file`, email bodies and attachments from outside the YAML file's directory
-- `--meta DIR` - Where to write `run-manifest.json` (default: `<output-path>.fsagen`, beside the output)
+- `--meta DIR` - Where to write `run-manifest.json`, `SHA256SUMS` and `run-info.json` (default: `<output-path>.fsagen`, beside the output)
 - `--timeline FILE` - Write a timeline of the output after generating; `FILE` must be outside the output directory
 - `--timeline-format csv|txt|bodyfile|macb` - Timeline format (default: from the extension: `.csv`, `.txt`, `.bodyfile`, `.body`, `.macb`; any other extension is an error)
 - `--generate-schema` - Write JSON schemas for manifests and playbooks and exit (`--schema-out DIR`, default `schemas`)
@@ -63,7 +64,11 @@ fsagen [OPTIONS] <output-path>
 
 **Output directory:** must be a directory or not exist. A non-empty one is refused unless `--clean` or `--into-existing` is given.
 
-**Run manifest:** every generation writes `run-manifest.json` beside the output (never inside it): generator version, seed, SHA-256 of every input read, options, platform, skipped operations, and a status that reads `running` until the run ends and then `complete` or `failed`. A tree whose run manifest does not say `complete` is not a finished corpus.
+**Run records:** every generation writes three files beside the output (never inside it):
+
+- `run-manifest.json`: generator version, Go version, seed, SHA-256 of every input read, options, capabilities, skipped operations, the digest of `SHA256SUMS`, and a status that reads `running` until the run ends and then `complete` or `failed`. A tree whose run manifest does not say `complete` is not a finished corpus. It holds no absolute path, host name or wall-clock time, so it is itself reproducible.
+- `SHA256SUMS`: the SHA-256 of every file and NTFS stream in the output (`path:stream`), in `sha256sum` format, sorted by path. Check a corpus with `sha256sum -c` from inside the output directory.
+- `run-info.json`: what is not reproducible: build revision, host, OS, file system, absolute paths and start and finish times.
 
 **Examples:**
 
@@ -100,7 +105,9 @@ fsagen --seed 7 --bulk 3 --depth 2 ./quick-bulk
 
 ## Manifest schema
 
-YAML with a sequence of operations:
+YAML with an optional `start` and a sequence of operations:
+
+- start (top level, optional): RFC 3339, or `now` for a run that cannot be reproduced. It is the reference time for operations without an `mtime`: what `${DATE}` formats and what an unpinned pdf's dates and an email's `Date` default to. With neither, those are errors; fsagen never reads the wall clock for them.
 
 - action: `create|update|append|truncate|rotate|delete|mace|rename|copy|ads|motw|email|ansible-vault`
 - path: target path relative to output root (see *Paths* below)
@@ -109,9 +116,9 @@ YAML with a sequence of operations:
 - missing_ok: for `delete`, a path that does not exist is a recorded no-op instead of an error
 - type: `file|dir` (for create)
 - ext: file extension to append if `path` has no extension
-- content: literal content (optional)
+- content: literal content (optional); `content: ''` writes an empty file
 - content_file: load content from a file inside the manifest's directory (optional)
-- content_len: size of deterministic random content, at least 1 (fallback when neither is provided)
+- content_len: size of deterministic random content, at least 1. With no content of any kind, the default is 1024 characters (256 for `append`, 128 for `ads`)
 - render: run `${...}` substitution over the content. Defaults to `true` for inline
   `content` and `false` for `content_file`, because scripts and PEM keys contain
   `${...}` sequences of their own that must survive verbatim
@@ -145,8 +152,6 @@ operation or step/action, and the field). All of these are errors:
   promises a structured format fsagen cannot generate yet (`.exe`, `.zip`,
   `.png`, `.jpg`, `.sqlite`, `.docx`, `.mp4`, `.eml`, ...). Add `format: text`
   to write placeholder text on purpose, or give `content`/`content_file`.
-- an explicitly empty `content: ''`: this generator version would write random
-  text in its place. To start a log, simply `append` to it.
 - an operation the platform cannot perform (`ads`/`motw` off NTFS), unless
   `--on-unsupported=skip`
 
@@ -202,10 +207,10 @@ Durations accept `d` and `w` in addition to Go's own units, so a step can be
 **Playbook templating:**
 - `${SEQ}` - Monotonic sequence counter
 - `${RND:N}` or `${RANDOM:N}` - Deterministic random string of length N (N at least 1)
-- `${DATE:layout}` - The action's scheduled time (in a manifest, the operation's `mtime`) formatted with a Go layout (e.g., `${DATE:2006-01-02T15:04:05Z07:00}`)
+- `${DATE:layout}` - The action's scheduled time (in a manifest, the operation's `mtime`, else the manifest's `start`; with neither it is an error) formatted with a Go layout (e.g., `${DATE:2006-01-02T15:04:05Z07:00}`)
 - `${ACTOR}` - Current actor name (playbooks only)
 - `${VAR:name}` - Variable substitution (from global or actor-specific variables); undefined names are errors
-- `${UUID}` - Random version-4 UUID drawn from the seeded PRNG
+- `${UUID}` - Deterministic random version-4 UUID
 - `${IP}` - Deterministic IP address (192.168.x.x range)
 - `${HASH:N}` - Deterministic lowercase hex string of length N
 - `${BATCH}` - Current batch index (when using batch_count)
@@ -315,8 +320,9 @@ fields — so a `Received:` chain and `Authentication-Results` land where a real
 MTA would have written them. A header value that already contains newlines
 keeps the author's folding.
 
-MIME boundaries are drawn from the seeded PRNG, so `--seed` reproducibility
-holds across the message body too.
+MIME boundaries are drawn from the operation's own random stream, so `--seed`
+reproducibility holds across the message body too. A message with no `date`
+is dated at its scheduled time (in a manifest: its `mtime`, else `start`).
 
 `examples/playbook-email-thread.yaml` is a worked four-message thread using
 all of the above.
@@ -350,8 +356,9 @@ Inline markers are **not** interpreted or stripped. A report body carrying
 into something that reads like a real password would be worse than showing a
 literal asterisk.
 
-With `created` and `modified` pinned, two renders of the same input produce
-byte-identical files. That is what lets one artifact be attached to a message
+Unpinned dates default to the action's scheduled time (in a manifest: its
+`mtime`, else `start`), and one given date stands in for the other, so two
+renders of the same input always produce byte-identical files. That is what lets one artifact be attached to a message
 and land with the same SHA256 as its copy on disk.
 
 ### `ansible-vault` action
@@ -368,7 +375,7 @@ decrypts.
   vault:
     password: "${VAR:vault_password}"
     vault_id: ""     # non-empty selects the 1.2 header form
-    salt: ""         # optional 32-byte hex; pin it for byte-stable output
+    salt: ""         # optional 32-byte hex; when empty it comes from the seed
 ```
 
 ```bash
@@ -407,20 +414,42 @@ themselves (they can hold a vault password).
   Windows honours only the write bit; the field matters on Linux output.
 - To emulate directory timestamp skew on deletion, `delete` can include `atime/mtime` which will be applied to the parent directory after removal.
 
-## Reproducibility
+## Determinism contract
 
-What is reproducible today, and verified by the test suite:
+For one **generator version** (`fsagen --version`), built with the Go
+toolchain pinned in `go.mod` (`GOTOOLCHAIN=go1.27.0` forces it; the Go version
+is recorded in `run-manifest.json`), the same `--seed` and the same **inputs**
+(the YAML file, the vars file, `--var` values, and every file read through
+`content_file`, email bodies or attachments, all listed by SHA-256 in
+`run-manifest.json`), fsagen produces byte-identical:
 
-- **Manifests and playbooks:** the same generator version (`fsagen --version`),
-  `--seed` and input files produce the same file names, file contents and
-  stream contents (`TestExampleContentGoldens` pins every shipped example), and
-  the same `--dry-run` listing (`TestDryRunGoldens`) and `run-manifest.json`
-  (`TestRunManifestDeterministic`). A playbook with `start: now` is the
-  exception, and says so in its run manifest.
-- **Not reproducible yet:** bulk mode (its generators run concurrently and draw
-  from one random stream), and timelines, which record what the file system
-  reports, including creation and change times the operating system stamps at
-  generation time. Both are addressed in the next generator version.
+1. content of every regular file and named stream it writes, as listed in
+   `SHA256SUMS`;
+2. set of relative paths;
+3. `--dry-run` listing and `run-manifest.json`.
+
+This holds on every platform, for every operation the platform supports.
+Which operations were skipped as unsupported is recorded, and follows from the
+capability set; skipping one changes no other file's bytes. Bulk mode is
+covered too (with `--bulk-start` as one more input).
+
+How: every random value is drawn from a ChaCha8 stream keyed by the seed and
+the name of what it is for (the operation's `id` or the hash of its YAML,
+its iteration and batch, the field, the token), so adding, removing or
+reordering an unrelated action changes nothing else. Nothing reads the wall
+clock except `start: now`, which marks the run as not reproducible.
+
+**Not covered:** anything read back from the live file system: timelines;
+creation and change times the operating system stamps; NTFS `$FILE_NAME`
+times; file IDs, allocation and directory order; `run-info.json`; runs with
+`start: now`; files already present under `--into-existing`.
+
+Verified by `TestDeterminismHarness` (every example and bulk mode, two runs
+into different directories, and a different seed), the version-pinned goldens
+(`TestExampleContentGoldens`, `TestDryRunGoldens`), `TestBulkDeterministic`,
+`TestNoWallClockInContent`, `TestInsertingUnrelatedActionLeavesOtherFilesUnchanged`
+and `TestCrossCapabilityContentEquality`. It has been run on Windows; the
+Linux and macOS runs are part of the release check.
 
 ## Supported File Types
 
@@ -464,7 +493,7 @@ output directory, or it would describe itself.
 - MD5 hash calculation for all files (except files > 100MB)
 - Access and modification times, plus a third time that is the creation time on Windows and the inode change time on Unix (the bodyfile currently writes it in both its ctime and crtime columns)
 - Detection of the NTFS streams `Zone.Identifier`, `metadata` and `content` (Windows)
-- Chronologically sorted by modification time
+- Chronologically sorted by modification time (equal times by path); all times in UTC
 - **Timeline-only mode**: Generate timelines from an existing directory without regenerating it
 
 **Example workflows:**
@@ -517,7 +546,7 @@ fsagen --seed 7 --bulk 3 --depth 2 --timeline timeline.csv ./quick-bulk
 What it does:
 - Creates a directory fan-out up to `--depth` with `--bulk` sub-branches per level
 - Populates each level with many file types (txt, docx, png, pdf, mp4, csv, json, xml, html, log, reg, zip, exe, jsonl, syslog, md, eml, mbox, Chrome .db, Firefox .sqlite)
-- Draws names and contents from `--seed`, but not yet reproducibly: see *Reproducibility*
+- Draws names and contents from `--seed`, reproducibly (see *Determinism contract*); dates inside files count from `--bulk-start`
 
 Intended use:
 - Quickly produce a sizeable, diverse dataset for tool demos, performance tests, or classroom exercises

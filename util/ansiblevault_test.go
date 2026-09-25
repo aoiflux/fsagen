@@ -8,11 +8,10 @@ import (
 )
 
 func TestAnsibleVaultRoundTrip(t *testing.T) {
-	Seed(1)
 	plaintext := []byte("---\nprod_db_password: \"S3cr3t\"\nflag: \"FLAG{x}\"\n")
 	const password = "Wint3r-Rot@t3-2026"
 
-	out, err := AnsibleVaultEncrypt(plaintext, password, "", "")
+	out, err := AnsibleVaultEncrypt(plaintext, password, "", testSalt)
 	if err != nil {
 		t.Fatalf("encrypt: %v", err)
 	}
@@ -32,8 +31,7 @@ func TestAnsibleVaultRoundTrip(t *testing.T) {
 }
 
 func TestAnsibleVaultWrongPasswordFails(t *testing.T) {
-	Seed(1)
-	out, err := AnsibleVaultEncrypt([]byte("secret"), "correct", "", "")
+	out, err := AnsibleVaultEncrypt([]byte("secret"), "correct", "", testSalt)
 	if err != nil {
 		t.Fatalf("encrypt: %v", err)
 	}
@@ -43,8 +41,7 @@ func TestAnsibleVaultWrongPasswordFails(t *testing.T) {
 }
 
 func TestAnsibleVaultIDSelectsVersion12(t *testing.T) {
-	Seed(1)
-	out, err := AnsibleVaultEncrypt([]byte("secret"), "pw", "prod", "")
+	out, err := AnsibleVaultEncrypt([]byte("secret"), "pw", "prod", testSalt)
 	if err != nil {
 		t.Fatalf("encrypt: %v", err)
 	}
@@ -59,12 +56,10 @@ func TestAnsibleVaultIDSelectsVersion12(t *testing.T) {
 func TestAnsibleVaultPinnedSaltIsReproducible(t *testing.T) {
 	salt := hex.EncodeToString(bytes.Repeat([]byte{0xAB}, 32))
 
-	Seed(1)
 	first, err := AnsibleVaultEncrypt([]byte("secret"), "pw", "", salt)
 	if err != nil {
 		t.Fatalf("encrypt: %v", err)
 	}
-	Seed(99) // a different seed must not matter once the salt is pinned
 	second, err := AnsibleVaultEncrypt([]byte("secret"), "pw", "", salt)
 	if err != nil {
 		t.Fatalf("encrypt: %v", err)
@@ -75,7 +70,6 @@ func TestAnsibleVaultPinnedSaltIsReproducible(t *testing.T) {
 }
 
 func TestAnsibleVaultRejectsBadSalt(t *testing.T) {
-	Seed(1)
 	if _, err := AnsibleVaultEncrypt([]byte("x"), "pw", "", "not-hex"); err == nil {
 		t.Error("a non-hex salt should be rejected")
 	}
@@ -85,8 +79,7 @@ func TestAnsibleVaultRejectsBadSalt(t *testing.T) {
 }
 
 func TestAnsibleVaultLineWrapping(t *testing.T) {
-	Seed(1)
-	out, err := AnsibleVaultEncrypt(bytes.Repeat([]byte("A"), 500), "pw", "", "")
+	out, err := AnsibleVaultEncrypt(bytes.Repeat([]byte("A"), 500), "pw", "", testSalt)
 	if err != nil {
 		t.Fatalf("encrypt: %v", err)
 	}
@@ -126,40 +119,12 @@ func TestParseFileMode(t *testing.T) {
 	}
 }
 
-func TestGetRandomHexIsHexAndDeterministic(t *testing.T) {
-	Seed(7)
-	a := GetRandomHex(32)
-	Seed(7)
-	b := GetRandomHex(32)
+// testSalt pins the salt; fsagen draws one from the operation's own random
+// stream when the scenario gives none.
+var testSalt = strings.Repeat("5a", 32)
 
-	if a != b {
-		t.Errorf("same seed produced %q and %q", a, b)
-	}
-	if len(a) != 32 {
-		t.Errorf("length = %d, want 32", len(a))
-	}
-	if strings.Trim(a, "0123456789abcdef") != "" {
-		t.Errorf("%q contains non-hex characters", a)
-	}
-}
-
-func TestGetRandomUUIDIsWellFormed(t *testing.T) {
-	Seed(3)
-	got := GetRandomUUID()
-
-	parts := strings.Split(got, "-")
-	if len(parts) != 5 {
-		t.Fatalf("%q does not have 5 dash-separated groups", got)
-	}
-	for i, want := range []int{8, 4, 4, 4, 12} {
-		if len(parts[i]) != want {
-			t.Errorf("group %d of %q is %d chars, want %d", i, got, len(parts[i]), want)
-		}
-	}
-	if parts[2][0] != '4' {
-		t.Errorf("version nibble of %q = %c, want 4", got, parts[2][0])
-	}
-	if !strings.ContainsRune("89ab", rune(parts[3][0])) {
-		t.Errorf("variant nibble of %q = %c, want one of 8,9,a,b", got, parts[3][0])
+func TestVaultNeedsSalt(t *testing.T) {
+	if _, err := AnsibleVaultEncrypt([]byte("x"), "pw", "", ""); err == nil {
+		t.Fatal("an empty salt was accepted")
 	}
 }

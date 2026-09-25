@@ -2,6 +2,8 @@ package compile
 
 import (
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,30 +16,15 @@ import (
 
 // compilePlaybook lowers a playbook into concrete operations with resolved
 // times, paths and content. Everything that can be checked without rendering
-// is checked first, so a rejected playbook never consumes a random draw.
+// is checked first, so every mistake in a rejected playbook is reported.
 func compilePlaybook(file string, root *yaml.Node, p *spec.Playbook, opts Options, src *sandbox.Sources) ([]Op, bool, error) {
 	var errs ErrorList
 	rootKeys := mappingKeys(root)
 	fileRef := SourceRef{File: file, Line: root.Line, Col: root.Column}
 
-	startNow := false
-	var startTime time.Time
-	switch s := strings.TrimSpace(p.Start); {
-	case s == "":
-		errs.add(&Error{Src: fileRef, Field: "start", Msg: "is required: give an RFC 3339 time, or \"now\" for a run that cannot be reproduced"})
-	case s == "now":
-		startNow = true
-		startTime = time.Now().UTC()
-	default:
-		t, err := time.Parse(time.RFC3339, s)
-		if err != nil {
-			e := &Error{Src: fileRef, Field: "start", Msg: fmt.Sprintf("%q is not an RFC 3339 time or \"now\"", p.Start)}
-			if n := rootKeys["start"]; n != nil {
-				e.Line, e.Col = n.Line, n.Column
-			}
-			errs.add(e)
-		}
-		startTime = t
+	startTime, startNow, err := parseStart(p.Start, rootKeys.has("start"), true, fileRef, rootKeys, opts)
+	if err != nil {
+		errs.add(err)
 	}
 	if len(p.Actors) == 0 {
 		errs.add(&Error{Src: fileRef, Msg: "no actors"})
@@ -154,6 +141,7 @@ func compilePlaybook(file string, root *yaml.Node, p *spec.Playbook, opts Option
 	}
 
 	var ops []Op
+	opKeys := newOpKeys(opts.Seed)
 	seq := 0
 	for si, st := range p.Steps {
 		info := infos[si]
@@ -178,6 +166,7 @@ func compilePlaybook(file string, root *yaml.Node, p *spec.Playbook, opts Option
 						Iteration: i, Batch: batchIdx, Multi: multi, Name: a.Action}
 
 					seq++
+					kind, value := identity(a.ID, an)
 					ctx := render.Context{
 						Seq:       seq,
 						BatchIdx:  batchIdx,
@@ -185,11 +174,13 @@ func compilePlaybook(file string, root *yaml.Node, p *spec.Playbook, opts Option
 						Actor:     actor.Name,
 						Timestamp: t,
 						Variables: variables,
+						Rand: opKeys.key("playbook", kind, value, "actor", actor.Name, "offset", st.Offset,
+							"iteration", strconv.Itoa(i), "batch", strconv.Itoa(batchIdx)),
+						Field: "offset",
 					}
 
 					// The offset is templated before parsing, so an expression
 					// like "${BATCH}s" resolves.
-					at := t
 					offset, err := render.Apply(a.Offset, ctx)
 					if err != nil {
 						errs.add(&Error{Src: ref, Field: "offset", Msg: err.Error()})
@@ -200,17 +191,16 @@ func compilePlaybook(file string, root *yaml.Node, p *spec.Playbook, opts Option
 						errs.add(&Error{Src: ref, Field: "offset", Msg: err.Error()})
 						continue
 					}
-					at = t.Add(d)
+					at := t.Add(d)
 					ctx.Timestamp = at
 
-					// A message carries its own timestamp in the Date header,
-					// which is what a mail store would show. Leave the times
-					// unset so the email writer can use it; an explicit atime
-					// or mtime on the action still wins.
-					derive := !(a.Action == "email" && a.Email != nil && strings.TrimSpace(a.Email.Date) != "")
-
+					// A message carries its own timestamp in the Date header
+					// (the scheduled time unless email.date says otherwise),
+					// which is what a mail store would show, so the email
+					// writer stamps the file with it. An explicit atime or
+					// mtime on the action still wins.
 					atime, mtime := a.Atime, a.Mtime
-					if derive {
+					if a.Action != "email" {
 						if strings.TrimSpace(atime) == "" {
 							atime = at.Format(time.RFC3339)
 						}
@@ -219,11 +209,6 @@ func compilePlaybook(file string, root *yaml.Node, p *spec.Playbook, opts Option
 						}
 					}
 
-					// Pdf, Email and Vault are shared with every iteration of
-					// this action and rendered in place, as they always were.
-					// Copying them would change which tokens re-render, and so
-					// the bytes of existing scenarios; that fix waits for the
-					// generator-version bump that re-keys all randomness.
 					op := spec.Operation{
 						Action:      a.Action,
 						Path:        joinPath(actor.Base, a.Path),
@@ -250,6 +235,13 @@ func compilePlaybook(file string, root *yaml.Node, p *spec.Playbook, opts Option
 						HostURL:     a.HostURL,
 						ReferrerURL: a.ReferrerURL,
 					}
+					// Each occurrence gets its own copy of the nested specs,
+					// rendered for its own iteration, with pdf and email
+					// dates defaulting to the scheduled time.
+					if ferr := defaultDates(&op, at); ferr != nil {
+						errs.add(&Error{Src: ref, Field: ferr.field, Msg: ferr.msg})
+						continue
+					}
 
 					// A named template supplies already-formatted content, so
 					// it must not be templated a second time.
@@ -264,11 +256,17 @@ func compilePlaybook(file string, root *yaml.Node, p *spec.Playbook, opts Option
 						errs.add(&Error{Src: ref, Msg: err.Error()})
 						continue
 					}
-					ops = append(ops, Op{Operation: prepared, Src: ref, At: at, keys: info.actionKeys[ai]})
+					ops = append(ops, Op{Operation: prepared, Src: ref, At: at, Rand: ctx.Rand, keys: info.actionKeys[ai]})
 				}
 			}
 		}
 	}
+
+	// Operations run in time order. Steps may overlap (a repeating step and
+	// a later one interleave), and an action offset can move an action past
+	// the next step. Ties keep declaration order; ${SEQ} was assigned above,
+	// in declaration order, and does not change.
+	sort.SliceStable(ops, func(i, j int) bool { return ops[i].At.Before(ops[j].At) })
 	return ops, startNow, errs.err()
 }
 

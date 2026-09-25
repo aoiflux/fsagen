@@ -21,6 +21,7 @@ import (
 
 	"github.com/aoiflux/fsagen/model"
 	"github.com/aoiflux/fsagen/pathpolicy"
+	"github.com/aoiflux/fsagen/prng"
 	"github.com/aoiflux/fsagen/sandbox"
 	"github.com/aoiflux/fsagen/spec"
 )
@@ -48,6 +49,14 @@ type Op struct {
 	// Skip explains why the platform cannot perform the operation, when the
 	// run was told to skip rather than fail (--on-unsupported=skip).
 	Skip string
+	// Rand is the operation's random key; every value the executor
+	// generates for it (random content, MIME boundaries, a vault salt) is
+	// drawn from a stream derived from it.
+	Rand prng.Key
+	// Random is the number of random characters to write as the content,
+	// when the operation gives no content of its own; zero means the content
+	// is exactly Content, which may be empty.
+	Random int
 
 	keys keys
 }
@@ -65,6 +74,17 @@ type Options struct {
 	// Existing seeds the model with a tree that is already on disk
 	// (--into-existing).
 	Existing *model.Tree
+	// Seed keys every random value.
+	Seed int64
+	// Now is read only for start: now. Nil means time.Now.
+	Now func() time.Time
+}
+
+func (o Options) now() time.Time {
+	if o.Now != nil {
+		return o.Now().UTC()
+	}
+	return time.Now().UTC()
 }
 
 // Program is a compiled input.
@@ -75,7 +95,7 @@ type Program struct {
 	Ops     []Op
 	Sources *sandbox.Sources
 	Model   *model.Tree
-	// StartNow records a playbook that starts at the wall-clock time and so
+	// StartNow records an input that starts at the wall-clock time and so
 	// cannot be reproduced.
 	StartNow bool
 }
@@ -109,7 +129,7 @@ func Load(mode Mode, file string, opts Options) (*Program, error) {
 			src.Close()
 			return nil, err
 		}
-		prog.Ops, err = compileManifest(file, root, &m, opts, src)
+		prog.Ops, prog.StartNow, err = compileManifest(file, root, &m, opts, src)
 		if err != nil {
 			src.Close()
 			return nil, err

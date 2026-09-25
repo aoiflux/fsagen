@@ -908,6 +908,17 @@
       "minItems": 1,
       "type": "array"
     },
+    "start": {
+      "description": "Reference time for operations without an mtime (${DATE}, unpinned pdf and email dates): RFC 3339, or \"now\" for a run that cannot be reproduced.",
+      "oneOf": [
+        {
+          "const": "now"
+        },
+        {
+          "$ref": "#/$defs/Rfc3339Time"
+        }
+      ]
+    },
     "variables": {
       "additionalProperties": {
         "type": "string"

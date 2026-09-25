@@ -2,6 +2,10 @@ package spec
 
 // Manifest describes a set of operations to apply under a root directory.
 type Manifest struct {
+	// Start is the reference time for operations that give no mtime: what
+	// ${DATE} formats and what unpinned pdf and email dates default to.
+	// RFC3339, or "now" for a run that cannot be reproduced. Optional.
+	Start      string            `yaml:"start" json:"start"`
 	Variables  map[string]string `yaml:"variables" json:"variables"` // Variables for ${VAR:name} templating
 	Operations []Operation       `yaml:"operations" json:"operations"`
 }
@@ -99,7 +103,7 @@ type EmailSpec struct {
 type VaultSpec struct {
 	Password string `yaml:"password" json:"password"`
 	VaultID  string `yaml:"vault_id" json:"vault_id"` // non-empty selects the 1.2 header format
-	Salt     string `yaml:"salt" json:"salt"`         // optional 32-byte hex salt; drawn from the seeded PRNG when empty
+	Salt     string `yaml:"salt" json:"salt"`         // optional 32-byte hex salt; drawn from the operation's random stream when empty
 }
 
 type Playbook struct {

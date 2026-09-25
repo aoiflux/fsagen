@@ -1,25 +1,40 @@
-// Package runinfo writes the run manifest: the record, kept beside the output
-// root and never inside it, of what produced a corpus. Its status is written
-// as "running" before the first file and replaced by "complete" or "failed"
-// at the end, so a half-built tree can never pass for a finished one.
+// Package runinfo writes the records kept beside the output root, never
+// inside it, in the sidecar directory (<out>.fsagen by default):
 //
-// Everything in it is deterministic for a given build, seed, input and
-// platform: no wall-clock times, host names or absolute paths.
+//   - run-manifest.json: what produced the corpus. Its status is "running"
+//     before the first file and "complete" or "failed" at the end, so a
+//     half-built tree cannot pass for a finished one. It is deterministic:
+//     the same generator version, toolchain, seed, inputs and capability set
+//     give the same bytes on any machine.
+//   - SHA256SUMS: the digest of every file and named stream in the output.
+//   - run-info.json: everything about the run that is not deterministic
+//     (build revision, host, platform, absolute paths, wall-clock times).
 package runinfo
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"sort"
+	"strings"
 
 	"github.com/aoiflux/fsagen/constant"
 	"github.com/aoiflux/fsagen/sandbox"
 )
 
-// FileName is the run manifest's name inside the sidecar directory.
-const FileName = "run-manifest.json"
+// File names inside the sidecar directory.
+const (
+	FileName     = "run-manifest.json"
+	InfoFileName = "run-info.json"
+	SumsFileName = "SHA256SUMS"
+)
 
 // Status values.
 const (
@@ -32,9 +47,6 @@ const (
 type Manifest struct {
 	Generator        string          `json:"generator"`
 	GeneratorVersion int             `json:"generator_version"`
-	ModuleVersion    string          `json:"module_version"`
-	Revision         string          `json:"vcs_revision,omitempty"`
-	Modified         bool            `json:"vcs_modified,omitempty"`
 	GoVersion        string          `json:"go_version"`
 	Status           string          `json:"status"`
 	Mode             string          `json:"mode"`
@@ -45,9 +57,10 @@ type Manifest struct {
 	VarsFile         *sandbox.Input  `json:"vars_file,omitempty"`
 	CLIVarsSHA256    string          `json:"cli_vars_sha256,omitempty"`
 	Options          Options         `json:"options"`
-	Platform         Platform        `json:"platform"`
+	Capabilities     Capabilities    `json:"capabilities"`
 	Operations       int             `json:"operations"`
 	Skipped          []Skipped       `json:"skipped,omitempty"`
+	Outputs          *Outputs        `json:"outputs,omitempty"`
 	Failure          string          `json:"failure,omitempty"`
 }
 
@@ -60,14 +73,13 @@ type Options struct {
 	AllowExternalSources bool   `json:"allow_external_sources,omitempty"`
 	Bulk                 int    `json:"bulk,omitempty"`
 	Depth                int    `json:"depth,omitempty"`
+	BulkStart            string `json:"bulk_start,omitempty"`
 }
 
-// Platform describes where the corpus was generated.
-type Platform struct {
-	OS           string `json:"os"`
-	Arch         string `json:"arch"`
-	Filesystem   string `json:"filesystem,omitempty"`
-	NamedStreams bool   `json:"named_streams"`
+// Capabilities is the capability set the run was compiled against. Which
+// operations were skipped follows from it.
+type Capabilities struct {
+	NamedStreams bool `json:"named_streams"`
 }
 
 // Skipped is one operation the platform could not perform, left out because
@@ -80,23 +92,53 @@ type Skipped struct {
 	Reason string `json:"reason"`
 }
 
-// New fills in the fields that describe this build and platform.
+// Outputs summarises SHA256SUMS.
+type Outputs struct {
+	SHA256SUMS string `json:"sha256sums"` // SHA-256 of the SHA256SUMS file
+	Files      int    `json:"files"`
+	Streams    int    `json:"streams"`
+}
+
+// New starts a run manifest.
 func New(mode string, seed int64) *Manifest {
-	module, rev, modified := Build()
 	return &Manifest{
 		Generator:        "fsagen",
 		GeneratorVersion: constant.GeneratorVersion,
-		ModuleVersion:    module,
-		Revision:         rev,
-		Modified:         modified,
 		GoVersion:        runtime.Version(),
 		Status:           StatusRunning,
 		Mode:             mode,
 		Seed:             seed,
 		Reproducible:     true,
-		Platform:         Platform{OS: runtime.GOOS, Arch: runtime.GOARCH},
 	}
 }
+
+// Write replaces dir/run-manifest.json atomically.
+func (m *Manifest) Write(dir string) error { return writeJSON(dir, FileName, m) }
+
+// Info is the non-deterministic record of a run.
+type Info struct {
+	ModuleVersion string `json:"module_version"`
+	Revision      string `json:"vcs_revision,omitempty"`
+	Modified      bool   `json:"vcs_modified,omitempty"`
+	OS            string `json:"os"`
+	Arch          string `json:"arch"`
+	Filesystem    string `json:"filesystem,omitempty"`
+	Host          string `json:"host,omitempty"`
+	Output        string `json:"output"`
+	Input         string `json:"input,omitempty"`
+	Started       string `json:"started"`
+	Finished      string `json:"finished,omitempty"`
+}
+
+// NewInfo fills in the build and platform.
+func NewInfo() *Info {
+	module, rev, modified := Build()
+	host, _ := os.Hostname()
+	return &Info{ModuleVersion: module, Revision: rev, Modified: modified, OS: runtime.GOOS, Arch: runtime.GOARCH, Host: host}
+}
+
+// Write replaces dir/run-info.json atomically.
+func (i *Info) Write(dir string) error { return writeJSON(dir, InfoFileName, i) }
 
 // Build reports the module version and VCS revision this binary was built
 // from, as far as the toolchain recorded them.
@@ -118,19 +160,92 @@ func Build() (module, revision string, modified bool) {
 	return
 }
 
-// Write replaces dir/run-manifest.json atomically.
-func (m *Manifest) Write(dir string) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(m, "", "  ")
+func writeJSON(dir, name string, v any) error {
+	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
-	data = append(data, '\n')
-	tmp := filepath.Join(dir, FileName+".tmp")
+	return writeAtomic(dir, name, append(data, '\n'))
+}
+
+func writeAtomic(dir, name string, data []byte) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp := filepath.Join(dir, name+".tmp")
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return err
 	}
-	return os.Rename(tmp, filepath.Join(dir, FileName))
+	return os.Rename(tmp, filepath.Join(dir, name))
+}
+
+// Sums lists the SHA-256 of every file and named stream under fsys in
+// sha256sum's format ("<hex>  <path>"), with slash paths, a stream written
+// as path:stream, sorted by path.
+func Sums(fsys *sandbox.FS) (data []byte, out Outputs, err error) {
+	type line struct{ path, sum string }
+	var lines []line
+	addStreams := func(name string) error {
+		streams, err := fsys.Streams(name)
+		if err != nil {
+			return err
+		}
+		for _, s := range streams {
+			b, err := fsys.ReadStream(name, s.Name)
+			if err != nil {
+				return err
+			}
+			lines = append(lines, line{name + ":" + s.Name, digest(b)})
+			out.Streams++
+		}
+		return nil
+	}
+	err = fsys.WalkDir(func(name string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if name == "." {
+			return nil
+		}
+		if !d.IsDir() {
+			f, err := fsys.OpenFile(name, os.O_RDONLY, 0)
+			if err != nil {
+				return err
+			}
+			h := sha256.New()
+			_, err = io.Copy(h, f)
+			f.Close()
+			if err != nil {
+				return err
+			}
+			lines = append(lines, line{name, hex.EncodeToString(h.Sum(nil))})
+			out.Files++
+		}
+		return addStreams(name)
+	})
+	if err != nil {
+		return nil, out, err
+	}
+	sort.Slice(lines, func(i, j int) bool { return lines[i].path < lines[j].path })
+	var b strings.Builder
+	for _, l := range lines {
+		fmt.Fprintf(&b, "%s  %s\n", l.sum, l.path)
+	}
+	data = []byte(b.String())
+	out.SHA256SUMS = digest(data)
+	return data, out, nil
+}
+
+// WriteSums writes SHA256SUMS for fsys into dir and returns its summary.
+func WriteSums(dir string, fsys *sandbox.FS) (Outputs, error) {
+	data, out, err := Sums(fsys)
+	if err != nil {
+		return out, err
+	}
+	return out, writeAtomic(dir, SumsFileName, data)
+}
+
+func digest(b []byte) string {
+	h := sha256.Sum256(b)
+	return hex.EncodeToString(h[:])
 }

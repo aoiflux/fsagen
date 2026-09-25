@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"go.yaml.in/yaml/v3"
 
@@ -28,7 +29,6 @@ import (
 	"github.com/aoiflux/fsagen/sandbox"
 	schemapkg "github.com/aoiflux/fsagen/schema"
 	timelinepkg "github.com/aoiflux/fsagen/timeline"
-	"github.com/aoiflux/fsagen/util"
 )
 
 // Exit codes.
@@ -66,6 +66,7 @@ type config struct {
 	schemaOut      string
 	bulk           int
 	depth          int
+	bulkStart      string
 	timeline       string
 	timelineFormat string
 	varsFile       string
@@ -116,6 +117,7 @@ func parseFlags(args []string) (*config, error) {
 	fl.StringVar(&c.schemaOut, "schema-out", "schemas", "output directory for --generate-schema")
 	fl.IntVar(&c.bulk, "bulk", 0, "bulk generation: items per level")
 	fl.IntVar(&c.depth, "depth", 1, "bulk generation: directory depth")
+	fl.StringVar(&c.bulkStart, "bulk-start", "", "bulk generation: RFC 3339 reference time for dates inside files (default 2021-01-01T00:00:00Z)")
 	fl.StringVar(&c.timeline, "timeline", "", "write a timeline of the output tree to this file (outside the tree)")
 	fl.StringVar(&c.timelineFormat, "timeline-format", "", "timeline format: csv, txt, bodyfile or macb (default: from the extension)")
 	fl.StringVar(&c.varsFile, "vars-file", "", "YAML map of variables exposed as ${VAR:name}")
@@ -183,6 +185,13 @@ func execute(c *config, stdout io.Writer) error {
 		return usagef("--validate and --dry-run do not write a timeline")
 	case c.timelineFormat != "" && c.timeline == "":
 		return usagef("--timeline-format needs --timeline")
+	case c.bulkStart != "" && c.bulk == 0:
+		return usagef("--bulk-start needs --bulk")
+	}
+	if c.bulkStart != "" {
+		if _, err := time.Parse(time.RFC3339, c.bulkStart); err != nil {
+			return usagef("--bulk-start %q is not an RFC 3339 time", c.bulkStart)
+		}
 	}
 
 	var tlFormat string
@@ -193,7 +202,6 @@ func execute(c *config, stdout io.Writer) error {
 		}
 	}
 
-	util.Seed(c.seed)
 	vars, varsInput, err := loadVariables(c.varsFile, c.vars)
 	if err != nil {
 		return err
@@ -244,7 +252,7 @@ func execute(c *config, stdout io.Writer) error {
 // check implements --validate and --dry-run: compile, simulate and
 // pre-flight, then report without writing anything.
 func check(c *config, vars map[string]string, stdout io.Writer) error {
-	opts := compile.Options{Vars: vars, AllowExternalSources: c.allowExternal, AllowNonportable: c.allowNonport}
+	opts := compile.Options{Vars: vars, Seed: c.seed, AllowExternalSources: c.allowExternal, AllowNonportable: c.allowNonport}
 	caps := compile.DefaultCaps()
 	if capsOverride != nil {
 		caps = *capsOverride
@@ -360,15 +368,18 @@ func generate(c *config, absOut string, vars map[string]string, varsInput *sandb
 		AllowNonportable:     c.allowNonport,
 		AllowExternalSources: c.allowExternal,
 	}
-	rm.Platform.Filesystem = probe.FilesystemName()
-	rm.Platform.NamedStreams = caps.NamedStreams
+	rm.Capabilities.NamedStreams = caps.NamedStreams
+	rinfo := runinfo.NewInfo()
+	rinfo.Filesystem = probe.FilesystemName()
+	rinfo.Output = absOut
+	rinfo.Started = time.Now().UTC().Format(time.RFC3339Nano)
 	if c.intoExisting {
 		rm.Reproducible = false
 	}
 
 	var prog *compile.Program
 	if mode != "bulk" {
-		opts := compile.Options{Vars: vars, AllowExternalSources: c.allowExternal, AllowNonportable: c.allowNonport, Existing: existing}
+		opts := compile.Options{Vars: vars, Seed: c.seed, AllowExternalSources: c.allowExternal, AllowNonportable: c.allowNonport, Existing: existing}
 		if prog, err = compile.Load(inputMode(c), inputFile(c), opts); err != nil {
 			return err
 		}
@@ -377,6 +388,9 @@ func generate(c *config, absOut string, vars map[string]string, varsInput *sandb
 			return err
 		}
 		rm.Input = &sandbox.Input{Path: filepath.Base(prog.File), SHA256: prog.SHA256}
+		if rinfo.Input, err = filepath.Abs(prog.File); err != nil {
+			return err
+		}
 		rm.Operations = len(prog.Ops)
 		if prog.StartNow {
 			rm.Reproducible = false
@@ -390,6 +404,10 @@ func generate(c *config, absOut string, vars map[string]string, varsInput *sandb
 		}
 	} else {
 		rm.Options.Bulk, rm.Options.Depth = c.bulk, c.depth
+		rm.Options.BulkStart = libgenpkg.DefaultStart.Format(time.RFC3339)
+		if c.bulkStart != "" {
+			rm.Options.BulkStart = c.bulkStart
+		}
 	}
 
 	fsys := probe
@@ -410,13 +428,29 @@ func generate(c *config, absOut string, vars map[string]string, varsInput *sandb
 	if err := rm.Write(metaDir); err != nil {
 		return fmt.Errorf("write run manifest: %w", err)
 	}
+	if err := rinfo.Write(metaDir); err != nil {
+		return fmt.Errorf("write run info: %w", err)
+	}
 
 	fmt.Fprintln(stdout, "Generating artifacts...")
 	if mode == "bulk" {
-		err = libgenpkg.GenerateFiles(absOut, int64(c.bulk), int64(c.depth))
+		start, _ := time.Parse(time.RFC3339, rm.Options.BulkStart)
+		err = libgenpkg.Generate(fsys, c.bulk, c.depth, libgenpkg.Options{Seed: c.seed, Start: start})
 	} else {
 		err = manifestpkg.Execute(manifestpkg.ExecContext{FS: fsys, Sources: prog.Sources}, prog.Ops)
 		rm.Sources = prog.Sources.Inputs()
+	}
+	if err == nil {
+		var out runinfo.Outputs
+		if out, err = runinfo.WriteSums(metaDir, fsys); err == nil {
+			rm.Outputs = &out
+		} else {
+			err = fmt.Errorf("write %s: %w", runinfo.SumsFileName, err)
+		}
+	}
+	rinfo.Finished = time.Now().UTC().Format(time.RFC3339Nano)
+	if ierr := rinfo.Write(metaDir); ierr != nil && err == nil {
+		err = fmt.Errorf("write run info: %w", ierr)
 	}
 	if err != nil {
 		rm.Status, rm.Failure = runinfo.StatusFailed, err.Error()
@@ -562,6 +596,8 @@ Input (give one):
   --manifest FILE           YAML manifest of operations
   --playbook FILE           YAML playbook of actors and timed steps
   --bulk N --depth D        bulk generation: N items per level, D levels deep
+  --bulk-start T            bulk generation: RFC 3339 time the dates inside
+                            files count from (default 2021-01-01T00:00:00Z)
 
 Generation:
   --seed N                  PRNG seed (default 1)
@@ -573,8 +609,9 @@ Generation:
                             (generate the rest and record each skipped operation)
   --allow-nonportable       allow paths that only work on some platforms
   --allow-external-sources  allow content_file etc. outside the YAML's directory
-  --meta DIR                where to write run-manifest.json
-                            (default: <output-path>.fsagen, beside the output)
+  --meta DIR                where to write run-manifest.json, SHA256SUMS and
+                            run-info.json (default: <output-path>.fsagen,
+                            beside the output)
 
 Checking without writing:
   --validate                check the input and exit
