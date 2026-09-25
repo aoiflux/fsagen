@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/aoiflux/fsagen/compile"
+	"github.com/aoiflux/fsagen/ledger"
 	"github.com/aoiflux/fsagen/runinfo"
 	"github.com/aoiflux/fsagen/sandbox"
 )
@@ -73,7 +74,11 @@ func TestDeterminismHarness(t *testing.T) {
 			b := genRun(t, filepath.Join(dir, "elsewhere"), "b", seeded(42)...)
 			c := genRun(t, dir, "c", seeded(43)...)
 
-			for _, name := range []string{runinfo.SumsFileName, runinfo.FileName} {
+			files := []string{runinfo.SumsFileName, runinfo.FileName}
+			if sc.name != "bulk" {
+				files = append(files, ledger.FileName)
+			}
+			for _, name := range files {
 				if !bytes.Equal(sidecar(t, a, name), sidecar(t, b, name)) {
 					t.Errorf("%s differs between two runs with the same seed:\n%s\n%s", name, sidecar(t, a, name), sidecar(t, b, name))
 				}

@@ -32,6 +32,8 @@
                 "content",
                 "content_file",
                 "content_len",
+                "crtime",
+                "ctime",
                 "ext",
                 "format",
                 "id",
@@ -91,6 +93,8 @@
                 "content",
                 "content_file",
                 "content_len",
+                "crtime",
+                "ctime",
                 "format",
                 "mode",
                 "mtime",
@@ -136,6 +140,8 @@
                 "content",
                 "content_file",
                 "content_len",
+                "crtime",
+                "ctime",
                 "id",
                 "mode",
                 "mtime",
@@ -214,6 +220,16 @@
                 "required": [
                   "mtime"
                 ]
+              },
+              {
+                "required": [
+                  "ctime"
+                ]
+              },
+              {
+                "required": [
+                  "crtime"
+                ]
               }
             ],
             "oneOf": [
@@ -238,6 +254,8 @@
                 "action",
                 "atime",
                 "condition",
+                "crtime",
+                "ctime",
                 "mode",
                 "mtime",
                 "offset",
@@ -317,6 +335,8 @@
                 "action",
                 "atime",
                 "condition",
+                "crtime",
+                "ctime",
                 "id",
                 "mode",
                 "mtime",
@@ -365,6 +385,8 @@
                 "action",
                 "atime",
                 "condition",
+                "crtime",
+                "ctime",
                 "mode",
                 "mtime",
                 "offset",
@@ -442,6 +464,8 @@
                 "action",
                 "atime",
                 "condition",
+                "crtime",
+                "ctime",
                 "email",
                 "format",
                 "id",
@@ -476,6 +500,8 @@
                 "condition",
                 "content",
                 "content_file",
+                "crtime",
+                "ctime",
                 "id",
                 "mode",
                 "mtime",
@@ -640,6 +666,14 @@
         "content_len": {
           "minimum": 1,
           "type": "integer"
+        },
+        "crtime": {
+          "$ref": "#/$defs/Rfc3339Time",
+          "description": "Creation (birth) time. Windows only; elsewhere a pre-flight error unless --on-unsupported=skip."
+        },
+        "ctime": {
+          "$ref": "#/$defs/Rfc3339Time",
+          "description": "Metadata change time. Windows on NTFS or ReFS only; elsewhere a pre-flight error unless --on-unsupported=skip."
         },
         "email": {
           "$ref": "#/$defs/EmailSpec"
@@ -1079,6 +1113,10 @@
       },
       "minItems": 1,
       "type": "array"
+    },
+    "subsecond_jitter": {
+      "description": "Add a seeded fraction of a second to every time derived from the schedule, never to an explicit one.",
+      "type": "boolean"
     },
     "variables": {
       "additionalProperties": {

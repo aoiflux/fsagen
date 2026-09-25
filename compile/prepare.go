@@ -140,7 +140,7 @@ func checkValues(op *Op, src *sandbox.Sources) ErrorList {
 		at("pdf", "only applies with format: pdf")
 	}
 
-	for _, f := range []struct{ key, val string }{{"atime", op.Atime}, {"mtime", op.Mtime}} {
+	for _, f := range []struct{ key, val string }{{"atime", op.Atime}, {"mtime", op.Mtime}, {"ctime", op.Ctime}, {"crtime", op.Crtime}} {
 		if k.has(f.key) {
 			if _, err := time.Parse(time.RFC3339, strings.TrimSpace(f.val)); err != nil {
 				at(f.key, "%q is not an RFC 3339 time (for example 2026-03-11T09:00:00Z)", f.val)

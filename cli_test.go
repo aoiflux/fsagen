@@ -11,6 +11,7 @@ import (
 
 	"github.com/aoiflux/fsagen/compile"
 	"github.com/aoiflux/fsagen/internal/testutil"
+	"github.com/aoiflux/fsagen/ledger"
 	"github.com/aoiflux/fsagen/runinfo"
 )
 
@@ -103,7 +104,7 @@ func TestRuntimeErrorExit1Stderr(t *testing.T) {
 
 func TestVersion(t *testing.T) {
 	code, out, _ := runCLI(t, "--version")
-	if code != exitOK || !strings.Contains(out, "generator version 2") || !strings.Contains(out, runtime.GOOS) {
+	if code != exitOK || !strings.Contains(out, "generator version 3") || !strings.Contains(out, runtime.GOOS) {
 		t.Errorf("code=%d out=%q", code, out)
 	}
 }
@@ -317,6 +318,74 @@ func TestFailedRunMarksSidecarFailed(t *testing.T) {
 	rm := readManifest(t, out+".fsagen")
 	if rm.Status != runinfo.StatusFailed || !strings.Contains(rm.Failure, "locked.txt") {
 		t.Errorf("status=%q failure=%q", rm.Status, rm.Failure)
+	}
+	// The ledger says how far the run got.
+	led, err := os.ReadFile(filepath.Join(out+".fsagen", ledger.FileName))
+	if err != nil || strings.Count(string(led), "\n") != 1 || !strings.Contains(string(led), `"path":"first.txt"`) {
+		t.Errorf("ledger of the failed run = %q, %v", led, err)
+	}
+}
+
+// F-TIME-6: the run manifest says which times the run could set, and that
+// NTFS $FILE_NAME times and the root's own times are never controlled. The
+// ledger's digest is recorded with the other outputs.
+func TestRunManifestTimeCapabilities(t *testing.T) {
+	dir := t.TempDir()
+	m := writeYAML(t, dir, "m.yaml", simpleManifest)
+	out := filepath.Join(dir, "out")
+	if code, _, errOut := runCLI(t, "--manifest", m, out); code != exitOK {
+		t.Fatalf("%d %s", code, errOut)
+	}
+	raw, err := os.ReadFile(filepath.Join(out+".fsagen", runinfo.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"filename_times_controlled": false`, `"root_times_controlled": false`, `"birth_time": `, `"change_time": `} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("run manifest lacks %s:\n%s", want, raw)
+		}
+	}
+	rm := readManifest(t, out+".fsagen")
+	if runtime.GOOS == "windows" && (!rm.Capabilities.BirthTime || !rm.Capabilities.ChangeTime) {
+		t.Errorf("capabilities on Windows: %+v", rm.Capabilities)
+	}
+	led, err := os.ReadFile(filepath.Join(out+".fsagen", ledger.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rm.Outputs == nil || rm.Outputs.Ledger != sha(led) {
+		t.Errorf("run manifest ledger digest %+v, ledger sha %s", rm.Outputs, sha(led))
+	}
+}
+
+// F-PLAT-2 for times: an explicit creation time where none can be set fails
+// before anything is written; with --on-unsupported=skip the file is made,
+// and the dropped field is recorded.
+func TestDroppedTimeFieldRecorded(t *testing.T) {
+	dir := t.TempDir()
+	m := writeYAML(t, dir, "m.yaml", "operations:\n  - { action: create, path: a.txt, content: x, crtime: 2020-01-01T00:00:00Z }\n")
+	capsOverride = &compile.Caps{NamedStreams: true}
+	defer func() { capsOverride = nil }()
+
+	out := filepath.Join(dir, "refused")
+	code, _, errOut := runCLI(t, "--manifest", m, out)
+	if code != exitRuntime || !strings.Contains(errOut, "creation time cannot be set") {
+		t.Fatalf("code=%d %s", code, errOut)
+	}
+	if got := entries(t, out); len(got) != 0 {
+		t.Errorf("files written before refusing: %v", got)
+	}
+
+	out = filepath.Join(dir, "skipped")
+	if code, _, errOut := runCLI(t, "--manifest", m, "--on-unsupported=skip", out); code != exitOK {
+		t.Fatalf("code=%d %s", code, errOut)
+	}
+	rm := readManifest(t, out+".fsagen")
+	if len(rm.Skipped) != 1 || rm.Skipped[0].Field != "crtime" || rm.Skipped[0].Action != "create" {
+		t.Errorf("skipped = %+v", rm.Skipped)
+	}
+	if _, err := os.Stat(filepath.Join(out, "a.txt")); err != nil {
+		t.Errorf("the operation itself was skipped: %v", err)
 	}
 }
 

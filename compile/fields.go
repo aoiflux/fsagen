@@ -17,20 +17,24 @@ var Actions = []string{
 // validation and the JSON Schema, so the two cannot drift. A key an action
 // does not use is an error rather than a silently ignored no-op.
 var Fields = map[string][]string{
-	"create":        {"path", "id", "type", "ext", "content", "content_len", "content_file", "render", "template", "mode", "format", "pdf", "atime", "mtime"},
-	"update":        {"path", "ref", "content", "content_len", "content_file", "render", "template", "mode", "format", "pdf", "atime", "mtime"},
-	"append":        {"path", "ref", "id", "content", "content_len", "content_file", "render", "template", "mode", "atime", "mtime"},
+	"create":        {"path", "id", "type", "ext", "content", "content_len", "content_file", "render", "template", "mode", "format", "pdf", "atime", "mtime", "ctime", "crtime"},
+	"update":        {"path", "ref", "content", "content_len", "content_file", "render", "template", "mode", "format", "pdf", "atime", "mtime", "ctime", "crtime"},
+	"append":        {"path", "ref", "id", "content", "content_len", "content_file", "render", "template", "mode", "atime", "mtime", "ctime", "crtime"},
 	"delete":        {"path", "ref", "refs", "missing_ok", "atime", "mtime"},
-	"mace":          {"path", "ref", "refs", "mode", "atime", "mtime"},
+	"mace":          {"path", "ref", "refs", "mode", "atime", "mtime", "ctime", "crtime"},
 	"rename":        {"path", "ref", "new_path", "id"},
-	"copy":          {"path", "ref", "new_path", "id", "mode", "atime", "mtime"},
-	"truncate":      {"path", "ref", "refs", "mode", "atime", "mtime"},
+	"copy":          {"path", "ref", "new_path", "id", "mode", "atime", "mtime", "ctime", "crtime"},
+	"truncate":      {"path", "ref", "refs", "mode", "atime", "mtime", "ctime", "crtime"},
 	"rotate":        {"path", "ref", "new_path", "mode", "atime", "mtime"},
-	"email":         {"path", "id", "email", "format", "mode", "atime", "mtime"},
-	"ansible-vault": {"path", "id", "vault", "content", "content_file", "render", "mode", "atime", "mtime"},
+	"email":         {"path", "id", "email", "format", "mode", "atime", "mtime", "ctime", "crtime"},
+	"ansible-vault": {"path", "id", "vault", "content", "content_file", "render", "mode", "atime", "mtime", "ctime", "crtime"},
 	"ads":           {"path", "ref", "refs", "stream", "content", "content_len", "content_file", "render", "atime", "mtime"},
 	"motw":          {"path", "ref", "refs", "zone_id", "host_url", "referrer_url", "atime", "mtime"},
 }
+
+// TimeFields are the explicit time keys, in the order access, modification,
+// change, birth.
+var TimeFields = []string{"atime", "mtime", "ctime", "crtime"}
 
 // PlaybookOnly are keys that exist on playbook actions but not on manifest
 // operations. "template" is further limited to the actions that list it.
@@ -143,8 +147,8 @@ func checkFields(src SourceRef, k keys, action string, playbook bool) ErrorList 
 		}
 	}
 
-	if action == "mace" && !k.has("atime") && !k.has("mtime") {
-		errs.add(&Error{Src: src, Msg: "mace needs at least one of atime and mtime"})
+	if action == "mace" && !k.has("atime") && !k.has("mtime") && !k.has("ctime") && !k.has("crtime") {
+		errs.add(&Error{Src: src, Msg: "mace needs at least one of atime, mtime, ctime and crtime"})
 	}
 	if k.has("template") && (k.has("content") || k.has("content_file")) {
 		at("template", "cannot be combined with content or content_file; the template would silently replace them")

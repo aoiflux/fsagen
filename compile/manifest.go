@@ -40,12 +40,15 @@ func compileManifest(file string, root *yaml.Node, m *spec.Manifest, opts Option
 			continue
 		}
 
-		// An operation's reference time is its own mtime, else the
-		// manifest's start. With neither, it has none: ${DATE} and unpinned
-		// pdf or email dates are then errors, never the wall clock.
+		// An operation's reference time is its own mtime, else its atime,
+		// else the manifest's start. With none of them it has none: ${DATE}
+		// and unpinned pdf or email dates are then errors, never the wall
+		// clock, and the file system keeps the times it gives the files.
 		refTime := start
 		if t, err := time.Parse(time.RFC3339, strings.TrimSpace(raw.Mtime)); err == nil {
-			refTime = t
+			refTime = t.UTC()
+		} else if t, err := time.Parse(time.RFC3339, strings.TrimSpace(raw.Atime)); err == nil {
+			refTime = t.UTC()
 		}
 		if err := defaultDates(&raw, refTime); err != nil {
 			errs.add(&Error{Src: ref, Field: err.field, Msg: err.msg})
@@ -59,7 +62,7 @@ func compileManifest(file string, root *yaml.Node, m *spec.Manifest, opts Option
 			errs.add(&Error{Src: ref, Msg: err.Error()})
 			continue
 		}
-		out = append(out, Op{Operation: prepared, Src: ref, Rand: rctx.Rand, keys: k})
+		out = append(out, Op{Operation: prepared, Src: ref, When: refTime, Rand: rctx.Rand, keys: k})
 	}
 	return out, startNow, errs.err()
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/aoiflux/fsagen/compile"
 	"github.com/aoiflux/fsagen/constant"
 	"github.com/aoiflux/fsagen/internal/testutil"
+	"github.com/aoiflux/fsagen/ledger"
 	manifestpkg "github.com/aoiflux/fsagen/manifest"
 	"github.com/aoiflux/fsagen/runinfo"
 	"github.com/aoiflux/fsagen/sandbox"
@@ -39,36 +40,35 @@ func exampleMode(path string) compile.Mode {
 	return compile.ModePlaybook
 }
 
-// runExample generates one shipped example into root with the example seed.
-func runExample(t *testing.T, path, root string) {
+// runExample generates one shipped example into root with the example seed
+// and returns its ledger.
+func runExample(t *testing.T, path, root string) []ledger.Entry {
 	t.Helper()
-	var err error
-	if exampleMode(path) == compile.ModeManifest {
-		err = manifestpkg.ExecuteManifest(root, path, compile.Options{Seed: exampleSeed})
-	} else {
-		err = manifestpkg.ExecutePlaybook(root, path, compile.Options{Seed: exampleSeed})
-	}
+	entries, err := manifestpkg.ExecuteFile(exampleMode(path), root, path, compile.Options{Seed: exampleSeed})
 	if err != nil {
 		t.Fatalf("%s: %v", path, err)
 	}
+	return entries
 }
 
 // TestExampleContentGoldens pins the names, bytes and streams every shipped
-// example produces for the example seed. It is what proves a change did not
-// alter output for an unchanged input: if it did, GeneratorVersion must be
-// bumped and a new golden directory recorded.
+// example produces for the example seed, and its ledger (digests, intended
+// times, what the platform leaves uncontrolled). It is what proves a change
+// did not alter output for an unchanged input: if it did, GeneratorVersion
+// must be bumped and a new golden directory recorded.
 func TestExampleContentGoldens(t *testing.T) {
 	for _, path := range exampleFiles(t) {
 		name := strings.TrimSuffix(filepath.Base(path), ".yaml")
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
-			runExample(t, path, root)
+			entries := runExample(t, path, root)
 			got, err := testutil.Fingerprint(root)
 			if err != nil {
 				t.Fatal(err)
 			}
-			golden := filepath.Join("testdata", "golden", fmt.Sprintf("v%d", constant.GeneratorVersion), runtime.GOOS, "examples", name+".txt")
-			testutil.CheckGolden(t, golden, testutil.InputHash(t, path), got, *update)
+			dir := filepath.Join("testdata", "golden", fmt.Sprintf("v%d", constant.GeneratorVersion), runtime.GOOS)
+			testutil.CheckGolden(t, filepath.Join(dir, "examples", name+".txt"), testutil.InputHash(t, path), got, *update)
+			testutil.CheckGolden(t, filepath.Join(dir, "ledger", name+".jsonl"), testutil.InputHash(t, path), string(ledger.Bytes(entries)), *update)
 		})
 	}
 }

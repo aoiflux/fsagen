@@ -193,20 +193,11 @@ func compilePlaybook(file string, root *yaml.Node, p *spec.Playbook, opts Option
 					}
 					at := t.Add(d)
 					ctx.Timestamp = at
-
-					// A message carries its own timestamp in the Date header
-					// (the scheduled time unless email.date says otherwise),
-					// which is what a mail store would show, so the email
-					// writer stamps the file with it. An explicit atime or
-					// mtime on the action still wins.
-					atime, mtime := a.Atime, a.Mtime
-					if a.Action != "email" {
-						if strings.TrimSpace(atime) == "" {
-							atime = at.Format(time.RFC3339)
-						}
-						if strings.TrimSpace(mtime) == "" {
-							mtime = at.Format(time.RFC3339)
-						}
+					// Times derived from the schedule may carry a seeded
+					// fraction of a second; explicit times never do.
+					when := at
+					if p.SubsecondJitter {
+						when = at.Add(time.Duration(ctx.Rand.Derive("jitter").Stream().IntN(10_000_000)) * 100)
 					}
 
 					op := spec.Operation{
@@ -228,8 +219,10 @@ func compilePlaybook(file string, root *yaml.Node, p *spec.Playbook, opts Option
 						Pdf:         a.Pdf,
 						Email:       a.Email,
 						Vault:       a.Vault,
-						Atime:       atime,
-						Mtime:       mtime,
+						Atime:       a.Atime,
+						Mtime:       a.Mtime,
+						Ctime:       a.Ctime,
+						Crtime:      a.Crtime,
 						Stream:      a.Stream,
 						ZoneID:      a.ZoneID,
 						HostURL:     a.HostURL,
@@ -256,7 +249,7 @@ func compilePlaybook(file string, root *yaml.Node, p *spec.Playbook, opts Option
 						errs.add(&Error{Src: ref, Msg: err.Error()})
 						continue
 					}
-					ops = append(ops, Op{Operation: prepared, Src: ref, At: at, Rand: ctx.Rand, keys: info.actionKeys[ai]})
+					ops = append(ops, Op{Operation: prepared, Src: ref, At: at, When: when, Rand: ctx.Rand, keys: info.actionKeys[ai]})
 				}
 			}
 		}

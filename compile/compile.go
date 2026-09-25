@@ -41,6 +41,25 @@ type Op struct {
 	Src SourceRef
 	// At is the playbook's scheduled time for the action; zero in manifests.
 	At time.Time
+	// When is the time the operation happens, which the time rules stamp
+	// on what it creates or changes: the scheduled time (plus any sub-second
+	// jitter) in a playbook; the operation's mtime, else its atime, else the
+	// manifest's start in a manifest; an email's Date. Zero means the
+	// scenario does not say, and the file system keeps whatever times it
+	// gives.
+	When time.Time
+	// Object is the model's serial number for the object the operation
+	// leaves behind (for a delete, the one it removes), and Times are that
+	// object's intended times afterwards (for a delete, just before).
+	Object int
+	Times  model.Times
+	// Pre are stamped just before the operation runs: a deleted object gets
+	// its final times first, so what is left of it carries scenario times.
+	// Stamps are applied just after it.
+	Pre, Stamps []Stamp
+	// Dropped lists explicit time fields this platform cannot set, dropped
+	// because the run was told to skip what it cannot do.
+	Dropped []string
 	// Dir is set on a create whose path names a directory.
 	Dir bool
 	// NoOp explains why the operation has nothing to do (a delete of a
@@ -59,6 +78,12 @@ type Op struct {
 	Random int
 
 	keys keys
+}
+
+// Stamp is the set of intended times for one path.
+type Stamp struct {
+	Path  string
+	Times model.Times
 }
 
 // Options tune compilation.

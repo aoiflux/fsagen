@@ -58,7 +58,7 @@ func TestUnknownKeyPerStruct(t *testing.T) {
 		name, mode, body, where string
 	}{
 		{"Manifest", "m", "operations: []\nbogus: 1\n", "2:1"},
-		{"Operation", "m", "operations:\n  - action: create\n    path: a\n    crtime: 2020-01-01T00:00:00Z\n", "4:5"},
+		{"Operation", "m", "operations:\n  - action: create\n    path: a\n    birthtime: 2020-01-01T00:00:00Z\n", "4:5"},
 		{"PdfSpec", "m", "operations:\n  - action: create\n    path: a.pdf\n    format: pdf\n    pdf: { titel: x }\n", "5:12"},
 		{"EmailSpec", "m", "operations:\n  - action: email\n    path: a.eml\n    email: { form: x }\n", "4:14"},
 		{"Header", "m", "operations:\n  - action: email\n    path: a.eml\n    email: { headers: [ { nam: x } ] }\n", "4:27"},
@@ -233,7 +233,7 @@ func TestValueRules(t *testing.T) {
 	mustFail(t, ModeManifest, "operations:\n  - action: Create\n    path: a\n", `unknown action "Create"`)
 	mustFail(t, ModeManifest, "operations:\n  - action: create\n    path: a\n    stream: s\n    content: x\n", "stream", "does not apply to create")
 	mustFail(t, ModeManifest, "operations:\n  - action: create\n    path: a\n    content: x\n  - action: rename\n    path: a\n    new_path: b\n    mtime: 2020-01-01T00:00:00Z\n", "mtime", "does not apply to rename")
-	mustFail(t, ModeManifest, "operations:\n  - action: mace\n    path: a\n", "at least one of atime and mtime")
+	mustFail(t, ModeManifest, "operations:\n  - action: mace\n    path: a\n", "at least one of atime, mtime, ctime and crtime")
 	mustFail(t, ModeManifest, "operations:\n  - action: ansible-vault\n    path: v.yml\n    content: x\n    vault: { password: p, salt: abc }\n", "salt")
 }
 

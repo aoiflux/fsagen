@@ -13,7 +13,8 @@ Deterministic generator for creating diverse file-system artifacts to test foren
 - Real PDFs from Markdown, with full control of document metadata
 - Real `$ANSIBLE_VAULT;1.1;AES256` files that `ansible-vault` can decrypt
 - Extensive file type support: documents, logs, archives, media, emails, Windows artifacts
-- MACE (atime/mtime) timestamp control and octal file permissions
+- All four timestamps (access, modification, change, creation) taken from the scenario on Windows NTFS, access and modification elsewhere; set, then settled and verified after the last operation (see *Timestamps*)
+- Octal file permissions
 - Windows-specific: NTFS ADS and Mark-of-the-Web (MoTW)
 
 ## Install
@@ -54,7 +55,7 @@ fsagen [OPTIONS] <output-path>
 - `--on-unsupported fail|skip` - What to do with operations the platform cannot perform (default `fail`, before anything is written; `skip` generates the rest and records each skipped operation)
 - `--allow-nonportable` - Allow paths that only work on some platforms (reserved device names, case-only differences, very long paths)
 - `--allow-external-sources` - Allow `content_file`, email bodies and attachments from outside the YAML file's directory
-- `--meta DIR` - Where to write `run-manifest.json`, `SHA256SUMS` and `run-info.json` (default: `<output-path>.fsagen`, beside the output)
+- `--meta DIR` - Where to write `run-manifest.json`, `SHA256SUMS`, `ledger.jsonl` and `run-info.json` (default: `<output-path>.fsagen`, beside the output)
 - `--timeline FILE` - Write a timeline of the output after generating; `FILE` must be outside the output directory
 - `--timeline-format csv|txt|bodyfile|macb` - Timeline format (default: from the extension: `.csv`, `.txt`, `.bodyfile`, `.body`, `.macb`; any other extension is an error)
 - `--generate-schema` - Write JSON schemas for manifests and playbooks and exit (`--schema-out DIR`, default `schemas`)
@@ -66,9 +67,10 @@ fsagen [OPTIONS] <output-path>
 
 **Run records:** every generation writes three files beside the output (never inside it):
 
-- `run-manifest.json`: generator version, Go version, seed, SHA-256 of every input read, options, capabilities, skipped operations, the digest of `SHA256SUMS`, and a status that reads `running` until the run ends and then `complete` or `failed`. A tree whose run manifest does not say `complete` is not a finished corpus. It holds no absolute path, host name or wall-clock time, so it is itself reproducible.
+- `run-manifest.json`: generator version, Go version, seed, SHA-256 of every input read, options, capabilities (including which times can be set), skipped operations and dropped time fields, the digests of `SHA256SUMS` and `ledger.jsonl`, and a status that reads `running` until the run ends and then `complete` or `failed`. A tree whose run manifest does not say `complete` is not a finished corpus. It holds no absolute path, host name or wall-clock time, so it is itself reproducible.
 - `SHA256SUMS`: the SHA-256 of every file and NTFS stream in the output (`path:stream`), in `sha256sum` format, sorted by path. Check a corpus with `sha256sum -c` from inside the output directory.
-- `run-info.json`: what is not reproducible: build revision, host, OS, file system, absolute paths and start and finish times.
+- `ledger.jsonl` (manifest and playbook runs): one line per operation: the object it acted on (a number that survives renames), its content SHA-256 before and after, its size and streams, the times the scenario intends it to have, which times were left to the file system (`uncontrolled`), and whether it was done, a no-op or skipped. A failed run still writes the ledger up to the failing operation.
+- `run-info.json`: what is not reproducible: build revision, host, OS, file system, the host's last-access-time policy, absolute paths and start and finish times.
 
 **Examples:**
 
@@ -107,7 +109,7 @@ fsagen --seed 7 --bulk 3 --depth 2 ./quick-bulk
 
 YAML with an optional `start` and a sequence of operations:
 
-- start (top level, optional): RFC 3339, or `now` for a run that cannot be reproduced. It is the reference time for operations without an `mtime`: what `${DATE}` formats and what an unpinned pdf's dates and an email's `Date` default to. With neither, those are errors; fsagen never reads the wall clock for them.
+- start (top level, optional): RFC 3339, or `now` for a run that cannot be reproduced. It is the reference time for operations without an `mtime` or `atime`: when they happen (see *Timestamps*), what `${DATE}` formats and what an unpinned pdf's dates and an email's `Date` default to. With neither, those are errors; fsagen never reads the wall clock for them.
 
 - action: `create|update|append|truncate|rotate|delete|mace|rename|copy|ads|motw|email|ansible-vault`
 - path: target path relative to output root (see *Paths* below)
@@ -127,7 +129,7 @@ YAML with an optional `start` and a sequence of operations:
 - pdf: document metadata for `format: pdf` — see below
 - email: message definition for the `email` action — see below
 - vault: password, vault_id and salt for the `ansible-vault` action
-- atime/mtime: RFC3339 timestamps for MACE control
+- atime/mtime/ctime/crtime: RFC 3339 access, modification, change and creation (birth) times, fractions of a second kept. They override what the action would otherwise set (see *Timestamps*). `ctime` needs Windows on NTFS or ReFS and `crtime` Windows; elsewhere either is a pre-flight error unless `--on-unsupported=skip`, which drops the field and records that
 - new_path: new location for `rename`, `rotate` or `copy`
 - stream: ADS stream name (for `ads` action, Windows-only)
 - zone_id, host_url, referrer_url: for `motw` action (Windows-only)
@@ -178,6 +180,7 @@ YAML with a timeline and actors:
 
 - **start** (required): RFC3339, or "now" for a run that cannot be reproduced (recorded as such in the run manifest)
 - **variables**: Global variables for templating (map of key-value pairs)
+- **subsecond_jitter**: `true` adds a seeded fraction of a second (in 100 ns steps) to every time derived from the schedule, so a corpus does not have every timestamp on a whole second. Explicit times are never jittered, and the same seed gives the same fractions (`TestJitterDeterministicAndNeverOnExplicit`)
 - **actors**: List of { name, base, variables }
 	- name: Actor identifier (unique, case-insensitively)
 	- base: Base directory for this actor's files
@@ -195,11 +198,13 @@ YAML with a timeline and actors:
 		- template: Predefined content template (`email`, `log`, `script`, `doc`) for create/update/append; cannot be combined with `content` or `content_file`
 		- All standard manifest fields (action, path, id, ref, content, etc.)
 
-Steps run in the order they are written. `${SEQ}` counts every action as it is
-compiled, so two actions rendering `file-${SEQ}.txt` name two different files:
-give the first an `id` and refer to it with `ref`/`refs`.
+Operations run in time order; operations scheduled for the same instant keep
+the order they are written in (`TestPlaybookRunsInTimeOrder`). `${SEQ}` counts
+every action in the order it is written, so two actions rendering
+`file-${SEQ}.txt` name two different files: give the first an `id` and refer
+to it with `ref`/`refs`.
 
-Operations supported: `create|update|append|truncate|rotate|delete|mace|rename|copy|ads|motw|email|ansible-vault` (all operations work in both manifest and playbook). `ads` and `motw` are Windows-only. Timestamps are computed from the timeline unless explicitly provided in the action.
+Operations supported: `create|update|append|truncate|rotate|delete|mace|rename|copy|ads|motw|email|ansible-vault` (all operations work in both manifest and playbook). `ads` and `motw` are Windows-only. Each action happens at its scheduled time, which sets the times of what it creates or changes (see *Timestamps*); explicit `atime`/`mtime`/`ctime`/`crtime` override them.
 
 Durations accept `d` and `w` in addition to Go's own units, so a step can be
 `offset: 2d6h` rather than `54h`.
@@ -297,7 +302,7 @@ bodies and attachments). Writes a `.eml`, or appends to a `.mbox` with mboxrd
     cc: ["scheduling@aperture-talent.example"]
     return_path: "bounces+0188@aperture-talent.example"
     subject: "Re: technical assessment"
-    date: "2026-02-25T10:05:00+05:30"     # RFC3339; also the default file mtime
+    date: "2026-02-25T10:05:00+05:30"     # RFC3339; also the file's times
     message_id: "<c3f1a97b@aperture-talent.example>"
     in_reply_to: "<b2e0d8f1@northwindlogistics.example>"
     references: ["<CAF9a2c1e@aperture-talent.example>", "<b2e0d8f1@northwindlogistics.example>"]
@@ -407,12 +412,78 @@ the variables that are defined; it is never left in the output. The run manifest
 records the vars file's SHA-256 and a hash of the `--var` values, not the values
 themselves (they can hold a vault password).
 
-## Notes on timestamps
+## Timestamps
 
-- Sets mtime/atime via `os.Chtimes`. ctime is not directly settable on most systems and will reflect metadata change time.
-- `mode` is applied before the timestamps, because chmod itself touches ctime.
-  Windows honours only the write bit; the field matters on Linux output.
-- To emulate directory timestamp skew on deletion, `delete` can include `atime/mtime` which will be applied to the parent directory after removal.
+Every operation happens at a time T: its scheduled time in a playbook; in a
+manifest its `mtime`, else its `atime`, else the manifest's `start`; for an
+email, its `Date`. What it creates or changes gets its times from T by these
+rules, and an explicit `atime`, `mtime`, `ctime` or `crtime` on the action
+always wins:
+
+| Action | Times |
+|---|---|
+| `create`, `ansible-vault`, `email` to an `.eml` | born at T: all four times are T (creating a file that exists makes it anew) |
+| `update`, `append`, `truncate`, a later message appended to an `.mbox` | access, modification and change become T; creation is kept |
+| `mace` | only the times it names (at least one) |
+| `ads`, `motw` | the file's times do not change |
+| `rename` | the object keeps its times; its change time becomes T |
+| `rotate` | the rotated file is renamed (keeps its times); the empty file left at the old path is born at T |
+| `copy` | the copy is born at T but keeps its source's modification time, and its named streams |
+| `delete` | the object is stamped with its final times just before it is removed; `atime`/`mtime` on a delete set the directory it leaves |
+| directories | born with the operation that creates them, explicitly or as a missing parent; every entry added, removed or renamed in them sets their modification and change times to T; a `mace` on a directory holds until the next such event |
+
+A manifest operation with no time of its own and no `start` has no T: its
+times are left to the file system, and the ledger lists them as uncontrolled.
+
+After each operation fsagen stamps what it touched. After the last one it
+settles the whole tree, files first and then directories deepest first, and
+reads every time back; any time that differs from the scenario by more than
+the volume's resolution fails the run and lists the differences. On Windows
+the times are set through handles opened relative to the output root, all
+four in one call (`FILE_BASIC_INFO`).
+
+What can be set:
+
+| | Windows (NTFS, ReFS) | Windows (FAT, exFAT) | Linux, macOS, FreeBSD |
+|---|---|---|---|
+| access, modification | yes | yes | yes |
+| creation (`crtime`) | yes | yes | no |
+| change (`ctime`) | yes | no (not stored) | no |
+
+A time the platform cannot set is never faked: if the input asks for it, the
+run stops before writing (or, with `--on-unsupported=skip`, drops the field
+and records it in the run manifest); if the scenario only implies it, the
+ledger lists it as uncontrolled.
+
+Limits:
+
+- NTFS keeps a second set of times in each `$FILE_NAME` attribute, which no
+  user-mode call can set. The run manifest says `filename_times_controlled:
+  false`.
+- The output directory's own times are never set (`root_times_controlled:
+  false`).
+- With last-access updates on (`NtfsDisableLastAccessUpdate`, recorded in
+  `run-info.json`), anything that reads the output afterwards moves its access
+  times. fsagen's own reads (digests, the ledger, the timeline) leave them
+  alone. If another process reads files while the run settles, fsagen settles
+  again a few times before failing, and the error says so.
+- `mode` is applied when a file is written; times are stamped after it, so a
+  chmod does not disturb them. Windows honours only the write bit; the field
+  matters on Linux output.
+
+Verified by `TestCreateSetsCreationTime`, `TestMaceSetsFourTimes`,
+`TestMaceLeavesUnnamedTimes`, `TestQuilldropLiteStompCount`,
+`TestAdsAndMotwKeepTimes`, `TestDirTimesFollowLastChildEvent`,
+`TestRotateKeepsRotatedTimes`, `TestCopySemantics`, `TestCopyCarriesStreams`,
+`TestEmailTimesFromDate`, `TestNanoPrecisionRoundTrip`,
+`TestDeleteStampsBeforeRemoval`, `TestManifestReferenceTime`,
+`TestVerifyPassMatchesModel`, `TestLedgerCreateStompRenameDelete`,
+`TestDefaultCrtimeRecordedUncontrolled`, `TestExplicitCrtimeUnsupportedPreflight`,
+`TestDroppedTimeFieldRecorded`, `TestRunManifestTimeCapabilities`,
+`TestSettleRetriesOnlyForAccessTimes`,
+`TestChangeTimeSticks` and `TestTimelinePassKeepsAtime`. The creation and
+change time tests run on Windows; on Linux and macOS they are skipped, and
+the release check runs the rest there.
 
 ## Determinism contract
 
@@ -426,7 +497,8 @@ is recorded in `run-manifest.json`), the same `--seed` and the same **inputs**
 1. content of every regular file and named stream it writes, as listed in
    `SHA256SUMS`;
 2. set of relative paths;
-3. `--dry-run` listing and `run-manifest.json`.
+3. `--dry-run` listing (with each operation's intended times),
+   `ledger.jsonl` and `run-manifest.json`.
 
 This holds on every platform, for every operation the platform supports.
 Which operations were skipped as unsupported is recorded, and follows from the
@@ -440,13 +512,15 @@ reordering an unrelated action changes nothing else. Nothing reads the wall
 clock except `start: now`, which marks the run as not reproducible.
 
 **Not covered:** anything read back from the live file system: timelines;
-creation and change times the operating system stamps; NTFS `$FILE_NAME`
-times; file IDs, allocation and directory order; `run-info.json`; runs with
+the times on disk themselves (the ledger states what they are meant to be,
+and the verify pass checks them within the run); times the ledger lists as
+uncontrolled; NTFS `$FILE_NAME` times; file IDs, allocation and directory order; `run-info.json`; runs with
 `start: now`; files already present under `--into-existing`.
 
 Verified by `TestDeterminismHarness` (every example and bulk mode, two runs
 into different directories, and a different seed), the version-pinned goldens
-(`TestExampleContentGoldens`, `TestDryRunGoldens`), `TestBulkDeterministic`,
+(`TestExampleContentGoldens`, which also pins each example's ledger, and
+`TestDryRunGoldens`), `TestBulkDeterministic`,
 `TestNoWallClockInContent`, `TestInsertingUnrelatedActionLeavesOtherFilesUnchanged`
 and `TestCrossCapabilityContentEquality`. It has been run on Windows; the
 Linux and macOS runs are part of the release check.
@@ -492,7 +566,8 @@ output directory, or it would describe itself.
 
 - MD5 hash calculation for all files (except files > 100MB)
 - Access and modification times, plus a third time that is the creation time on Windows and the inode change time on Unix (the bodyfile currently writes it in both its ctime and crtime columns)
-- Detection of the NTFS streams `Zone.Identifier`, `metadata` and `content` (Windows)
+- Every named NTFS stream on each file (Windows; `TestTimelineListsEveryStream`)
+- Reading files for their digests and listing directories does not move their access times (Windows; Linux when you own the files; `TestTimelinePassKeepsAtime`)
 - Chronologically sorted by modification time (equal times by path); all times in UTC
 - **Timeline-only mode**: Generate timelines from an existing directory without regenerating it
 

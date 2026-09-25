@@ -116,6 +116,10 @@ func BuildPlaybookSchema() ([]byte, error) {
 				"type":                 "object",
 				"additionalProperties": map[string]any{"type": "string"},
 			},
+			"subsecond_jitter": map[string]any{
+				"type":        "boolean",
+				"description": "Add a seeded fraction of a second to every time derived from the schedule, never to an explicit one.",
+			},
 			"actors": map[string]any{
 				"type":     "array",
 				"items":    map[string]any{"$ref": "#/$defs/Actor"},
@@ -274,6 +278,8 @@ func commonOperationProps(props map[string]any) {
 	props["type"] = map[string]any{"type": "string", "enum": compile.Types}
 	props["atime"] = map[string]any{"$ref": "#/$defs/Rfc3339Time"}
 	props["mtime"] = map[string]any{"$ref": "#/$defs/Rfc3339Time"}
+	props["ctime"] = map[string]any{"$ref": "#/$defs/Rfc3339Time", "description": "Metadata change time. Windows on NTFS or ReFS only; elsewhere a pre-flight error unless --on-unsupported=skip."}
+	props["crtime"] = map[string]any{"$ref": "#/$defs/Rfc3339Time", "description": "Creation (birth) time. Windows only; elsewhere a pre-flight error unless --on-unsupported=skip."}
 	props["zone_id"] = map[string]any{"type": "integer", "minimum": 0, "maximum": 4}
 	props["content_len"] = map[string]any{"type": "integer", "minimum": 1}
 	props["format"] = map[string]any{"type": "string", "enum": []string{"raw", "text", "pdf", "eml", "mbox"}}
@@ -316,10 +322,11 @@ func operationConditionals(playbook bool) []any {
 			then["properties"] = map[string]any{"format": map[string]any{"enum": formats}}
 		}
 		if action == "mace" {
-			then["anyOf"] = []any{
-				map[string]any{"required": []string{"atime"}},
-				map[string]any{"required": []string{"mtime"}},
+			var anyTime []any
+			for _, f := range compile.TimeFields {
+				anyTime = append(anyTime, map[string]any{"required": []string{f}})
 			}
+			then["anyOf"] = anyTime
 		}
 		out = append(out, map[string]any{
 			"if": map[string]any{

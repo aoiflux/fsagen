@@ -25,8 +25,10 @@ type Operation struct {
 	Ext        string `yaml:"ext" json:"ext"`                 // for create file when path is a directory
 	Content    string `yaml:"content" json:"content"`         // optional literal content
 	ContentLen int    `yaml:"content_len" json:"content_len"` // if Content empty, generate deterministic random of this length
-	Atime      string `yaml:"atime" json:"atime"`             // RFC3339
-	Mtime      string `yaml:"mtime" json:"mtime"`             // RFC3339
+	Atime      string `yaml:"atime" json:"atime"`             // RFC3339, access time
+	Mtime      string `yaml:"mtime" json:"mtime"`             // RFC3339, modification time
+	Ctime      string `yaml:"ctime" json:"ctime"`             // RFC3339, metadata change time (Windows NTFS/ReFS only)
+	Crtime     string `yaml:"crtime" json:"crtime"`           // RFC3339, creation (birth) time (Windows only)
 
 	// Authoring extras
 	ContentFile string `yaml:"content_file" json:"content_file"` // load content from a file relative to the manifest/playbook
@@ -110,8 +112,12 @@ type Playbook struct {
 	// Start time for the playbook, RFC3339 or "now"
 	Start     string            `yaml:"start" json:"start"`
 	Variables map[string]string `yaml:"variables" json:"variables"` // Global variables for templating
-	Actors    []Actor           `yaml:"actors" json:"actors"`
-	Steps     []Step            `yaml:"steps" json:"steps"`
+	// SubsecondJitter adds a seeded fraction of a second to every time
+	// derived from the schedule (never to an explicit one), so a corpus does
+	// not have every timestamp on a whole second.
+	SubsecondJitter bool    `yaml:"subsecond_jitter" json:"subsecond_jitter"`
+	Actors          []Actor `yaml:"actors" json:"actors"`
+	Steps           []Step  `yaml:"steps" json:"steps"`
 }
 
 type Actor struct {
@@ -146,9 +152,11 @@ type Action struct {
 	Template   string `yaml:"template" json:"template"`   // Predefined template: "email", "log", "script", "doc"
 	Offset     string `yaml:"offset" json:"offset"`       // relative to step occurrence time
 	Condition  string `yaml:"condition" json:"condition"` // Action-level condition; tested against the batch index
-	// Optional explicit times override the computed time when provided
-	Atime string `yaml:"atime" json:"atime"`
-	Mtime string `yaml:"mtime" json:"mtime"`
+	// Optional explicit times override the scheduled time when provided
+	Atime  string `yaml:"atime" json:"atime"`
+	Mtime  string `yaml:"mtime" json:"mtime"`
+	Ctime  string `yaml:"ctime" json:"ctime"`
+	Crtime string `yaml:"crtime" json:"crtime"`
 
 	// Authoring extras
 	ContentFile string `yaml:"content_file" json:"content_file"`

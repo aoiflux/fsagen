@@ -13,13 +13,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
 	"sort"
-	"time"
 
 	"github.com/aoiflux/fsagen/pathpolicy"
 )
@@ -114,19 +112,6 @@ func (f *FS) Rename(oldname, newname string) error {
 func (f *FS) Chmod(name string, mode os.FileMode) error {
 	return f.root.Chmod(native(name), mode)
 }
-
-// Chtimes sets name's access and modification times. A zero time leaves that
-// value unchanged.
-func (f *FS) Chtimes(name string, atime, mtime time.Time) error {
-	return f.root.Chtimes(native(name), atime, mtime)
-}
-
-// Stat describes name, following a final symlink only if it stays inside the
-// root.
-func (f *FS) Stat(name string) (os.FileInfo, error) { return f.root.Stat(native(name)) }
-
-// Lstat describes name without following a final symlink.
-func (f *FS) Lstat(name string) (os.FileInfo, error) { return f.root.Lstat(native(name)) }
 
 // Empty reports whether the root holds no entries at all.
 func (f *FS) Empty() (bool, error) {
@@ -291,14 +276,4 @@ func (s *Sources) Inputs() []Input {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
-}
-
-// HashReader is a small helper shared by fingerprinting code.
-func HashReader(r io.Reader) (string, int64, error) {
-	h := sha256.New()
-	n, err := io.Copy(h, r)
-	if err != nil {
-		return "", 0, err
-	}
-	return hex.EncodeToString(h.Sum(nil)), n, nil
 }

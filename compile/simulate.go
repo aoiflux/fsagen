@@ -91,7 +91,7 @@ func simulate(ops []Op, t *model.Tree, opts Options) ([]Op, error) {
 }
 
 // apply performs one operation on the model, enforcing the preconditions
-// the executor relies on.
+// the executor relies on, and works out the times it intends: see times.go.
 func apply(t *model.Tree, op *Op, opts Options) error {
 	p := op.Path
 	portable := func(paths ...string) error {
@@ -121,6 +121,11 @@ func apply(t *model.Tree, op *Op, opts Options) error {
 		}
 	}
 
+	when := opTime(op)
+	t.Clock = when
+	// primary is the object the explicit times describe.
+	primary := p
+
 	switch op.Action {
 	case "create":
 		if err := portable(p); err != nil {
@@ -130,8 +135,11 @@ func apply(t *model.Tree, op *Op, opts Options) error {
 			if err := t.MkdirAll(p); err != nil {
 				return err
 			}
-		} else if _, err := t.CreateFile(p); err != nil {
-			return err
+		} else {
+			if _, err := t.CreateFile(p); err != nil {
+				return err
+			}
+			born(t, p, when)
 		}
 		tag(p)
 
@@ -148,21 +156,36 @@ func apply(t *model.Tree, op *Op, opts Options) error {
 			if _, err := t.CreateFile(p); err != nil {
 				return err
 			}
+		} else {
+			written(t, p, when)
 		}
 		tag(p)
 
 	case "update", "truncate":
-		return mustFile(op.Action)
+		if err := mustFile(op.Action); err != nil {
+			return err
+		}
+		written(t, p, when)
 
 	case "delete":
-		if t.Get(p) == nil {
+		o := t.Get(p)
+		if o == nil {
 			if op.MissingOK {
 				op.NoOp = "path does not exist (missing_ok)"
 				return nil
 			}
 			return fmt.Errorf("delete: %s does not exist (set missing_ok: true if that is expected)", p)
 		}
-		return t.Remove(p)
+		op.Pre = []Stamp{{Path: p, Times: o.Times}}
+		op.Object, op.Times = o.Serial, o.Times
+		if err := t.Remove(p); err != nil {
+			return err
+		}
+		// A delete's own times describe the directory it was deleted from.
+		primary = path.Dir(p)
+		if primary == "." && (op.Atime != "" || op.Mtime != "") {
+			return fmt.Errorf("delete: atime and mtime set the times of the directory %s was deleted from, and the output root's own times are not part of the scenario; drop them or put the file in a directory", p)
+		}
 
 	case "mace":
 		if t.Get(p) == nil {
@@ -177,6 +200,7 @@ func apply(t *model.Tree, op *Op, opts Options) error {
 			return err
 		}
 		tag(op.NewPath)
+		primary = op.NewPath
 
 	case "copy":
 		if err := mustFile("copy"); err != nil {
@@ -189,6 +213,7 @@ func apply(t *model.Tree, op *Op, opts Options) error {
 			return err
 		}
 		tag(op.NewPath)
+		primary = op.NewPath
 
 	case "rotate":
 		if err := mustFile("rotate"); err != nil {
@@ -197,6 +222,8 @@ func apply(t *model.Tree, op *Op, opts Options) error {
 		if err := portable(op.NewPath); err != nil {
 			return err
 		}
+		// The rotated file is renamed and keeps its times; the empty file
+		// that takes its place is new, and is what explicit times describe.
 		if err := renameErr(t.Rename(p, op.NewPath), p, op.NewPath); err != nil {
 			return err
 		}
@@ -227,6 +254,9 @@ func apply(t *model.Tree, op *Op, opts Options) error {
 			if _, err := t.CreateFile(p); err != nil {
 				return err
 			}
+			born(t, p, when)
+		} else {
+			written(t, p, when)
 		}
 		tag(p)
 
@@ -237,6 +267,7 @@ func apply(t *model.Tree, op *Op, opts Options) error {
 		if _, err := t.CreateFile(p); err != nil {
 			return err
 		}
+		born(t, p, when)
 		tag(p)
 
 	case "ads", "motw":
@@ -247,8 +278,22 @@ func apply(t *model.Tree, op *Op, opts Options) error {
 		if t.Get(p) == nil {
 			return fmt.Errorf("%s: base %s does not exist; create it first (a stream cannot exist without its file)", op.Action, p)
 		}
-		return t.AddStream(p, stream)
+		// Streams share their file's times, which a stream write does not
+		// change in the scenario (the executor restores them).
+		if err := t.AddStream(p, stream); err != nil {
+			return err
+		}
 	}
+
+	if o := t.Get(primary); o != nil {
+		overlay(&o.Times, explicitTimes(op))
+	}
+	if op.Action != "delete" {
+		if o := t.Get(primary); o != nil {
+			op.Object, op.Times = o.Serial, o.Times
+		}
+	}
+	op.Stamps = stampsAfter(t, p, op.NewPath, primary)
 	return nil
 }
 

@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/aoiflux/fsagen/sandbox"
 )
 
 // Entry represents a single timeline entry for a file or directory
@@ -32,63 +35,89 @@ type Timeline struct {
 	Entries []Entry
 }
 
-// Generate walks the filesystem and creates a complete timeline
+// Generate walks the tree under root and records every file and directory.
+//
+// It reads the tree through the sandbox, so it cannot leave root, and every
+// directory listing and file digest goes through a handle that leaves access
+// times alone where the platform allows (Windows always; Linux when the
+// caller owns the file). Reading the corpus therefore does not change the
+// times it is reading.
 func Generate(root string) (*Timeline, error) {
 	tl := &Timeline{
 		Root:    root,
 		Entries: make([]Entry, 0),
 	}
 
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			// Skip files we can't access
-			return nil
-		}
-
-		relPath, err := filepath.Rel(root, path)
-		if err != nil {
-			relPath = path
-		}
-
-		entry := Entry{
-			Path:  relPath,
-			Size:  info.Size(),
-			Mode:  info.Mode(),
-			IsDir: info.IsDir(),
-		}
-
-		// Get timestamps, in UTC so the output does not depend on the
-		// machine's time zone.
-		if stat, ok := getFileTimes(info); ok {
-			entry.Atime = utc(stat.Atime)
-			entry.Mtime = utc(stat.Mtime)
-			entry.Ctime = utc(stat.Ctime)
-		} else {
-			// Fallback to ModTime
-			entry.Mtime = utc(info.ModTime())
-		}
-
-		// Calculate MD5 for files only
-		if !info.IsDir() && info.Size() > 0 && info.Size() < 100*1024*1024 { // Skip files > 100MB
-			if hash, err := calculateMD5(path); err == nil {
-				entry.MD5 = hash
-			}
-		}
-
-		// Check for Alternate Data Streams on Windows
-		if runtime.GOOS == "windows" && !info.IsDir() {
-			if streams, err := findADS(path); err == nil {
-				entry.ADSNames = streams
-			}
-		}
-
-		tl.Entries = append(tl.Entries, entry)
-		return nil
-	})
-
+	fsys, err := sandbox.Open(root)
 	if err != nil {
 		return nil, err
 	}
+	defer fsys.Close()
+
+	// The root itself, described as the file system reports it: its times
+	// belong to whoever created it.
+	if info, err := os.Lstat(root); err == nil {
+		e := Entry{Path: ".", Size: info.Size(), Mode: info.Mode(), IsDir: info.IsDir()}
+		if stat, ok := getFileTimes(info); ok {
+			e.Atime, e.Mtime, e.Ctime = utc(stat.Atime), utc(stat.Mtime), utc(stat.Ctime)
+		} else {
+			e.Mtime = utc(info.ModTime())
+		}
+		tl.Entries = append(tl.Entries, e)
+	}
+
+	var walk func(dir string)
+	walk = func(dir string) {
+		entries, err := fsys.ReadDirQuiet(dir)
+		if err != nil {
+			return // skip what cannot be read
+		}
+		for _, d := range entries {
+			name := path.Join(dir, d.Name())
+			info, err := d.Info()
+			if err != nil {
+				continue
+			}
+			entry := Entry{
+				Path:  filepath.FromSlash(name),
+				Size:  info.Size(),
+				Mode:  info.Mode(),
+				IsDir: info.IsDir(),
+			}
+			// Times in UTC, so the output does not depend on the machine's
+			// time zone. The Ctime column holds the creation time on
+			// Windows and the change time elsewhere, as it always has.
+			if t, err := fsys.Times(name); err == nil {
+				entry.Atime, entry.Mtime = utc(t.Atime), utc(t.Mtime)
+				if runtime.GOOS == "windows" {
+					entry.Ctime = utc(t.Btime)
+				} else {
+					entry.Ctime = utc(t.Ctime)
+				}
+			} else {
+				entry.Mtime = utc(info.ModTime())
+			}
+
+			if !info.IsDir() && info.Size() > 0 && info.Size() < 100*1024*1024 { // Skip files > 100MB
+				if hash, err := calculateMD5(fsys, name); err == nil {
+					entry.MD5 = hash
+				}
+			}
+			if !info.IsDir() {
+				if streams, err := fsys.Streams(name); err == nil {
+					for _, s := range streams {
+						entry.ADSNames = append(entry.ADSNames, s.Name)
+					}
+				}
+			}
+
+			tl.Entries = append(tl.Entries, entry)
+			if info.IsDir() {
+				walk(name)
+			}
+		}
+	}
+	walk(".")
 
 	sortEntries(tl.Entries)
 	return tl, nil
@@ -288,9 +317,10 @@ func (tl *Timeline) WriteMACB(w io.Writer) error {
 	return nil
 }
 
-// calculateMD5 computes the MD5 hash of a file
-func calculateMD5(path string) (string, error) {
-	f, err := os.Open(path)
+// calculateMD5 computes the MD5 hash of a file without moving its access
+// time where the platform allows.
+func calculateMD5(fsys *sandbox.FS, name string) (string, error) {
+	f, err := fsys.OpenQuiet(name)
 	if err != nil {
 		return "", err
 	}
@@ -302,24 +332,4 @@ func calculateMD5(path string) (string, error) {
 	}
 
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
-}
-
-// findADS finds alternate data streams on Windows
-func findADS(path string) ([]string, error) {
-	if runtime.GOOS != "windows" {
-		return nil, nil
-	}
-
-	// Check common stream names
-	commonStreams := []string{"Zone.Identifier", "metadata", "content"}
-	var found []string
-
-	for _, stream := range commonStreams {
-		adsPath := path + ":" + stream
-		if _, err := os.Stat(adsPath); err == nil {
-			found = append(found, stream)
-		}
-	}
-
-	return found, nil
 }

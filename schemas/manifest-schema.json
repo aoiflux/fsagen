@@ -169,6 +169,8 @@
                 "content",
                 "content_file",
                 "content_len",
+                "crtime",
+                "ctime",
                 "ext",
                 "format",
                 "id",
@@ -225,6 +227,8 @@
                 "content",
                 "content_file",
                 "content_len",
+                "crtime",
+                "ctime",
                 "format",
                 "mode",
                 "mtime",
@@ -267,6 +271,8 @@
                 "content",
                 "content_file",
                 "content_len",
+                "crtime",
+                "ctime",
                 "id",
                 "mode",
                 "mtime",
@@ -341,6 +347,16 @@
                 "required": [
                   "mtime"
                 ]
+              },
+              {
+                "required": [
+                  "ctime"
+                ]
+              },
+              {
+                "required": [
+                  "crtime"
+                ]
               }
             ],
             "oneOf": [
@@ -364,6 +380,8 @@
               "enum": [
                 "action",
                 "atime",
+                "crtime",
+                "ctime",
                 "mode",
                 "mtime",
                 "path",
@@ -439,6 +457,8 @@
               "enum": [
                 "action",
                 "atime",
+                "crtime",
+                "ctime",
                 "id",
                 "mode",
                 "mtime",
@@ -485,6 +505,8 @@
               "enum": [
                 "action",
                 "atime",
+                "crtime",
+                "ctime",
                 "mode",
                 "mtime",
                 "path",
@@ -558,6 +580,8 @@
               "enum": [
                 "action",
                 "atime",
+                "crtime",
+                "ctime",
                 "email",
                 "format",
                 "id",
@@ -590,6 +614,8 @@
                 "atime",
                 "content",
                 "content_file",
+                "crtime",
+                "ctime",
                 "id",
                 "mode",
                 "mtime",
@@ -730,6 +756,14 @@
         "content_len": {
           "minimum": 1,
           "type": "integer"
+        },
+        "crtime": {
+          "$ref": "#/$defs/Rfc3339Time",
+          "description": "Creation (birth) time. Windows only; elsewhere a pre-flight error unless --on-unsupported=skip."
+        },
+        "ctime": {
+          "$ref": "#/$defs/Rfc3339Time",
+          "description": "Metadata change time. Windows on NTFS or ReFS only; elsewhere a pre-flight error unless --on-unsupported=skip."
         },
         "email": {
           "$ref": "#/$defs/EmailSpec"

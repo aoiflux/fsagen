@@ -1,6 +1,159 @@
 # Changelog
 
-## Unreleased: P1, determinism you can state in one sentence
+## Unreleased: P2, timestamps that mean what the scenario says
+
+Generator version: **3**. File and stream contents are unchanged for every
+example (the v3 content goldens equal v2's); only a `copy` of a file with
+streams gains those streams. The dry-run listing now shows each operation's
+intended times, the run manifest gains time capabilities, and the new ledger
+is a covered output, which is why the version moves.
+
+### Times
+
+- **All four times come from the scenario.** Each operation happens at a
+  time T and sets the times of what it creates or changes by fixed rules,
+  listed in README's new *Timestamps* section and in `compile/times.go`:
+  creation makes everything T; writes set access, modification and change
+  and keep creation; `mace` sets only what it names; `ads`/`motw` leave the
+  file's times alone; rename keeps them and sets change; rotate keeps the
+  rotated file's times; a copy is born at T with its source's mtime; a
+  directory's modification and change times follow the last entry added,
+  removed or renamed in it. Explicit times always win.
+- **New fields `ctime` and `crtime`** (change and creation time) on create,
+  update, append, truncate, mace, copy, email and ansible-vault. `mace` now
+  needs at least one of the four times. On Windows they are set, with the
+  access and modification times, in one `FILE_BASIC_INFO` call on a handle
+  opened relative to the output root. The spike that decided the capability
+  matrix: NTFS stores a change time set this way exactly
+  (`TestChangeTimeSticks`); FAT does not store one.
+- **Capabilities, never faked.** An explicit `crtime` or `ctime` where it
+  cannot be set (Linux, macOS; `ctime` on FAT) fails pre-flight, naming the
+  line and field; `--on-unsupported=skip` performs the operation without it
+  and records the dropped field in the run manifest. A time the scenario
+  only implies is listed as `uncontrolled` in the ledger.
+- **Reference times.** A manifest operation happens at its `mtime`, else its
+  `atime` (new), else `start`. One with none of them leaves its times to the
+  file system; before, it did too, but nothing said so.
+- **Playbooks no longer copy the scheduled time into `atime`/`mtime`.** The
+  fields hold only what the author wrote. Behaviour changes that follow: a
+  `mace` naming only `mtime` no longer also sets the access time (v2 set both
+  to the one value), and an `ads`/`motw` keeps the file's times instead of
+  stamping it with its own scheduled time (F-TIME-3). The `mace` change
+  applies to manifests too. Other manifest operations that give only one of
+  `atime`/`mtime` still get it for both, because that time is their T.
+- **`delete`** stamps the object with its final times just before removing
+  it, so what is left on disk carries scenario times. Its `atime`/`mtime`
+  still set the directory it leaves; on a file at the top of the output this
+  is now an error, since the output directory's own times are never set.
+- **`rotate`** keeps the rotated file's times; v2 stamped both files with the
+  rotate time (N-7). **`copy`** carries named streams, as the Windows
+  `CopyFile` does, and keeps the source's mtime; v2 dropped the streams and
+  stamped the op time (N-7).
+- **Fractions of a second** are kept end to end (RFC 3339 with nanoseconds,
+  100 ns on NTFS). A playbook's `subsecond_jitter: true` adds a seeded
+  fraction of a second to every derived time, never to an explicit one
+  (F-TIME-5).
+- **Settle and verify.** After each operation fsagen stamps what it touched.
+  After the last, it stamps the whole tree again, files first and then
+  directories deepest first, and reads every time back. Any time that
+  differs by more than the volume's resolution fails the run with a list.
+  Only access times may be settled again, a few times, after a short pause:
+  with last-access updates on, another process reading the new files (on
+  this machine, Defender scanning a new `.bat` in a Startup folder) moves
+  them. If they keep moving, the error says why.
+
+### New
+
+- **`ledger.jsonl`** in the sidecar: per operation, the object (a number that
+  survives renames), content SHA-256 before and after, size, streams with
+  their digests, intended times, uncontrolled times and the outcome
+  (done, no-op, skipped). A failed run writes it up to the failing
+  operation. The run manifest records its digest; the determinism harness
+  compares it across runs; the example goldens pin it.
+- **Run manifest capabilities:** `birth_time`, `change_time`,
+  `filename_times_controlled: false` (NTFS `$FILE_NAME` times, F-TIME-6) and
+  `root_times_controlled: false`. **`run-info.json`** records the host's
+  `NtfsDisableLastAccessUpdate`.
+- **Dry-run listing:** each line carries `times`, the intended times of the
+  object after the operation, in place of the raw `atime`/`mtime` fields.
+- **Reads leave access times alone** (F-TIME-4). Digests for the ledger and
+  the timeline, and the timeline's directory listings, go through handles
+  that suspend access-time updates on Windows (`SetFileTime` with all ones)
+  and use `O_NOATIME` on Linux when the caller owns the file. The timeline
+  now walks the output through the sandbox, and lists every named stream
+  instead of probing three names.
+- **API:** `manifest.ExecuteFile` returns the ledger; `ExecutePlaybook` is
+  gone (use `ExecuteFile`). `manifest.Execute` returns the ledger;
+  `Settle`, `Verify` and `SettleAndVerify` are new; `ExecContext` carries the
+  capability set, so an injected set behaves as that platform would.
+- **Removed dead code:** `Program.Skipped`, `model.Kind.String`,
+  `sandbox.HashReader`, `FS.Lstat`, `FS.Stat`, `FS.Chtimes`.
+- README: the stale sentence "Steps run in the order they are written"
+  (wrong since P1) now says operations run in time order.
+
+### Goldens
+
+`testdata/golden/v3/` holds the dry-run listings, the Windows content
+fingerprints (identical to v2's) and, new, each example's Windows ledger.
+`testdata/golden/v1/` and `v2/` are no longer read by any test; removing them
+is the owner's call.
+
+### Not done here
+
+- The timeline still writes three times per entry, with the creation time
+  in the Ctime column on Windows, and its bodyfile and MACB layouts are
+  unchanged: that is P3, together with the modelled timeline and the answer
+  key built from this ledger.
+- The Linux `O_NOATIME` path, Unix time read-back and the Unix skips of the
+  creation and change time tests have been cross-compiled and vetted, not
+  run. The owner's Linux/macOS pass covers them.
+
+### Evidence that each test can fail
+
+Every P2 test was shown to fail with its guard removed: the code was
+mutated, the named tests ran and failed, and the file was restored. All 33
+mutations were killed. One first survived: making a create keep an existing
+file's birth time went unnoticed because no test created a file twice, so
+`TestCreateSetsCreationTime` gained that case, and the F-TIME-1 mutation was
+moved to the fix itself (the creation time never being set).
+
+| Finding | Mutation | Test |
+|---|---|---|
+| F-TIME-2 | change time not set | TestChangeTimeSticks, TestMaceSetsFourTimes |
+| F-TIME-1 | creation time never set | TestCreateSetsCreationTime |
+| F-TIME-1 | create over an existing file keeps its birth | TestCreateSetsCreationTime |
+| CR-6 | a stomp also moves crtime | TestQuilldropLiteStompCount |
+| F-TIME-3 | a stream write counts as a write | TestAdsAndMotwKeepTimes |
+| F-TIME-3 | entries do not touch their directory | TestDirTimesFollowLastChildEvent |
+| settle | settle pass skipped | TestExamples |
+| verify | verify accepts anything | TestVerifyPassMatchesModel |
+| N-7 | rotated file born again | TestRotateKeepsRotatedTimes |
+| N-7 | copy takes a new mtime | TestCopySemantics |
+| N-7 | copy drops streams | TestCopyCarriesStreams |
+| F-TIME-5 | sub-second part dropped | TestNanoPrecisionRoundTrip |
+| F-TIME-5 | jitter from the clock | TestJitterDeterministicAndNeverOnExplicit |
+| F-TIME-5 | jitter never applied | TestJitterDeterministicAndNeverOnExplicit |
+| ledger | previous digest forgotten | TestLedgerCreateStompRenameDelete |
+| ledger | claims times the platform cannot set | TestDefaultCrtimeRecordedUncontrolled |
+| F-PLAT-2 | explicit crtime not checked | TestExplicitCrtimeUnsupportedPreflight, TestDroppedTimeFieldRecorded |
+| delete | not stamped before removal | TestDeleteStampsBeforeRemoval |
+| delete | times on the output root accepted | TestDeleteTimesAtRootRefused |
+| reference time | manifest ignores atime | TestManifestReferenceTime |
+| explicit | scheduled time copied into atime | TestScheduledTimeIsNotExplicit |
+| mace | touches times it does not name | TestMaceLeavesUnnamedTimes |
+| email | mbox born again at every message | TestEmailTimesFromDate |
+| F-TIME-4 | quiet open does not suspend access times | TestOpenQuietKeepsAtime, TestReadDirQuietKeepsAtime, TestTimelinePassKeepsAtime |
+| F-TIME-4 | timeline digests with a plain read | TestTimelinePassKeepsAtime |
+| sandbox | a zero time written as 1601 | TestSetTimesZeroLeavesAlone |
+| F-TIME-6 | `filename_times_controlled` left out | TestRunManifestTimeCapabilities |
+| ledger | digest not in the run manifest | TestRunManifestTimeCapabilities |
+| ledger | lost when the run fails | TestFailedRunMarksSidecarFailed |
+| timeline | only well-known streams listed | TestTimelineListsEveryStream |
+| settle | never retried | TestSettleRetriesOnlyForAccessTimes |
+| settle | retried for any time | TestSettleRetriesOnlyForAccessTimes |
+| version | dry-run changed without a new version | TestDryRunGoldens |
+
+## P1: determinism you can state in one sentence (31b10e1)
 
 Generator version: **2**. Output changes for every seed. Corpora made by
 version 1 are reproduced with the build that made them (tag 7accc8d and

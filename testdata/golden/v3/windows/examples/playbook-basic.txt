@@ -1,0 +1,9 @@
+# input-sha256 daa033543b2f7c8181f05a2de3d221c3678a2cbccaedcdc7297687c3e3f57381
+d users/
+d users/alice/
+d users/alice/docs/
+f 6eb004785b728749ed6db83dd0646a43144b19407c2a0f2be4f290be82682bb8 64 users/alice/docs/report-0.txt
+f 79b320d3ba258aa0dfdc49b849e4da73a53798c31eeac283efb2789367ac2053 64 users/alice/docs/report-1.txt
+d users/bob/
+d users/bob/media/
+d users/bob/media/photos/

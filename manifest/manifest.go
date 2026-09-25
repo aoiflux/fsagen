@@ -2,20 +2,30 @@
 // sandbox.FS confined to the output root; compile has already proved each
 // operation's preconditions against a model of the tree, so a failure here is
 // an I/O problem, never an input mistake.
+//
+// Times are stamped from the model, never from the operation's fields
+// directly: each operation's objects right after it runs (and a deleted
+// object right before), then every object once more in a settle pass after
+// the last operation, files first and directories deepest first. A verify
+// pass then reads every time back and fails the run on any difference.
 package manifest
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/aoiflux/fsagen/compile"
 	"github.com/aoiflux/fsagen/email"
+	"github.com/aoiflux/fsagen/ledger"
 	"github.com/aoiflux/fsagen/libgen"
+	"github.com/aoiflux/fsagen/model"
 	"github.com/aoiflux/fsagen/sandbox"
 	"github.com/aoiflux/fsagen/spec"
 	"github.com/aoiflux/fsagen/util"
@@ -27,51 +37,331 @@ type ExecContext struct {
 	FS *sandbox.FS
 	// Sources reads email bodies and attachments from the YAML's directory.
 	Sources *sandbox.Sources
+	// Caps is the capability set the program was checked against. Times it
+	// says cannot be set are left to the file system, even where the volume
+	// could set them, so a run with an injected capability set behaves as
+	// it would on that platform.
+	Caps compile.Caps
 }
 
 // ExecuteManifest compiles a manifest and applies it under root with default
 // options. It is the library entry point; the CLI adds root checks, the
 // capability pre-flight and the run manifest around the same steps.
 func ExecuteManifest(root, manifestPath string, opts compile.Options) error {
-	return executeFile(compile.ModeManifest, root, manifestPath, opts)
+	_, err := ExecuteFile(compile.ModeManifest, root, manifestPath, opts)
+	return err
 }
 
-// ExecutePlaybook compiles a playbook and applies it under root with default
-// options.
-func ExecutePlaybook(root, playbookPath string, opts compile.Options) error {
-	return executeFile(compile.ModePlaybook, root, playbookPath, opts)
-}
-
-func executeFile(mode compile.Mode, root, file string, opts compile.Options) error {
+// ExecuteFile compiles a manifest or playbook, applies it under root,
+// settles and verifies the times, and returns the ledger.
+func ExecuteFile(mode compile.Mode, root, file string, opts compile.Options) ([]ledger.Entry, error) {
 	prog, err := compile.Load(mode, file, opts)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer prog.Close()
 
 	fsys, err := sandbox.Open(root)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer fsys.Close()
 
-	if err := compile.Preflight(prog, compile.Caps{NamedStreams: fsys.SupportsStreams()}, false); err != nil {
-		return err
+	if err := compile.Preflight(prog, Caps(fsys), false); err != nil {
+		return nil, err
 	}
-	return Execute(ExecContext{FS: fsys, Sources: prog.Sources}, prog.Ops)
+	ctx := ExecContext{FS: fsys, Sources: prog.Sources, Caps: Caps(fsys)}
+	entries, err := Execute(ctx, prog.Ops)
+	if err != nil {
+		return entries, err
+	}
+	return entries, SettleAndVerify(ctx, prog.Model)
+}
+
+// Caps is the capability set of an output root.
+func Caps(fsys *sandbox.FS) compile.Caps {
+	tc := fsys.TimeCaps()
+	return compile.Caps{NamedStreams: fsys.SupportsStreams(), BirthTime: tc.Birth, ChangeTime: tc.Change}
 }
 
 // Execute applies the operations in order, leaving out those marked NoOp
-// and those marked Skip (unsupported here). Every operation draws from its
-// own random stream, so leaving one out changes no other file's bytes.
-func Execute(ctx ExecContext, ops []compile.Op) error {
-	for _, op := range ops {
-		if op.NoOp != "" || op.Skip != "" {
-			continue
+// and those marked Skip (unsupported here), and returns the ledger. Every
+// operation draws from its own random stream, so leaving one out changes no
+// other file's bytes.
+func Execute(ctx ExecContext, ops []compile.Op) ([]ledger.Entry, error) {
+	digests := map[int]string{} // object serial -> content digest
+	entries := make([]ledger.Entry, 0, len(ops))
+	for i, op := range ops {
+		e := newEntry(i, op, ctx.Caps)
+		switch {
+		case op.NoOp != "":
+			e.Outcome, e.Reason = ledger.NoOp, op.NoOp
+		case op.Skip != "":
+			e.Outcome, e.Reason = ledger.Skipped, op.Skip
+		default:
+			fail := func(err error) error { return fmt.Errorf("%s: %s %s: %w", op.Src, op.Action, op.Path, err) }
+			if err := stampAll(ctx, op.Pre); err != nil {
+				return entries, fail(err)
+			}
+			if err := executeOp(ctx, op); err != nil {
+				return entries, fail(err)
+			}
+			// Digests are read before stamping: a read may move the access
+			// time, which the stamps then put back.
+			if err := describe(ctx.FS, op, &e, digests); err != nil {
+				return entries, fail(err)
+			}
+			if err := stampAll(ctx, op.Stamps); err != nil {
+				return entries, fail(err)
+			}
+			e.Outcome = ledger.Done
 		}
-		if err := executeOp(ctx, op); err != nil {
-			return fmt.Errorf("%s: %s %s: %w", op.Src, op.Action, op.Path, err)
+		entries = append(entries, e)
+	}
+	return entries, nil
+}
+
+func stampAll(ctx ExecContext, stamps []compile.Stamp) error {
+	for _, s := range stamps {
+		if err := stamp(ctx, s.Path, s.Times); err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+// stamp sets the times caps allows.
+func stamp(ctx ExecContext, p string, t model.Times) error {
+	if !ctx.Caps.BirthTime {
+		t.Btime = time.Time{}
+	}
+	if !ctx.Caps.ChangeTime {
+		t.Ctime = time.Time{}
+	}
+	return ctx.FS.SetTimes(p, sandbox.Times(t))
+}
+
+func newEntry(i int, op compile.Op, caps compile.Caps) ledger.Entry {
+	src := op.Src
+	src.File = filepath.Base(src.File)
+	e := ledger.Entry{
+		N:       i + 1,
+		Src:     src.String(),
+		Action:  op.Action,
+		Path:    op.Path,
+		NewPath: op.NewPath,
+		ID:      op.ID,
+		Object:  op.Object,
+	}
+	if !op.At.IsZero() {
+		e.At = op.At.UTC().Format(time.RFC3339Nano)
+	}
+	if t := compile.TimesOf(op.Times); t != nil {
+		lt := ledger.Times(*t)
+		e.Times = &lt
+	}
+	if op.Object != 0 {
+		e.Uncontrolled = uncontrolled(op.Times, caps)
+	}
+	return e
+}
+
+// uncontrolled lists the times the file system keeps as it likes: those the
+// scenario leaves open and those this platform cannot set.
+func uncontrolled(t model.Times, caps compile.Caps) []string {
+	var out []string
+	if t.Atime.IsZero() {
+		out = append(out, "atime")
+	}
+	if t.Mtime.IsZero() {
+		out = append(out, "mtime")
+	}
+	if t.Ctime.IsZero() || !caps.ChangeTime {
+		out = append(out, "ctime")
+	}
+	if t.Btime.IsZero() || !caps.BirthTime {
+		out = append(out, "crtime")
+	}
+	return out
+}
+
+// target is the path of the object an operation leaves behind, or "" for a
+// delete.
+func target(op compile.Op) string {
+	switch op.Action {
+	case "rename", "copy":
+		return op.NewPath
+	case "delete":
+		return ""
+	}
+	return op.Path
+}
+
+// describe records the object's digest, size and streams after the
+// operation. Reads go through OpenQuiet, which leaves access times alone
+// where the platform allows.
+func describe(fs *sandbox.FS, op compile.Op, e *ledger.Entry, digests map[int]string) error {
+	e.SHA256Before = digests[op.Object]
+	p := target(op)
+	if p == "" {
+		delete(digests, op.Object)
+		return nil
+	}
+	if op.Dir {
+		e.Kind = "dir"
+		return nil
+	}
+	f, err := fs.OpenQuiet(p)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if fi, err := f.Stat(); err == nil && fi.IsDir() {
+		e.Kind = "dir"
+		return nil
+	}
+	e.Kind = "file"
+	h := sha256.New()
+	n, err := io.Copy(h, f)
+	if err != nil {
+		return err
+	}
+	e.SHA256After = hex.EncodeToString(h.Sum(nil))
+	e.Size = &n
+	digests[op.Object] = e.SHA256After
+	streams, err := fs.Streams(p)
+	if err != nil {
+		return err
+	}
+	for _, s := range streams {
+		data, err := fs.ReadStream(p, s.Name)
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256(data)
+		e.Streams = append(e.Streams, ledger.Stream{Name: s.Name, Size: len(data), SHA256: hex.EncodeToString(sum[:])})
+	}
+	return nil
+}
+
+// Settle stamps every object in the tree with its final intended times,
+// files first and then directories deepest first, so that nothing done
+// afterwards inside a directory moves its times again. Nothing may create,
+// remove, rename or chmod anything under the root after this.
+func Settle(ctx ExecContext, tree *model.Tree) error {
+	for _, o := range tree.Settle() {
+		if err := stamp(ctx, o.Path, o.Times); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// settleRetries are the pauses before settling again when only access times
+// moved after a settle pass. With last-access updates on, anything that
+// reads the new files (an antivirus scanning a fresh .bat, a search indexer)
+// moves their access times; such readers usually finish within a second.
+var settleRetries = []time.Duration{200 * time.Millisecond, 500 * time.Millisecond, time.Second, 2 * time.Second}
+
+// afterSettle lets a test play the part of another process reading the
+// output between settling and verifying.
+var afterSettle = func(round int) {}
+
+// SettleAndVerify settles the tree and verifies it. When the only
+// differences are access times, which another process can move by reading,
+// it settles again after a pause, a few times, before giving up.
+func SettleAndVerify(ctx ExecContext, tree *model.Tree) error {
+	if err := Settle(ctx, tree); err != nil {
+		return err
+	}
+	afterSettle(0)
+	err := Verify(ctx, tree)
+	for i, pause := range settleRetries {
+		ve, ok := err.(*VerifyError)
+		if !ok || !ve.accessOnly() {
+			break
+		}
+		time.Sleep(pause)
+		if err := Settle(ctx, tree); err != nil {
+			return err
+		}
+		afterSettle(i + 1)
+		err = Verify(ctx, tree)
+	}
+	if ve, ok := err.(*VerifyError); ok && ve.accessOnly() {
+		ve.Hint = "only access times moved, again after settling " + fmt.Sprint(len(settleRetries)+1) + " times: another process (an antivirus scanner, a search indexer) keeps reading the output while this volume updates access times on read; exclude the output directory from scanning, or turn last-access updates off (fsutil behavior set disablelastaccess 1)"
+	}
+	return err
+}
+
+// Mismatch is one time that did not read back as intended.
+type Mismatch struct {
+	Path, Field string
+	Want, Got   time.Time
+}
+
+// VerifyError lists every mismatch the verify pass found.
+type VerifyError struct {
+	Mismatches []Mismatch
+	// Hint says what probably caused the mismatches.
+	Hint string
+}
+
+func (e *VerifyError) accessOnly() bool {
+	for _, m := range e.Mismatches {
+		if m.Field != "atime" {
+			return false
+		}
+	}
+	return true
+}
+
+func (e *VerifyError) Error() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d time(s) on disk differ from the scenario after settling:", len(e.Mismatches))
+	for i, m := range e.Mismatches {
+		if i == 20 {
+			fmt.Fprintf(&b, "\n  ... and %d more", len(e.Mismatches)-i)
+			break
+		}
+		fmt.Fprintf(&b, "\n  %s %s: want %s, got %s", m.Path, m.Field, m.Want.Format(time.RFC3339Nano), m.Got.Format(time.RFC3339Nano))
+	}
+	if e.Hint != "" {
+		b.WriteString("\n" + e.Hint)
+	}
+	return b.String()
+}
+
+// Verify reads back every time the scenario controls and this platform can
+// set, and reports each one that differs by the volume's resolution or more.
+// It reads metadata only, so it moves no access time.
+func Verify(ctx ExecContext, tree *model.Tree) error {
+	caps, g := ctx.Caps, ctx.FS.Granularity()
+	var bad []Mismatch
+	for _, o := range tree.Settle() {
+		got, err := ctx.FS.Times(o.Path)
+		if err != nil {
+			return err
+		}
+		check := func(field string, want, have time.Time, res time.Duration, settable bool) {
+			if !settable || want.IsZero() {
+				return
+			}
+			d := want.Sub(have)
+			if d < 0 {
+				d = -d
+			}
+			if d >= res {
+				bad = append(bad, Mismatch{o.Path, field, want, have})
+			}
+		}
+		check("atime", o.Times.Atime, got.Atime, g.Atime, true)
+		check("mtime", o.Times.Mtime, got.Mtime, g.Mtime, true)
+		check("ctime", o.Times.Ctime, got.Ctime, g.Ctime, caps.ChangeTime)
+		check("crtime", o.Times.Btime, got.Btime, g.Btime, caps.BirthTime)
+	}
+	if len(bad) > 0 {
+		return &VerifyError{Mismatches: bad}
 	}
 	return nil
 }
@@ -84,12 +374,7 @@ func executeOp(ctx ExecContext, c compile.Op) error {
 	switch op.Action {
 	case "create":
 		if c.Dir {
-			// The mode is given to MkdirAll; a directory's times are stamped
-			// without a separate chmod.
-			if err := fs.MkdirAll(target, dirModeFor(op)); err != nil {
-				return err
-			}
-			return applyTimes(fs, op, target)
+			return fs.MkdirAll(target, dirModeFor(op))
 		}
 		content, err := renderContent(op, contentOf(c))
 		if err != nil {
@@ -119,24 +404,13 @@ func executeOp(ctx ExecContext, c compile.Op) error {
 		if err := f.Close(); err != nil {
 			return err
 		}
-		return applyModeAndTimes(fs, op, target)
+		return applyMode(fs, op, target)
 
 	case "delete":
-		if err := fs.Remove(target); err != nil {
-			return err
-		}
-		// A delete's times, when given, describe the parent directory after
-		// the removal.
-		if at, mt, ok := parseTimes(op.Atime, op.Mtime); ok {
-			return fs.Chtimes(path.Dir(target), at, mt)
-		}
-		return nil
+		return fs.Remove(target)
 
 	case "mace":
-		if err := applyMode(fs, op, target); err != nil {
-			return err
-		}
-		return applyTimes(fs, op, target)
+		return applyMode(fs, op, target)
 
 	case "rename":
 		if err := fs.MkdirParent(op.NewPath); err != nil {
@@ -148,7 +422,11 @@ func executeOp(ctx ExecContext, c compile.Op) error {
 		if err := copyFile(fs, target, op.NewPath, fileModeFor(op)); err != nil {
 			return err
 		}
-		return applyModeAndTimes(fs, op, op.NewPath)
+		// Streams travel with the copy, as they do with the Windows CopyFile.
+		if err := fs.CopyStreams(target, op.NewPath); err != nil {
+			return err
+		}
+		return applyMode(fs, op, op.NewPath)
 
 	case "truncate":
 		f, err := fs.OpenFile(target, os.O_WRONLY|os.O_TRUNC, fileModeFor(op))
@@ -158,7 +436,7 @@ func executeOp(ctx ExecContext, c compile.Op) error {
 		if err := f.Close(); err != nil {
 			return err
 		}
-		return applyModeAndTimes(fs, op, target)
+		return applyMode(fs, op, target)
 
 	case "rotate":
 		if err := fs.MkdirParent(op.NewPath); err != nil {
@@ -171,18 +449,7 @@ func executeOp(ctx ExecContext, c compile.Op) error {
 		if err != nil {
 			return err
 		}
-		if err := f.Close(); err != nil {
-			return err
-		}
-		if at, mt, ok := parseTimes(op.Atime, op.Mtime); ok {
-			if err := fs.Chtimes(op.NewPath, at, mt); err != nil {
-				return err
-			}
-			if err := fs.Chtimes(target, at, mt); err != nil {
-				return err
-			}
-		}
-		return nil
+		return f.Close()
 
 	case "email":
 		return writeEmail(ctx, c, target)
@@ -199,12 +466,9 @@ func executeOp(ctx ExecContext, c compile.Op) error {
 		return writeArtifact(fs, op, target, encrypted)
 
 	case "ads":
-		if err := fs.WriteStream(target, op.Stream, contentOf(c)); err != nil {
-			return err
-		}
-		// Writing a stream updates the base file's mtime, so restore the times
-		// the operation asked for.
-		return applyTimes(fs, op, target)
+		// Writing a stream moves the base file's times on disk; the stamps
+		// after the operation put back the ones the scenario intends.
+		return fs.WriteStream(target, op.Stream, contentOf(c))
 
 	case "motw":
 		content := "[ZoneTransfer]\r\n" + fmt.Sprintf("ZoneId=%d\r\n", op.ZoneID)
@@ -214,10 +478,7 @@ func executeOp(ctx ExecContext, c compile.Op) error {
 		if op.HostURL != "" {
 			content += fmt.Sprintf("HostUrl=%s\r\n", op.HostURL)
 		}
-		if err := fs.WriteStream(target, "Zone.Identifier", []byte(content)); err != nil {
-			return err
-		}
-		return applyTimes(fs, op, target)
+		return fs.WriteStream(target, "Zone.Identifier", []byte(content))
 	}
 	return fmt.Errorf("unknown action %q", op.Action)
 }
@@ -315,25 +576,16 @@ func writeEmail(ctx ExecContext, c compile.Op, target string) error {
 	default:
 		return fmt.Errorf("unknown email format %q (want eml or mbox)", op.Format)
 	}
-
-	// A message with no explicit times inherits its own Date header, which is
-	// what an actual mail store would show.
-	if strings.TrimSpace(op.Atime) == "" && strings.TrimSpace(op.Mtime) == "" && !date.IsZero() {
-		if err := applyMode(ctx.FS, op, target); err != nil {
-			return err
-		}
-		return ctx.FS.Chtimes(target, date, date)
-	}
-	return applyModeAndTimes(ctx.FS, op, target)
+	return applyMode(ctx.FS, op, target)
 }
 
 // writeArtifact writes the file with the right permissions, creating its
-// parent, and then stamps its times.
+// parent.
 func writeArtifact(fs *sandbox.FS, op spec.Operation, target string, data []byte) error {
 	if err := fs.WriteFile(target, data, fileModeFor(op)); err != nil {
 		return err
 	}
-	return applyModeAndTimes(fs, op, target)
+	return applyMode(fs, op, target)
 }
 
 func copyFile(fs *sandbox.FS, src, dst string, mode os.FileMode) error {
@@ -357,15 +609,6 @@ func copyFile(fs *sandbox.FS, src, dst string, mode os.FileMode) error {
 	return out.Close()
 }
 
-// applyModeAndTimes chmods before stamping times: chmod itself touches ctime,
-// so doing it afterwards would disturb the timeline we just set.
-func applyModeAndTimes(fs *sandbox.FS, op spec.Operation, target string) error {
-	if err := applyMode(fs, op, target); err != nil {
-		return err
-	}
-	return applyTimes(fs, op, target)
-}
-
 func applyMode(fs *sandbox.FS, op spec.Operation, target string) error {
 	mode, ok, err := util.ParseFileMode(op.Mode)
 	if err != nil || !ok {
@@ -374,20 +617,6 @@ func applyMode(fs *sandbox.FS, op spec.Operation, target string) error {
 	// WriteFile only applies the mode when it creates the file, so an existing
 	// target needs an explicit chmod.
 	return fs.Chmod(target, mode)
-}
-
-func applyTimes(fs *sandbox.FS, op spec.Operation, target string) error {
-	at, mt, ok := parseTimes(op.Atime, op.Mtime)
-	if !ok {
-		return nil
-	}
-	if at.IsZero() {
-		at = mt
-	}
-	if mt.IsZero() {
-		mt = at
-	}
-	return fs.Chtimes(target, at, mt)
 }
 
 // fileModeFor and dirModeFor read a mode that compile has already validated.
@@ -425,17 +654,4 @@ func optionalTime(value, field string) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("%s: %w", field, err)
 	}
 	return t, nil
-}
-
-// parseTimes reads atime and mtime, which compile has already validated;
-// ok reports whether either was given.
-func parseTimes(at, mt string) (time.Time, time.Time, bool) {
-	var atT, mtT time.Time
-	if s := strings.TrimSpace(at); s != "" {
-		atT, _ = time.Parse(time.RFC3339, s)
-	}
-	if s := strings.TrimSpace(mt); s != "" {
-		mtT, _ = time.Parse(time.RFC3339, s)
-	}
-	return atT, mtT, !atT.IsZero() || !mtT.IsZero()
 }

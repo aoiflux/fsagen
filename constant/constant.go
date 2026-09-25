@@ -23,8 +23,11 @@ const (
 //
 // Version 1 matches 7accc8d for valid inputs. Version 2 draws every random
 // value from a stream keyed by the operation (prng), reads no wall clock,
-// writes empty content as empty and runs playbooks in time order.
-const GeneratorVersion = 2
+// writes empty content as empty and runs playbooks in time order. Version 3
+// sets all four times from the scenario, settles and verifies them, copies
+// streams with a copy, writes a ledger, and lists intended times in the
+// dry-run listing.
+const GeneratorVersion = 3
 
 const (
 	TxtExtension    = ".txt"

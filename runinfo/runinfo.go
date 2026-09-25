@@ -26,6 +26,7 @@ import (
 	"strings"
 
 	"github.com/aoiflux/fsagen/constant"
+	"github.com/aoiflux/fsagen/ledger"
 	"github.com/aoiflux/fsagen/sandbox"
 )
 
@@ -80,6 +81,16 @@ type Options struct {
 // operations were skipped follows from it.
 type Capabilities struct {
 	NamedStreams bool `json:"named_streams"`
+	// BirthTime and ChangeTime: the creation and metadata change times can
+	// be set. Access and modification times always can.
+	BirthTime  bool `json:"birth_time"`
+	ChangeTime bool `json:"change_time"`
+	// FilenameTimesControlled is always false: NTFS keeps a second set of
+	// times in each $FILE_NAME attribute, which no user-mode call sets.
+	FilenameTimesControlled bool `json:"filename_times_controlled"`
+	// RootTimesControlled is always false: the output directory itself is
+	// the caller's, and its times are never stamped.
+	RootTimesControlled bool `json:"root_times_controlled"`
 }
 
 // Skipped is one operation the platform could not perform, left out because
@@ -89,6 +100,9 @@ type Skipped struct {
 	Src    string `json:"src"`
 	Action string `json:"action"`
 	Path   string `json:"path"`
+	// Field is set when only one field was dropped (an explicit time the
+	// platform cannot set) and the operation itself was performed.
+	Field  string `json:"field,omitempty"`
 	Reason string `json:"reason"`
 }
 
@@ -97,6 +111,7 @@ type Outputs struct {
 	SHA256SUMS string `json:"sha256sums"` // SHA-256 of the SHA256SUMS file
 	Files      int    `json:"files"`
 	Streams    int    `json:"streams"`
+	Ledger     string `json:"ledger_sha256,omitempty"` // SHA-256 of ledger.jsonl
 }
 
 // New starts a run manifest.
@@ -123,11 +138,15 @@ type Info struct {
 	OS            string `json:"os"`
 	Arch          string `json:"arch"`
 	Filesystem    string `json:"filesystem,omitempty"`
-	Host          string `json:"host,omitempty"`
-	Output        string `json:"output"`
-	Input         string `json:"input,omitempty"`
-	Started       string `json:"started"`
-	Finished      string `json:"finished,omitempty"`
+	// LastAccess is the host's last-access-time policy (Windows'
+	// NtfsDisableLastAccessUpdate), which decides whether reading a file
+	// after the run moves its access time.
+	LastAccess string `json:"last_access_policy,omitempty"`
+	Host       string `json:"host,omitempty"`
+	Output     string `json:"output"`
+	Input      string `json:"input,omitempty"`
+	Started    string `json:"started"`
+	Finished   string `json:"finished,omitempty"`
 }
 
 // NewInfo fills in the build and platform.
@@ -177,6 +196,12 @@ func writeAtomic(dir, name string, data []byte) error {
 		return err
 	}
 	return os.Rename(tmp, filepath.Join(dir, name))
+}
+
+// WriteLedger writes ledger.jsonl into dir and returns its SHA-256.
+func WriteLedger(dir string, entries []ledger.Entry) (string, error) {
+	data := ledger.Bytes(entries)
+	return digest(data), writeAtomic(dir, ledger.FileName, data)
 }
 
 // Sums lists the SHA-256 of every file and named stream under fsys in

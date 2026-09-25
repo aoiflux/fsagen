@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/aoiflux/fsagen/sandbox"
 )
 
 func csvOf(t *testing.T, root string) string {
@@ -43,8 +45,11 @@ func TestTimelineZoneIndependent(t *testing.T) {
 	time.Local = time.FixedZone("UTC-7", -7*3600)
 	west := csvOf(t, root)
 
-	// Reading a file for its digest moves its access time (fixed in a later
-	// phase), so compare the columns that stay put, and require UTC in all.
+	// Reading a file for its digest no longer moves its access time, so the
+	// two timelines are identical, and in UTC.
+	if east != west {
+		t.Errorf("the time zone changed the timeline:\n%s\n%s", east, west)
+	}
 	for _, out := range []string{east, west} {
 		if strings.Contains(out, "+05:00") || strings.Contains(out, "-07:00") {
 			t.Errorf("local time in the timeline:\n%s", out)
@@ -96,4 +101,83 @@ func TestNoWallClockInTimeline(t *testing.T) {
 			t.Errorf("wall-clock header in:\n%s", out)
 		}
 	}
+}
+
+// TestTimelinePassKeepsAtime: building a timeline reads every file (for its
+// digest) and lists every directory, and neither moves an access time. The
+// test first shows that an ordinary read does move one on this volume, and
+// skips where it does not (last-access updates off, noatime mounts).
+func TestTimelinePassKeepsAtime(t *testing.T) {
+	root := t.TempDir()
+	fsys, err := sandbox.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fsys.Close()
+	names := []string{"d/sub/a.txt", "d/b.txt"}
+	for _, n := range names {
+		if err := fsys.WriteFile(n, []byte("content of "+n), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Date(2019, 5, 6, 7, 8, 9, 0, time.UTC)
+	all := append(names, "d/sub", "d")
+	stamp := func() {
+		for _, n := range all {
+			if err := fsys.SetTimes(n, sandbox.Times{Atime: old, Mtime: old}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	stamp()
+	if _, err := os.ReadFile(filepath.Join(root, "d", "b.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := fsys.Times("d/b.txt"); got.Atime.Equal(old) {
+		t.Skip("this volume does not update access times on read")
+	}
+	stamp()
+	if _, err := Generate(root); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range all {
+		if got, _ := fsys.Times(n); !got.Atime.Equal(old) {
+			t.Errorf("%s: the timeline pass moved the access time to %v", n, got.Atime)
+		}
+	}
+}
+
+// TestTimelineListsEveryStream: every named stream is listed, not only a
+// few well-known names.
+func TestTimelineListsEveryStream(t *testing.T) {
+	root := t.TempDir()
+	fsys, err := sandbox.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fsys.Close()
+	if !fsys.SupportsStreams() {
+		t.Skip("no named streams on this volume")
+	}
+	if err := fsys.WriteFile("a.txt", []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{"quill", "Zone.Identifier"} {
+		if err := fsys.WriteStream("a.txt", s, []byte(s)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tl, err := Generate(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range tl.Entries {
+		if e.Path == "a.txt" {
+			if strings.Join(e.ADSNames, ",") != "Zone.Identifier,quill" {
+				t.Errorf("streams = %v", e.ADSNames)
+			}
+			return
+		}
+	}
+	t.Error("a.txt missing from the timeline")
 }

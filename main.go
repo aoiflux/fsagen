@@ -21,6 +21,7 @@ import (
 
 	"github.com/aoiflux/fsagen/compile"
 	"github.com/aoiflux/fsagen/constant"
+	"github.com/aoiflux/fsagen/ledger"
 	libgenpkg "github.com/aoiflux/fsagen/libgen"
 	manifestpkg "github.com/aoiflux/fsagen/manifest"
 	"github.com/aoiflux/fsagen/model"
@@ -48,7 +49,7 @@ func capsOf(fsys *sandbox.FS) compile.Caps {
 	if capsOverride != nil {
 		return *capsOverride
 	}
-	return compile.Caps{NamedStreams: fsys.SupportsStreams()}
+	return manifestpkg.Caps(fsys)
 }
 
 // usageError marks a problem with the command line rather than the input.
@@ -368,9 +369,10 @@ func generate(c *config, absOut string, vars map[string]string, varsInput *sandb
 		AllowNonportable:     c.allowNonport,
 		AllowExternalSources: c.allowExternal,
 	}
-	rm.Capabilities.NamedStreams = caps.NamedStreams
+	rm.Capabilities = runinfo.Capabilities{NamedStreams: caps.NamedStreams, BirthTime: caps.BirthTime, ChangeTime: caps.ChangeTime}
 	rinfo := runinfo.NewInfo()
 	rinfo.Filesystem = probe.FilesystemName()
+	rinfo.LastAccess = runinfo.LastAccessPolicy()
 	rinfo.Output = absOut
 	rinfo.Started = time.Now().UTC().Format(time.RFC3339Nano)
 	if c.intoExisting {
@@ -396,10 +398,13 @@ func generate(c *config, absOut string, vars map[string]string, varsInput *sandb
 			rm.Reproducible = false
 		}
 		for i, op := range prog.Ops {
+			src := op.Src
+			src.File = filepath.Base(src.File)
 			if op.Skip != "" {
-				src := op.Src
-				src.File = filepath.Base(src.File)
 				rm.Skipped = append(rm.Skipped, runinfo.Skipped{Op: i + 1, Src: src.String(), Action: op.Action, Path: op.Path, Reason: op.Skip})
+			}
+			for _, f := range op.Dropped {
+				rm.Skipped = append(rm.Skipped, runinfo.Skipped{Op: i + 1, Src: src.String(), Action: op.Action, Path: op.Path, Field: f, Reason: f + " cannot be set on this platform or volume"})
 			}
 		}
 	} else {
@@ -433,20 +438,39 @@ func generate(c *config, absOut string, vars map[string]string, varsInput *sandb
 	}
 
 	fmt.Fprintln(stdout, "Generating artifacts...")
+	var (
+		ectx      manifestpkg.ExecContext
+		ledgerSum string
+	)
 	if mode == "bulk" {
 		start, _ := time.Parse(time.RFC3339, rm.Options.BulkStart)
 		err = libgenpkg.Generate(fsys, c.bulk, c.depth, libgenpkg.Options{Seed: c.seed, Start: start})
 	} else {
-		err = manifestpkg.Execute(manifestpkg.ExecContext{FS: fsys, Sources: prog.Sources}, prog.Ops)
+		ectx = manifestpkg.ExecContext{FS: fsys, Sources: prog.Sources, Caps: caps}
+		var entries []ledger.Entry
+		entries, err = manifestpkg.Execute(ectx, prog.Ops)
 		rm.Sources = prog.Sources.Inputs()
+		// The ledger is written even when the run fails: it says how far the
+		// run got.
+		sum, lerr := runinfo.WriteLedger(metaDir, entries)
+		if lerr != nil && err == nil {
+			err = fmt.Errorf("write %s: %w", ledger.FileName, lerr)
+		}
+		ledgerSum = sum
 	}
+	// Digests are read before the settle pass, which puts back any access
+	// time the reads moved.
 	if err == nil {
 		var out runinfo.Outputs
 		if out, err = runinfo.WriteSums(metaDir, fsys); err == nil {
+			out.Ledger = ledgerSum
 			rm.Outputs = &out
 		} else {
 			err = fmt.Errorf("write %s: %w", runinfo.SumsFileName, err)
 		}
+	}
+	if err == nil && mode != "bulk" {
+		err = manifestpkg.SettleAndVerify(ectx, prog.Model)
 	}
 	rinfo.Finished = time.Now().UTC().Format(time.RFC3339Nano)
 	if ierr := rinfo.Write(metaDir); ierr != nil && err == nil {
