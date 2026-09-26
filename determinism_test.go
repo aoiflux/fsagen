@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/aoiflux/fsagen/compile"
+	"github.com/aoiflux/fsagen/constant"
 	"github.com/aoiflux/fsagen/ledger"
 	"github.com/aoiflux/fsagen/runinfo"
 	"github.com/aoiflux/fsagen/sandbox"
@@ -150,6 +151,12 @@ func TestSidecarRecords(t *testing.T) {
 	rm := readManifest(t, out+".fsagen")
 	if rm.Outputs == nil || rm.Outputs.SHA256SUMS != sha([]byte(sums)) || rm.Outputs.Files != 2 {
 		t.Errorf("outputs = %+v", rm.Outputs)
+	}
+	// N-9: deflated, JPEG and SQLite bytes come from the toolchain, so a
+	// corpus is only reproducible next to the version that made it.
+	if rm.GoVersion != runtime.Version() || rm.GeneratorVersion != constant.GeneratorVersion {
+		t.Errorf("run manifest records Go %q and generator %d, want %q and %d",
+			rm.GoVersion, rm.GeneratorVersion, runtime.Version(), constant.GeneratorVersion)
 	}
 	raw := sidecar(t, out, runinfo.FileName)
 	if bytes.Contains(raw, []byte(filepath.ToSlash(dir))) || bytes.Contains(raw, []byte(strings.ReplaceAll(dir, `\`, `\\`))) {

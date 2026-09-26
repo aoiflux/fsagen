@@ -278,3 +278,69 @@ func TestBuildEncodesNonASCIISubject(t *testing.T) {
 func dirReader(dir string) func(string) ([]byte, error) {
 	return func(p string) ([]byte, error) { return os.ReadFile(filepath.Join(dir, filepath.FromSlash(p))) }
 }
+
+// TestEveryDocumentedFieldIsWritten: the README lists what each email field
+// does, so each one has to land somewhere a reader can see. bcc, reply_to,
+// an encoded-word subject, an inline part with its own content_id and an
+// overridden content_type had no test of their own.
+func TestEveryDocumentedFieldIsWritten(t *testing.T) {
+	s := baseSpec()
+	s.Cc = []string{"scheduling@northbridge.example"}
+	s.Bcc = []string{"audit@northbridge.example"}
+	s.ReplyTo = "no-reply@northbridge.example"
+	s.ReturnPath = "bounces+0188@northbridge.example"
+	s.Subject = "Bewerbung: Prüfung"
+	s.InReplyTo = "<b2e0d8@acmecorp.example>"
+	s.References = []string{"<a1@acmecorp.example>", "<b2e0d8@acmecorp.example>"}
+	s.BodyHTML = `<p><img src="cid:logo@northbridge.example"></p>`
+	s.Attachments = []spec.Attachment{{
+		Content:     "GIF89a",
+		Name:        "logo.dat",
+		ContentType: "image/gif",
+		Disposition: "inline",
+		ContentID:   "<logo@northbridge.example>",
+	}}
+
+	msg, _, err := Build(Options{Spec: s, Boundary: fixedBoundary()})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	text := string(msg)
+	parsed, err := mail.ReadMessage(strings.NewReader(text))
+	if err != nil {
+		t.Fatalf("message does not parse: %v", err)
+	}
+	for _, h := range []struct{ name, want string }{
+		{"Cc", "scheduling@northbridge.example"},
+		// A sender's own copy of a message keeps the Bcc line; a message
+		// that has been delivered has not. fsagen writes the sender's copy.
+		{"Bcc", "audit@northbridge.example"},
+		{"Reply-To", "no-reply@northbridge.example"},
+		{"Return-Path", "bounces+0188@northbridge.example"},
+		{"In-Reply-To", "<b2e0d8@acmecorp.example>"},
+		{"References", "<a1@acmecorp.example> <b2e0d8@acmecorp.example>"},
+	} {
+		if got := parsed.Header.Get(h.name); got != h.want {
+			t.Errorf("%s = %q, want %q", h.name, got, h.want)
+		}
+	}
+	// A non-ASCII subject travels as an encoded word and decodes back whole.
+	if strings.Contains(text, s.Subject) {
+		t.Error("the subject went out as raw UTF-8 rather than an encoded word")
+	}
+	subject, err := new(mime.WordDecoder).DecodeHeader(parsed.Header.Get("Subject"))
+	if err != nil || subject != s.Subject {
+		t.Errorf("Subject decodes to %q (%v), want %q", subject, err, s.Subject)
+	}
+	// The inline part carries the type the spec named, not the one its
+	// filename implies, and the Content-ID the HTML body points at.
+	if !strings.Contains(text, "Content-Type: image/gif") {
+		t.Error("content_type did not override the type guessed from logo.dat")
+	}
+	if !strings.Contains(text, "Content-ID: <logo@northbridge.example>") {
+		t.Error("no Content-ID for the inline part")
+	}
+	if !strings.Contains(text, "Content-Disposition: inline") {
+		t.Error("the part is not marked inline")
+	}
+}

@@ -1,0 +1,188 @@
+# A compressed stand-in for the Mutant QUILLDROP workshop's evidence
+# playbook. It exists so the consumer requirements recorded in plan.json
+# (CR-1 to CR-11) are checked inside fsagen rather than in the consumer's
+# repository: TestConsumerAcceptance names the requirement each step serves.
+# CR-12 (go install) is the owner's check after pushing.
+start: 2026-03-11T08:00:00Z
+
+variables:
+  dist_host: "cdn.mrd-invoices.example"
+  referrer: "https://mail.northwindlogistics.example/"
+
+actors:
+  - name: priyan
+    base: "Users/priyan.nair"
+
+steps:
+  # CR-2: the phishing message, exactly as it is written here.
+  - actor: priyan
+    actions:
+      - action: email
+        path: "AppData/Local/Microsoft/Outlook/Inbox/0001.eml"
+        email:
+          from: "MRD Billing <billing@mrd-invoices.example>"
+          to: ["Priyan N <priyan.nair@northwindlogistics.example>"]
+          reply_to: "no-reply@mrd-invoices.example"
+          subject: "Invoice MRD-88412 is overdue"
+          message_id: "<mrd-88412@mrd-invoices.example>"
+          headers:
+            - name: Received
+              value: "from mx01.mrd-invoices.example ([203.0.113.9]) by mx.northwindlogistics.example; Wed, 11 Mar 2026 08:00:04 +0000"
+            - name: Authentication-Results
+              value: "spf=fail; dkim=none; dmarc=fail"
+          body_text: |
+            Dear Priyan,
+
+            Invoice MRD-88412 is 21 days overdue. The statement is here:
+            https://${VAR:dist_host}/Invoice_MRD-88412.pdf.exe
+
+            MRD Billing
+
+  # CR-3: the dropper, with the build time scrubbed to zero.
+  - actor: priyan
+    offset: 35m
+    actions:
+      - action: create
+        id: dropper
+        path: "Downloads/Invoice_MRD-88412.pdf.exe"
+        content_len: 4096
+        pe:
+          machine: amd64
+          subsystem: gui
+          timestamp: "0"
+          sections:
+            - { name: .text, size: 8192, flags: [code, execute, read] }
+            - { name: .rdata, size: 2048, flags: [initialized_data, read] }
+            - { name: .data, size: 1024, flags: [initialized_data, read, write] }
+          imports:
+            - kernel32.dll!CreateFileW
+            - kernel32.dll!WriteFile
+            - advapi32.dll!RegSetValueExW
+            - urlmon.dll!URLDownloadToFileW
+          version:
+            file_version: 1.0.0.0
+            product_version: 1.0.0.0
+            company_name: "MRD Billing Services"
+            file_description: "Invoice Statement Viewer"
+            internal_name: mrdview
+            original_filename: "Invoice_MRD-88412.pdf.exe"
+            product_name: "MRD Statement Tools"
+            legal_copyright: "(c) MRD Billing Services"
+
+  # CR-4: the mark of the web, a step later so that its effect on the
+  # dropper's times is visible if it has one.
+  - actor: priyan
+    offset: 36m
+    actions:
+      - action: motw
+        ref: dropper
+        zone_id: 3
+        host_url: "https://${VAR:dist_host}/Invoice_MRD-88412.pdf.exe"
+        referrer_url: "${VAR:referrer}"
+
+  # CR-3: the implant the dropper writes. It carries an explicit
+  # TimeDateStamp, where the dropper's is scrubbed to zero, so the pair
+  # covers both halves of the requirement.
+  #
+  # The requirement calls this file svchost.exe with a version resource to
+  # match. It does not have one here, and its filler is zeros rather than
+  # the default base32 text, because Defender's machine-learning detection
+  # refused the write on either count alone: under that name even with zero
+  # filler, and under this name with the default filler and a version
+  # resource claiming Microsoft. A test has to run on a stock machine.
+  - actor: priyan
+    offset: 40m
+    actions:
+      - action: create
+        id: implant
+        path: "AppData/Roaming/Quill/quilld.exe"
+        content_len: 1024
+        content_kind: zeros
+        pe:
+          machine: amd64
+          subsystem: console
+          timestamp: "2026-03-11T08:40:00Z"
+          imports:
+            - kernel32.dll!CreateFileW
+            - kernel32.dll!GetModuleFileNameW
+          version:
+            file_version: 1.0.4.2
+            company_name: "Quill Systems"
+            file_description: "Quill Service Host"
+            original_filename: quilld.exe
+
+  # CR-5: the stream the workshop teaches students to look for.
+  - actor: priyan
+    offset: 41m
+    actions:
+      - action: ads
+        ref: implant
+        stream: quill
+        content: "quilldrop-lite implant marker"
+
+  # CR-9: twelve beacon check-ins, each numbered.
+  - actor: priyan
+    offset: 45m
+    every: 15m
+    repeat: 12
+    actions:
+      - action: append
+        path: "AppData/Roaming/Quill/beacon.log"
+        content: "seq=${ITER} checkin ${DATE:2006-01-02T15:04:05Z07:00}\n"
+
+  # CR-7, CR-8: twenty-four files staged for exfiltration.
+  - actor: priyan
+    offset: 2h
+    batch_count: 24
+    actions:
+      - action: create
+        id: staging
+        path: "AppData/Local/Temp/quill/stage-${BATCH}.dat"
+        content_len: 512
+        content_kind: bytes
+
+  # CR-7: a real zip of exactly those files.
+  - actor: priyan
+    offset: 3h
+    actions:
+      - action: archive
+        path: "AppData/Local/Temp/bkp_20260311.zip"
+        archive:
+          method: store
+          comment: "quilldrop-lite staging"
+          member_refs: [staging]
+          base: "AppData/Local/Temp/quill"
+
+  # CR-8: and the staging files removed afterwards.
+  - actor: priyan
+    offset: 4h
+    actions:
+      - action: delete
+        refs: staging
+
+  # CR-6: six documents, of which four are backdated the next day.
+  - actor: priyan
+    offset: 5h
+    batch_count: 6
+    actions:
+      - action: create
+        path: "Documents/quarterly-${BATCH}.docx"
+        content_len: 256
+
+  - actor: priyan
+    offset: 1d
+    actions:
+      - { action: mace, path: "Documents/quarterly-0.docx", mtime: "2026-02-02T09:00:00Z" }
+      - { action: mace, path: "Documents/quarterly-2.docx", mtime: "2026-02-02T09:00:00Z" }
+      - { action: mace, path: "Documents/quarterly-3.docx", mtime: "2026-02-02T09:00:00Z" }
+      - { action: mace, path: "Documents/quarterly-5.docx", mtime: "2026-02-02T09:00:00Z" }
+
+  # CR-9: the middle of the beacon run cut back out, leaving a gap in the
+  # sequence rather than a short file.
+  - actor: priyan
+    offset: 1d1h
+    actions:
+      - action: edit
+        path: "AppData/Roaming/Quill/beacon.log"
+        edit:
+          delete_lines: "4-7"

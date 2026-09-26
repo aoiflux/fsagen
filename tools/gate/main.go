@@ -2,11 +2,12 @@
 //
 //	go run ./tools/gate
 //
-// It runs go vet, a line-ending-insensitive gofmt check, the tests (with the
-// race detector where cgo is available; the product itself never needs cgo),
-// and CGO_ENABLED=0 builds for windows, linux, darwin and freebsd on amd64 and
-// arm64. Setting GOOS/GOARCH for the child builds is how cross-compiling
-// works; fsagen itself reads no environment variables.
+// It runs go vet, a line-ending-insensitive gofmt check, a go.mod tidiness
+// check, the tests (with the race detector where cgo is available; the
+// product itself never needs cgo), and CGO_ENABLED=0 builds for windows,
+// linux, darwin and freebsd on amd64 and arm64. Setting GOOS/GOARCH for the
+// child builds is how cross-compiling works; fsagen itself reads no
+// environment variables.
 package main
 
 import (
@@ -33,6 +34,9 @@ func main() {
 
 	step("go vet ./...", run(nil, "go", "vet", "./..."))
 	step("gofmt", gofmtCheck())
+	// -diff reports what tidying would change without changing it, so the
+	// README's claim that every dependency is used stays true.
+	step("go mod tidy", run(nil, "go", "mod", "tidy", "-diff"))
 
 	race := raceAvailable()
 	args := []string{"test", "-count=1", "./..."}

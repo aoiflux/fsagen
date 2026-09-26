@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 
@@ -117,6 +118,79 @@ var exampleChecks = map[string]func(t *testing.T, root string, fsys *sandbox.FS)
 	"manifest-basic": func(t *testing.T, root string, _ *sandbox.FS) {
 		mustExist(t, root, "media/videos/sample-renamed.mp4")
 		mustNotExist(t, root, "media/videos/sample.mp4", "docs/readme.txt")
+	},
+	"manifest-bulk-simple": func(t *testing.T, root string, _ *sandbox.FS) {
+		// The same deployment on five computers and a network share: every
+		// .exe is a PE a tool can read and every .eml a message it can
+		// parse, which is the whole point of the example.
+		exes := globAll(t, root, "*", "*", "*.exe")
+		if len(exes) != 17 {
+			t.Errorf("%d executables, want 17", len(exes))
+		}
+		for _, p := range exes {
+			data, err := os.ReadFile(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f, err := pe.NewFile(bytes.NewReader(data))
+			if err != nil {
+				t.Errorf("%s is not a PE: %v", filepath.Base(p), err)
+				continue
+			}
+			f.Close()
+		}
+		emls := globAll(t, root, "*", "*", "*.eml")
+		if len(emls) != 16 {
+			t.Errorf("%d messages, want 16", len(emls))
+		}
+		for _, p := range emls {
+			data, err := os.ReadFile(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := mail.ReadMessage(bytes.NewReader(data)); err != nil {
+				t.Errorf("%s is not a message: %v", filepath.Base(p), err)
+			}
+		}
+		// ${SEQ} counts every action, so the five installers are five
+		// different files rather than one name written five times.
+		names := map[string]bool{}
+		for _, p := range globAll(t, root, "*", "temp", "installer-*.exe") {
+			names[filepath.Base(p)] = true
+		}
+		if len(names) != 5 {
+			t.Errorf("the ${SEQ} installers are named %v, want five distinct names", names)
+		}
+	},
+	"playbook-comprehensive-ransomware": func(t *testing.T, root string, _ *sandbox.FS) {
+		victim := "C/Users/victim"
+		// batch_count: 50 encrypts 50 files; the second action only runs on
+		// odd batch indices, so it adds 25 more.
+		important, _ := filepath.Glob(filepath.Join(root, filepath.FromSlash(victim), "Desktop", "IMPORTANT_*.txt.encrypted"))
+		all, _ := filepath.Glob(filepath.Join(root, filepath.FromSlash(victim), "Desktop", "*.encrypted"))
+		if len(important) != 50 || len(all) != 75 {
+			t.Errorf("%d IMPORTANT_ files and %d encrypted files, want 50 and 75", len(important), len(all))
+		}
+		// repeat: 5 with condition: even runs on iterations 0, 2 and 4, and
+		// batch_count: 3 makes three of each per iteration.
+		docx, _ := filepath.Glob(filepath.Join(root, filepath.FromSlash(victim), "AppData/Local/staging", "*.docx"))
+		xlsx, _ := filepath.Glob(filepath.Join(root, filepath.FromSlash(victim), "AppData/Local/staging", "*.xlsx"))
+		if len(docx) != 9 || len(xlsx) != 9 {
+			t.Errorf("%d staged .docx and %d .xlsx, want 9 and 9", len(docx), len(xlsx))
+		}
+		// The archive of them, and the upload log, are covered up; the first
+		// recon file is emptied rather than removed.
+		mustNotExist(t, root, victim+"/AppData/Local/staging/archive-RW2024-A.zip", victim+"/AppData/Local/Temp/upload.log")
+		if b := read(t, root, victim+"/AppData/Local/Temp/recon-0.txt"); len(b) != 0 {
+			t.Errorf("the truncated recon file holds %d bytes", len(b))
+		}
+		if b := read(t, root, victim+"/AppData/Local/Temp/recon-1.txt"); len(b) == 0 {
+			t.Error("truncate emptied a file it was not aimed at")
+		}
+		note := string(read(t, root, victim+"/Desktop/README_RW2024-A.txt"))
+		if !strings.HasPrefix(note, "YOUR FILES HAVE BEEN ENCRYPTED\n\n") || !strings.Contains(note, "Campaign: RW2024-A") {
+			t.Errorf("the ransom note is not the written text with real line breaks: %q", note)
+		}
 	},
 	"playbook-basic": func(t *testing.T, root string, _ *sandbox.FS) {
 		for _, p := range []string{"users/alice/docs/report-0.txt", "users/alice/docs/report-1.txt"} {
@@ -345,6 +419,18 @@ func TestExamples(t *testing.T) {
 			}
 		})
 	}
+}
+
+// globAll collects every path matching a pattern built from parts, joined
+// under root with the platform's separator.
+func globAll(t *testing.T, root string, parts ...string) []string {
+	t.Helper()
+	got, err := filepath.Glob(filepath.Join(append([]string{root}, parts...)...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(got)
+	return got
 }
 
 func read(t *testing.T, root, p string) []byte {

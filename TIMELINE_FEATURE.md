@@ -82,7 +82,8 @@ streams, the change/birth split), `manifest/timeline_test.go` (the modelled
 timeline and answer key from real runs, including
 `TestModelledMatchesObserved`), `sandbox/times_linux_test.go` (statx birth
 times), and the goldens of every example's modelled bodyfile under
-`testdata/golden/v<generator version>/<os>/bodyfile`.
+`testdata/golden/v<generator version>/<os>/bodyfile`. `docs/testing.md` maps
+each timeline finding in the audit brief to the test that closes it.
 
 ## Known limits
 

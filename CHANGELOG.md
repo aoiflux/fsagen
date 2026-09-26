@@ -1,5 +1,174 @@
 # Changelog
 
+## Unreleased: P5, packaging, platform and documentation
+
+Generator version: **5**, unchanged. Nothing fsagen writes changes in this
+phase. What changes is what it can be held to: an acceptance scenario for the
+consumer that prompted the audit, an index of which test closes which
+finding, and documentation with the platform matrix and the limits it had
+been leaving to the reader.
+
+### An acceptance scenario for the consumer
+
+`testdata/acceptance/quilldrop-lite.playbook.yaml` is a compressed stand-in
+for the evidence playbook of the Mutant QUILLDROP workshop, whose audit brief
+is `plan.json`. `TestConsumerAcceptance` runs it once and checks eleven
+things against the one corpus, a subtest per requirement:
+
+- **CR-1** the `--timeline` file named `.body` is a bodyfile: eleven
+  pipe-separated fields per record, every path rooted at `/`.
+- **CR-2** the phishing message is what the playbook wrote, to the byte:
+  CRLF throughout, `net/mail` reads it, the quoted-printable body decodes
+  back to the text with `${VAR:dist_host}` substituted, and the author's
+  `Received:` chain is still the first thing in the file.
+- **CR-3** both executables parse with `debug/pe`; the dropper keeps the
+  scrubbed `timestamp: "0"` rather than the action's own time, the implant
+  keeps the one it was given, each carries the overlay its `content_len`
+  asked for, and the sections are the sizes the scenario named.
+- **CR-4** the mark of the web holds the rendered `HostUrl` and
+  `ReferrerUrl`, and the dropper's four times are still those of the create a
+  minute earlier.
+- **CR-5** the implant's `quill` stream has its own bodyfile record, with its
+  size.
+- **CR-6** exactly four objects end with a modification time before their
+  creation time, in the answer key and on disk.
+- **CR-7** the archive is a zip whose twenty-four members are the staged
+  files in creation order, each one's CRC-32 checked by reading it, each
+  one's bytes and size equal to what the answer key says was staged, each one
+  dated when the scenario staged it rather than when the zip was written.
+- **CR-8** all twenty-four staging files are gone from disk and recorded as
+  deleted.
+- **CR-9** the beacon log has a hole in its sequence numbers, not a short
+  tail: 0, 1, 2, 7, 8, 9, 10, 11.
+- **CR-10** two further runs give identical `SHA256SUMS` and identical
+  modelled bodyfiles, and the modelled one still lists the deleted files.
+- **CR-11** with named streams taken away, the run refuses before creating
+  its output directory, names `[ads]` and `[motw]`, and suggests
+  `--on-unsupported=skip`; with that flag it completes and records the two
+  skips in schedule order.
+
+CR-12 (`go install github.com/aoiflux/fsagen@latest`) has no test; it is the
+owner's check after pushing.
+
+Two deviations from the requirement as written, both recorded in
+`docs/testing.md`. The first: the implant is called `quilld.exe`, with a
+version resource naming its own vendor and `content_kind: zeros` for its
+filler, where the requirement asks for `svchost.exe`. Defender's
+machine-learning detection refused that write on each count on its own —
+under the name `svchost.exe` even with zero filler, and under a neutral name
+with the default base32 filler and a version resource claiming Microsoft —
+and its verdict is not stable, since it allowed and then refused the same
+bytes minutes apart. A test has to run on a stock machine, so the fixture
+gives up the masquerade and keeps what CR-3 actually asks for: two PEs, one
+with a scrubbed build time and one with an explicit one. Where an antivirus
+does delete a generated file anyway, the test skips with that reason rather
+than reporting a defect; the run itself still fails loudly, which
+`TestFailedRunMarksSidecarFailed` covers. The second deviation:
+`content_len` is the overlay, not the whole file, which is what it has meant
+since P4.
+
+### docs/testing.md
+
+Every one of the 64 findings in `plan.json`, the nine the re-verification
+added, and all twelve consumer requirements, each beside the test that fails
+if its fix is undone. Where nothing can test a finding the row says so: the
+MIT `LICENSE` either exists or it does not, `go install` is the owner's
+check, and darwin and freebsd are cross-built on every change and have never
+been run.
+
+Two tests keep the index from rotting. `TestDocumentedTestsExist` walks the
+tree for test declarations and fails if `README.md`, `TIMELINE_FEATURE.md` or
+`docs/testing.md` names one that no longer exists — it found one already, a
+P4 rename. `TestEveryFindingHasARow` fails if a finding has no row.
+`CHANGELOG.md` is deliberately not checked: it records what was true when
+each phase landed, including the names tests had then.
+
+### Documentation
+
+- **Platform support** is a section of its own now, with a matrix of what can
+  be done on NTFS or ReFS, on FAT or exFAT, on Linux, and on the two
+  platforms that are only ever compiled. It says where the suite has actually
+  run, down to the build numbers.
+- **Limits** is a section of its own, and gained the things that were
+  missing: NTFS tunneling on a `rotate` and why the settle pass beats it;
+  that an observed timeline is not reproducible by construction; that a
+  generated PE holds no code; and the list of what fsagen does not generate
+  at all (registry hives, EVTX, LNK, Prefetch, `$Recycle.Bin`, disk images).
+  It also records that Defender has refused PE writes twice now, and that the
+  acceptance scenario uses `content_kind: zeros` because of it.
+- **Every email field** is documented, in a table: `bcc`, `reply_to`,
+  `body_text`, `body_html`, and an attachment's `content`, `content_type`,
+  `disposition` and `content_id` had no entry. Nor did they have a test, so
+  they have one: `TestEveryDocumentedFieldIsWritten`. Documenting
+  `message_id` truthfully needed a correction — the `email` action writes one
+  only when the scenario gives it; it is `template: email` that draws one.
+- **Dependencies**: what each of the five direct modules is for, and why the
+  standard library does not cover it.
+- The timestamp limits moved out of *Timestamps* into *Limits*, which leaves
+  that section the rules and the verification, and `TIMELINE_FEATURE.md`
+  points at the new index.
+
+### Smaller things
+
+- The gate runs `go mod tidy -diff`, so "every dependency is used" is
+  checked rather than asserted.
+- `TestExamples` now has an assertion for all fifteen examples, not thirteen:
+  `manifest-bulk-simple` (seventeen PEs and sixteen messages all parse, and
+  `${SEQ}` gives the five installers five different names) and
+  `playbook-comprehensive-ransomware` (fifty encrypted files plus the
+  twenty-five the odd-batch condition adds, nine staged documents of each
+  kind, the archive and upload log covered up, the truncated recon file empty
+  while its neighbour is not, and a ransom note with real line breaks).
+- `TestSidecarRecords` checks that the run manifest records the Go and
+  generator versions, which is what the determinism contract leans on
+  (N-9).
+- `examples/INVESTIGATION_WORKFLOW.md` said "MACE timestamp manipulation"
+  where the playbook backdates the staging directory.
+
+### Evidence that each test can fail
+
+22 mutations, 22 killed, none survived. Each breaks one thing this phase
+added or documented and runs the test that should notice.
+
+| Area | Mutation | Test |
+|---|---|---|
+| F-DOC-1 | `Bcc` is never written | TestEveryDocumentedFieldIsWritten |
+| F-DOC-1 | `Reply-To` is never written | TestEveryDocumentedFieldIsWritten |
+| F-DOC-1 | an inline part gets no `Content-ID` | TestEveryDocumentedFieldIsWritten |
+| F-DOC-1 | `content_type` is ignored and the filename decides | TestEveryDocumentedFieldIsWritten |
+| F-DOC-1 | `disposition` is always `attachment` | TestEveryDocumentedFieldIsWritten |
+| F-DOC-1 | a non-ASCII subject goes out as raw UTF-8 | TestEveryDocumentedFieldIsWritten |
+| CR-2 | author headers are written after the structured ones | TestConsumerAcceptance |
+| CR-1 | a `.body` name is written as CSV | TestConsumerAcceptance |
+| CR-4 | writing a stream moves the base file's times | TestConsumerAcceptance |
+| CR-6 | no `mtime_before_crtime` facts are derived | TestConsumerAcceptance |
+| CR-7 | `base` is not stripped from a member's stored name | TestConsumerAcceptance |
+| CR-7 | a member is dated when the archive was written | TestConsumerAcceptance |
+| CR-8 | a deletion is recorded as a modification | TestConsumerAcceptance |
+| CR-9 | `delete_lines` leaves the lines in place | TestConsumerAcceptance |
+| CR-9 | `${ITER}` always renders as the first iteration | TestConsumerAcceptance |
+| CR-11 | `motw` is not reported as unsupported | TestConsumerAcceptance |
+| F-DOC-2 | an action `condition` never filters a batch | TestExamples |
+| F-DOC-2 | `${SEQ}` is the same number for every action | TestExamples |
+| N-9 | the run manifest does not record the Go version | TestSidecarRecords |
+| F-PLAT-6 | docs/testing.md cites a test that was renamed | TestDocumentedTestsExist |
+| F-PLAT-6 | the README cites a test that does not exist | TestDocumentedTestsExist |
+| F-PLAT-6 | a finding has no row in docs/testing.md | TestEveryFindingHasARow |
+
+The first aim of the author-header mutation moved only `Return-Path`, which
+the acceptance message does not set, so it changed nothing and was re-aimed
+at the whole block. One other mutation renamed a function and broke the
+build rather than the behaviour; it was replaced by one that makes
+`delete_lines` a no-op.
+
+### Where it ran
+
+Gate green on Windows 11, including the new `go mod tidy -diff` step. The
+suite passes on Windows 10 (19045, NTFS): 306 tests, 4 skipped, none failed,
+the skips being the three POSIX-mode tests and `mactime`, which is not
+installed there. macOS and FreeBSD are cross-built and were not run, which
+the README now states rather than implies.
+
 ## Unreleased: P4, artefacts forensic tools can actually parse
 
 Generator version: **5**. Every file whose extension promises a format now

@@ -344,6 +344,30 @@ bodies and attachments). Writes a `.eml`, or appends to a `.mbox` with mboxrd
                                           # whatever it was named
 ```
 
+Every field:
+
+| Field | Meaning |
+|---|---|
+| `from` | the sender; one address, with or without a display name |
+| `to`, `cc`, `bcc` | lists of addresses; `bcc` is written into the file, as a message in a sender's own mailbox has it |
+| `reply_to`, `return_path` | `Reply-To:` and `Return-Path:` |
+| `subject` | `Subject:`; non-ASCII is encoded-word wrapped |
+| `date` | RFC3339 in, RFC 5322 out, and the file's times; defaults to the scheduled time |
+| `message_id`, `in_reply_to`, `references` | the threading headers; each is written only when given, so a thread that needs `Message-ID:` states it (`template: email` draws one from the operation's random stream instead) |
+| `headers` | an ordered list of `{name, value}` written before everything else |
+| `body_text`, `body_html` | the bodies, inline |
+| `body_text_file`, `body_html_file` | the same, read from a file beside the YAML |
+| `attachments` | see below |
+
+An attachment names its bytes in one of four ways, exactly one per entry:
+`source_file` (beside the YAML), `source_root` (a path in the output root an
+earlier step wrote), `ref` (the one live path under an id, whatever it ended
+up being called), or `content` (inline literal). `name` is the filename the
+recipient sees, `content_type` overrides the type guessed from that name,
+`disposition` is `attachment` (the default) or `inline`, and `content_id`
+gives an inline part the `Content-ID:` an HTML body refers to with `cid:`. Every one of these fields is checked in
+`TestEveryDocumentedFieldIsWritten`.
+
 Author-supplied `headers` are emitted first, in order, then the structured
 fields — so a `Received:` chain and `Authentication-Results` land where a real
 MTA would have written them. A header value that already contains newlines
@@ -476,45 +500,12 @@ to the second; otherwise to the microsecond
 The ledger and the modelled timeline keep the fractions the scenario asked
 for either way.
 
-What can be set:
-
-| | Windows (NTFS, ReFS) | Windows (FAT, exFAT) | Linux |
-|---|---|---|---|
-| access, modification | yes | yes | yes |
-| creation (`crtime`) | yes | yes | no |
-| change (`ctime`) | yes | no (not stored) | no |
-
 A time the platform cannot set is never faked: if the input asks for it, the
 run stops before writing (or, with `--on-unsupported=skip`, drops the field
 and records it in the run manifest); if the scenario only implies it, the
-ledger lists it as uncontrolled. macOS and FreeBSD take the Linux column's
-code path, but no test has run there.
-
-Limits:
-
-- NTFS keeps a second set of times in each `$FILE_NAME` attribute, which no
-  user-mode call can set. The run manifest says `filename_times_controlled:
-  false`.
-- The output directory's own times are never set (`root_times_controlled:
-  false`).
-- With last-access updates on (`NtfsDisableLastAccessUpdate`, recorded in
-  `run-info.json`), anything that reads the output afterwards moves its access
-  times. fsagen's own reads (digests, the ledger, the timeline) leave them
-  alone. If another process reads files while the run settles, fsagen settles
-  again a few times before failing, and the error says so.
-- `mode` is applied when a file is written; times are stamped after it, so a
-  chmod does not disturb them. Windows honours only the write bit; the field
-  matters on Linux output. An explicit `mode` on a directory `create` is for
-  that directory; missing parents get the default `0755`.
-- Other software can change the output after fsagen finishes. On Windows 10,
-  Windows Search adds an `OECustomProperty` stream to `.eml` files in indexed
-  folders (the user profile outside `AppData`) within seconds, and holds it
-  open while it does; Defender's machine-learning detection has flagged
-  fsagen itself (`Trojan:Win32/Bearfoos.B!ml`) while it wrote the persistence
-  artifacts of `playbook-malware-lifecycle.yaml`, and removes files it
-  suspects. Generate into a folder that is neither indexed nor scanned; the
-  ledger, answer key and modelled timeline describe what fsagen wrote either
-  way.
+ledger lists it as uncontrolled. Which platform can set which time is in
+*Platform support*; what fsagen cannot control at all, and what can disturb
+the output after the run, is in *Limits*.
 
 Verified by `TestCreateSetsCreationTime`, `TestMaceSetsFourTimes`,
 `TestMaceLeavesUnnamedTimes`, `TestQuilldropLiteStompCount`,
@@ -577,12 +568,99 @@ Verified by `TestDeterminismHarness` (every example and bulk mode, two runs
 into different directories, and a different seed), the version-pinned goldens
 (`TestExampleContentGoldens`, which also pins each example's ledger, answer
 key and modelled bodyfile, and `TestDryRunGoldens`), `TestBulkDeterministic`,
-`TestNoWallClockInContent`, `TestInsertingUnrelatedActionLeavesOtherFilesUnchanged`
+`TestNoWallClockInContent`, `TestInsertingUnrelatedActionLeavesOtherFilesUnchanged`,
 `TestModelledTimelineIdenticalAcrossRuns` and
 `TestCrossCapabilityContentEquality`. The whole suite has been run on Windows
 11, Windows 10 and Fedora 40 (Linux goldens recorded there: every file is
 byte-identical to Windows, less the NTFS streams). macOS and FreeBSD are
 built by the gate but have never been run.
+
+## Platform support
+
+fsagen builds with `CGO_ENABLED=0` for Windows, Linux, macOS and FreeBSD on
+amd64 and arm64, and `go run ./tools/gate` compiles all eight. What it can
+then *do* differs, and every difference is reported rather than faked: an
+input that asks for something the platform cannot do stops the run before
+anything is written, unless `--on-unsupported=skip` is given, and then each
+skipped operation is listed in `run-manifest.json`
+(`TestUnsupportedOpsFailBeforeAnyWrite`,
+`TestOnUnsupportedSkipRecordsAndKeepsOtherBytes`).
+
+| | Windows, NTFS or ReFS | Windows, FAT or exFAT | Linux | macOS, FreeBSD |
+|---|---|---|---|---|
+| files, directories, content | yes | yes | yes | compiled, never run |
+| access and modification times | yes | yes | yes | compiled, never run |
+| creation time (`crtime`) | yes | yes | no | no |
+| change time (`ctime`) | yes | no, the volume stores none | no | no |
+| `ads`, `motw` | yes | no | no | no |
+| POSIX `mode` bits | the read-only attribute only | the same | yes | yes |
+| birth time read into a timeline | yes | yes | `statx` `STATX_BTIME` where the filesystem reports one, else unknown | `Birthtimespec` |
+| named streams listed in a timeline | yes, one record each | none to list | n/a | n/a |
+| timeline read without moving access times | yes, suspended per handle | the same | `O_NOATIME` when the caller owns the file, else restored, which moves the change time and is recorded | best effort, recorded |
+| `$FILE_NAME` times | never controlled | n/a | n/a | n/a |
+
+A "no" for something the input asks for outright is a pre-flight error; a
+"no" for a default the scenario only implies is recorded as `uncontrolled` in
+the run manifest and in the ledger, never guessed.
+
+Where the suite has actually run: Windows 11 (build 26200) and Windows 10
+(build 19045) on NTFS, and Fedora 40 on tmpfs, btrfs and an ext4 volume made
+with 128-byte inodes, which keeps whole seconds and no birth time. macOS and
+FreeBSD are compiled on every change and have **never been run**: their
+column is what the code paths intend, not a measurement.
+
+## Limits
+
+What fsagen does not control, and what can change its output after it
+finishes:
+
+- NTFS keeps a second set of times in each `$FILE_NAME` attribute, which no
+  user-mode call can set. The run manifest says `filename_times_controlled:
+  false`.
+- The output directory's own times are never set (`root_times_controlled:
+  false`).
+- NTFS tunneling hands a file created under a name used moments earlier in
+  the same directory the *old* file's creation time, which is exactly what a
+  `rotate` does. fsagen stamps and then verifies all four times afterwards,
+  so the scenario's time is what lands (`TestRotateKeepsRotatedTimes`).
+- With last-access updates on (`NtfsDisableLastAccessUpdate`, recorded in
+  `run-info.json`), anything that reads the output afterwards moves its access
+  times. fsagen's own reads (digests, the ledger, the timeline) leave them
+  alone. If another process reads files while the run settles, fsagen settles
+  again a few times before failing, and the error says so.
+- `mode` is applied when a file is written; times are stamped after it, so a
+  chmod does not disturb them. Windows honours only the write bit; the field
+  matters on Linux output. An explicit `mode` on a directory `create` is for
+  that directory; missing parents get the default `0755`.
+- Other software can change the output after fsagen finishes. On Windows 10,
+  Windows Search adds an `OECustomProperty` stream to `.eml` files in indexed
+  folders (the user profile outside `AppData`) within seconds, and holds it
+  open while it does. Defender's machine-learning detection refuses writes of
+  generated PE images often enough to matter: it flagged the persistence
+  artifacts of `playbook-malware-lifecycle.yaml`
+  (`Trojan:Win32/Bearfoos.B!ml`), and it refused the acceptance scenario's
+  implant under the name `svchost.exe`, under a version resource claiming
+  Microsoft, and under the default high-entropy filler. Its verdict is not
+  stable either: it allowed and then refused the same bytes minutes apart. A
+  refused write is a failed run, not a silent one, so nothing wrong reaches
+  the corpus — but generate into a folder that is neither indexed nor
+  scanned. The ledger, answer key and modelled timeline describe what fsagen
+  wrote either way.
+- An observed timeline is not reproducible, by construction: it reports inode
+  numbers, allocation and whatever another process did to the tree. The
+  modelled timeline is the artefact to compare between machines (see
+  *Determinism contract*).
+- A `deflate` archive member, a JPEG and an SQLite database are reproducible
+  only for the toolchain and dependency versions `go.mod` pins, both recorded
+  in the run manifest. Everything else fsagen writes itself.
+- A generated PE is a container for a parser, not a program: its sections
+  hold filler, its entry point is inside that filler, and running one does
+  nothing. fsagen has no way to produce, and no intention of producing,
+  working code.
+- Not generated at all: registry hives (a `.reg` export is text), EVTX, LNK,
+  Prefetch, `$Recycle.Bin`, and disk images. fsagen writes into a directory on
+  a live file system; making a FAT or NTFS image, with `$FILE_NAME` times and
+  deleted-entry residue under fsagen's control, is a separate piece of work.
 
 ## File formats
 
@@ -898,6 +976,25 @@ check, the tests (with the race detector where cgo is available), and
 `CGO_ENABLED=0` builds for Windows, Linux, macOS and FreeBSD on amd64 and arm64.
 Golden files under `testdata/golden/v<generator version>/` pin generated bytes;
 `go test -update` only rewrites a golden whose input changed.
+
+`docs/testing.md` maps every finding in `plan.json` to the test that closes
+it. `TestConsumerAcceptance` runs
+`testdata/acceptance/quilldrop-lite.playbook.yaml` and checks the eleven
+things fsagen's first consumer asked for, from a parseable phishing message
+to a real gap in a beacon log.
+
+### Dependencies
+
+Five direct ones, each here for a reason the standard library does not cover.
+`go mod tidy` is clean, and the whole product builds with `CGO_ENABLED=0`.
+
+| Module | Why |
+|---|---|
+| `go.yaml.in/yaml/v3` | YAML with `KnownFields` (an unknown key is an error) and a `Node` pass that gives every error a line and column. `gopkg.in/yaml.v2` has neither |
+| `github.com/glebarez/go-sqlite` | a `database/sql` driver for SQLite with no cgo, for the Chrome and Firefox profiles and bulk mode's databases |
+| `github.com/jung-kurt/gofpdf` | writes the PDFs, with the document metadata pinned so two renders match |
+| `golang.org/x/sys` | `NtCreateFile` and `FILE_BASIC_INFO` on Windows, `statx` on Linux, `Birthtimespec` on the BSDs, and the last-access registry value |
+| `golang.org/x/text` | Unicode case folding and NFC normalisation, so the portability check catches names that collide on a case-insensitive or normalising volume |
 
 ### Related Research Paper
 https://link.springer.com/chapter/10.1007/978-981-96-9443-3_17

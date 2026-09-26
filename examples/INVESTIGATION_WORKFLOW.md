@@ -97,7 +97,8 @@ Look for forensic indicators in the timeline:
 7. **Anti-Forensics** (T+2h):
    - Log truncation
    - File deletions
-   - MACE timestamp manipulation
+   - The staging directory backdated with `mace` to 2024-01-01, long
+     before anything in it was written
 
 8. **Persistence Verification** (T+24h):
    - Health check files
