@@ -169,6 +169,22 @@ the skips being the three POSIX-mode tests and `mactime`, which is not
 installed there. macOS and FreeBSD are cross-built and were not run, which
 the README now states rather than implies.
 
+It also passes on Linux, on Ubuntu 24.04 under WSL2 on ext4: 295 tests, 13
+skipped, none failed, and every skip is a Windows-only capability (named
+streams, creation and change times, the capability injection that only makes
+sense from the other side, and `mactime`, which is not installed there). The
+Fedora 40 machine that ran the previous phase was not available for this one.
+
+That Linux run found a defect in this phase's own work. The acceptance
+subtest `CR-6_four_stomped_files` asserted the Windows outcome everywhere. A
+file system that cannot be told a creation time cannot show mtime < crtime,
+and fsagen does not pretend it can, so the answer key correctly named none
+and the subtest correctly failed. It now checks that refusal instead on such
+a platform: no stomp claimed, and `crtime` recorded as uncontrolled in the
+ledger for each of the four files. Without that second half a reader could
+not tell a scenario that stomps nothing from a platform that could not carry
+a stomp out.
+
 ## Unreleased: P4, artefacts forensic tools can actually parse
 
 Generator version: **5**. Every file whose extension promises a format now

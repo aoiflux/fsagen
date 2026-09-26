@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -230,7 +231,10 @@ func TestConsumerAcceptance(t *testing.T) {
 	})
 
 	// CR-6: after the stomp on 12 March, exactly four files have a
-	// modification time earlier than their creation time.
+	// modification time earlier than their creation time. A platform that
+	// cannot set a creation time cannot show that at all, and fsagen does
+	// not pretend otherwise: the answer key then claims no stomp, and the
+	// ledger records crtime as uncontrolled for the four files concerned.
 	t.Run("CR-6_four_stomped_files", func(t *testing.T) {
 		var stomped []string
 		for _, f := range facts {
@@ -238,11 +242,16 @@ func TestConsumerAcceptance(t *testing.T) {
 				stomped = append(stomped, f.Path)
 			}
 		}
+		if !fsys.TimeCaps().Birth {
+			if len(stomped) != 0 {
+				t.Fatalf("this platform cannot set a creation time, so no stomp is observable, "+
+					"yet the answer key names %d: %v", len(stomped), stomped)
+			}
+			acceptanceCrtimeUncontrolled(t, out)
+			return
+		}
 		if len(stomped) != 4 {
 			t.Errorf("the answer key names %d stomped files, want 4: %v", len(stomped), stomped)
-		}
-		if !fsys.TimeCaps().Birth {
-			return
 		}
 		onDisk := 0
 		err := fsys.WalkDir(func(name string, d os.DirEntry, err error) error {
@@ -470,6 +479,43 @@ func acceptanceFacts(t *testing.T, out string) []ledger.Fact {
 		facts = append(facts, f)
 	}
 	return facts
+}
+
+// acceptanceCrtimeUncontrolled checks that a platform which cannot set a
+// creation time says so, for each of the four files the scenario stomps.
+// Without that record a reader could not tell a scenario that stomps nothing
+// from a platform that could not carry the stomp out.
+func acceptanceCrtimeUncontrolled(t *testing.T, out string) {
+	t.Helper()
+	want := []string{
+		"Users/priyan.nair/Documents/quarterly-0.docx",
+		"Users/priyan.nair/Documents/quarterly-2.docx",
+		"Users/priyan.nair/Documents/quarterly-3.docx",
+		"Users/priyan.nair/Documents/quarterly-5.docx",
+	}
+	seen := map[string]bool{}
+	for _, line := range strings.Split(string(sidecar(t, out, ledger.FileName)), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var e ledger.Entry
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Fatalf("ledger line %q: %v", line, err)
+		}
+		if !slices.Contains(want, e.Path) {
+			continue
+		}
+		seen[e.Path] = true
+		if !slices.Contains(e.Uncontrolled, "crtime") {
+			t.Errorf("%s: the ledger records uncontrolled=%v, want crtime among them",
+				e.Path, e.Uncontrolled)
+		}
+	}
+	for _, p := range want {
+		if !seen[p] {
+			t.Errorf("the ledger has no entry for %s", p)
+		}
+	}
 }
 
 // acceptanceBodyfile splits a bodyfile into its eleven pipe-separated fields

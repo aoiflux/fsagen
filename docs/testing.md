@@ -132,7 +132,7 @@ file and in the README is a test that still exists.
 
 | Finding | What it was | Verified by |
 |---|---|---|
-| F-PLAT-1 | 'go install github.com/aoiflux/fsagen@latest' fails | no test: `go install github.com/aoiflux/fsagen@latest` is CR-12, which the owner checks after pushing |
+| F-PLAT-1 | 'go install github.com/aoiflux/fsagen@latest' fails | no test: the module path is `github.com/aoiflux/fsagen`, and installing it is CR-12 |
 
 ## CLI
 
@@ -193,11 +193,34 @@ narrower test of the mechanism behind it.
 | CR-3 | The dropper (Invoice_MRD-88412.pdf.exe) and implant (svchost.exe) as valid PEs whose TimeDateStamp the playbook sets (0 for the 'scrubbed build time' lesson), sized to the requested length. | `TestConsumerAcceptance`, `TestPEHeaderFieldsEqualInputs`; two deviations: the acceptance scenario calls the implant quilld.exe with its own vendor in the version resource and zero filler, because Defender refused the write under the name svchost.exe even with zero filler and under a neutral name with the default filler and a Microsoft version resource; and `content_len` is the size of the overlay rather than of the whole file |
 | CR-4 | Mark-of-the-Web on the dropper with templated HostUrl/ReferrerUrl, written without disturbing the file's times. | `TestConsumerAcceptance`, `TestAdsAndMotwKeepTimes` |
 | CR-5 | The implant's 'quill' stream visible in the timeline. | `TestConsumerAcceptance`, `TestStreamsQuillAndSpaceNameWithSizes` |
-| CR-6 | Creation times equal to scenario time, so that after the 12 March stomp exactly four files show mtime < crtime. | `TestConsumerAcceptance`, `TestQuilldropLiteStompCount` |
+| CR-6 | Creation times equal to scenario time, so that after the 12 March stomp exactly four files show mtime < crtime. | `TestConsumerAcceptance`, `TestQuilldropLiteStompCount`; where the file system cannot be told a creation time the same subtest checks the refusal instead, that no stomp is claimed and that the ledger calls crtime uncontrolled for those four files |
 | CR-7 | bkp_20260311.zip as a real zip whose members are the staged documents, CRC-32 and size matching the originals. | `TestConsumerAcceptance`, `TestArchiveMembersMatchSources` |
 | CR-8 | The 24 staging files actually deleted, and their deletion recorded in the ground truth. | `TestConsumerAcceptance`, `TestRefsDeleteAllStagingOnDisk` |
 | CR-9 | A real gap in the beacon log's sequence numbers after the anti-forensics step. | `TestConsumerAcceptance`, `TestEditDeleteLines40to60` |
 | CR-10 | An artefact every student can compare byte for byte: a deterministic content SHA256SUMS and/or modelled bodyfile, identical on every machine that runs the same fsagen version and seed. | `TestConsumerAcceptance`, `TestDeterminismHarness` |
 | CR-11 | On Linux/macOS: either a clear refusal before anything is written, or a completed corpus with the NTFS-only artefacts listed as skipped. | `TestConsumerAcceptance`, `TestUnsupportedOpsFailBeforeAnyWrite` |
-| CR-12 | go install github.com/aoiflux/fsagen@latest works. | no test: the owner runs `go install github.com/aoiflux/fsagen@latest` from a clean GOPATH after pushing |
+| CR-12 | go install github.com/aoiflux/fsagen@latest works. | no test, and it needs a tag: see the note below |
 
+### CR-12 needs a tag on the renamed module
+
+`go install <module>@latest` resolves `latest` to the highest semver tag, then
+reads that version's `go.mod`. The two commits the owner is tagging for D-6,
+62d759c and 7accc8d, predate the module rename: both declare `module fsagen`.
+Tagged as v0.1.0 and v0.2.0 with nothing above them, `go install
+github.com/aoiflux/fsagen@latest` picks v0.2.0 and fails:
+
+```
+go: github.com/aoiflux/fsagen@latest: version constraints conflict:
+	github.com/aoiflux/fsagen@v0.2.0: parsing go.mod:
+	module declares its path as: fsagen
+	        but was required as: github.com/aoiflux/fsagen
+```
+
+So the README's install line only works once a commit on the renamed module
+carries a semver tag above those two. Both halves were run on 2026-09-26
+against a file:// proxy built from the committed tree: without such a tag the
+install fails as above, and with 51444b2 tagged v0.3.0 it succeeds into an
+empty GOPATH and the binary reports `fsagen v0.3.0 (generator version 5)`.
+That is the whole of CR-12 except GitHub serving the tag, which is why the row
+still says "no test": nothing in the suite checks it, and the offline proxy
+cannot prove the push.
