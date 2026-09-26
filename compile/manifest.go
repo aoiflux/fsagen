@@ -105,17 +105,7 @@ type fieldError struct{ field, msg string }
 // reference time. The nested specs are copied first, so an action repeated
 // by a playbook never shares them between iterations.
 func defaultDates(op *spec.Operation, ref time.Time) *fieldError {
-	if op.Pdf != nil {
-		p := *op.Pdf
-		op.Pdf = &p
-	}
-	if op.Vault != nil {
-		v := *op.Vault
-		op.Vault = &v
-	}
-	if op.Email != nil {
-		op.Email = cloneEmail(op.Email)
-	}
+	cloneTyped(op)
 	stamp := ref.UTC().Format(time.RFC3339)
 
 	if op.Format == "pdf" {

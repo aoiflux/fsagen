@@ -276,14 +276,44 @@ func TestPortability(t *testing.T) {
 	}
 }
 
-func TestRandomContentWithTypedExtension(t *testing.T) {
-	for _, p := range []string{"a/dropper.exe", "a/exfil.zip", "History.sqlite", "a.pdf", "img.JPG"} {
-		mustFail(t, ModeManifest, "operations:\n  - action: create\n    path: "+p+"\n    content_len: 4096\n", "cannot generate", "format: text")
+// TestTypedExtensionInfersOrRefuses: an extension that promises a structured
+// file gets one built, and one fsagen still cannot build is refused rather
+// than filled with base32 text.
+func TestTypedExtensionInfersOrRefuses(t *testing.T) {
+	for _, tc := range []struct{ path, format string }{
+		{"a/dropper.exe", "pe"}, {"lib/helper.dll", "pe"},
+		{"a/exfil.zip", "zip"}, {"app.jar", "zip"},
+		{"img.PNG", "png"}, {"img.JPG", "jpeg"}, {"scan.jpeg", "jpeg"},
+		{"notes.docx", "docx"}, {"clip.mp4", "mp4"},
+	} {
+		p := mustLoad(t, ModeManifest, "start: 2026-01-01T00:00:00Z\noperations:\n  - action: create\n    path: "+tc.path+"\n    content_len: 4096\n")
+		if got := p.Ops[0].Format; got != tc.format {
+			t.Errorf("%s: format %q, want %q", tc.path, got, tc.format)
+		}
 	}
+	for _, tc := range []struct{ path, want string }{
+		{"History.sqlite", "chrome_history"},
+		{"places.db", "firefox_places"},
+		{"a.pdf", "format: pdf"},
+		{"book.xlsx", "spreadsheet"},
+		{"deck.pptx", "presentation"},
+		{"anim.gif", "GIF"},
+		{"msg.eml", "action: email"},
+	} {
+		mustFail(t, ModeManifest, "operations:\n  - action: create\n    path: "+tc.path+"\n    content_len: 4096\n", tc.want, "format: text")
+	}
+	// Literal content is the author's own bytes, whatever the name says.
 	p := mustLoad(t, ModeManifest, "start: 2026-01-01T00:00:00Z\noperations:\n  - action: create\n    path: a/dropper.exe\n    format: text\n    content_len: 16\n  - action: create\n    path: lure.exe\n    content: MZ\n  - action: create\n    path: r.pdf\n    format: pdf\n    content_len: 64\n")
 	if len(p.Ops) != 3 {
 		t.Fatal(len(p.Ops))
 	}
+	for i, want := range []string{"text", "", "pdf"} {
+		if got := p.Ops[i].Format; got != want {
+			t.Errorf("op %d format %q, want %q", i+1, got, want)
+		}
+	}
+	// Adding filler to a structured file would corrupt it.
+	mustFail(t, ModeManifest, "operations:\n  - action: append\n    path: a.exe\n    content_len: 8\n", "would corrupt")
 }
 
 func TestPlaybookMissingOperations(t *testing.T) {
@@ -328,7 +358,6 @@ func TestEveryStringFieldRenders(t *testing.T) {
 	var op spec.Operation
 	op.Pdf, op.Email, op.Vault = &spec.PdfSpec{}, &spec.EmailSpec{Headers: []spec.Header{{}}, Attachments: []spec.Attachment{{}}}, &spec.VaultSpec{}
 	op.Email.To, op.Email.Cc, op.Email.Bcc, op.Email.References = []string{""}, []string{""}, []string{""}, []string{""}
-	skipped := map[string]bool{"Content": true, "ID": true, "Ref": true, "Refs": true}
 
 	var fill func(v reflect.Value, name string)
 	var fields []string
@@ -339,7 +368,8 @@ func TestEveryStringFieldRenders(t *testing.T) {
 		case reflect.Struct:
 			for i := 0; i < v.NumField(); i++ {
 				f := v.Type().Field(i)
-				if name == "" && skipped[f.Name] {
+				// Ids and refs name things literally and are tagged so.
+				if f.Tag.Get("render") == "-" || (name == "" && f.Name == "Content") {
 					continue
 				}
 				if f.Name == "Content" && name != "" && !strings.HasSuffix(name, "Attachments") {
@@ -384,7 +414,7 @@ func TestEveryStringFieldRenders(t *testing.T) {
 				f := v.Type().Field(i)
 				// ContentFile is consumed by Prepare; that the rendered name
 				// "X" was found and read proves it was templated.
-				if f.Name == "Content" || f.Name == "ContentFile" || (name == "" && skipped[f.Name]) {
+				if f.Name == "Content" || f.Name == "ContentFile" || f.Tag.Get("render") == "-" {
 					continue
 				}
 				check(v.Field(i), name+"."+f.Name)

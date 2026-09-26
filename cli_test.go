@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/aoiflux/fsagen/compile"
+	"github.com/aoiflux/fsagen/constant"
 	"github.com/aoiflux/fsagen/internal/testutil"
 	"github.com/aoiflux/fsagen/ledger"
 	"github.com/aoiflux/fsagen/runinfo"
@@ -104,7 +106,8 @@ func TestRuntimeErrorExit1Stderr(t *testing.T) {
 
 func TestVersion(t *testing.T) {
 	code, out, _ := runCLI(t, "--version")
-	if code != exitOK || !strings.Contains(out, "generator version 4") || !strings.Contains(out, runtime.GOOS) {
+	want := fmt.Sprintf("generator version %d", constant.GeneratorVersion)
+	if code != exitOK || !strings.Contains(out, want) || !strings.Contains(out, runtime.GOOS) {
 		t.Errorf("code=%d out=%q", code, out)
 	}
 }

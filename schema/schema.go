@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/aoiflux/fsagen/compile"
+	"github.com/aoiflux/fsagen/libgen"
 	"github.com/aoiflux/fsagen/spec"
 )
 
@@ -246,6 +247,17 @@ func marshalSchema(v any) ([]byte, error) {
 // a matching entry in $defs.
 func nestedDefs(defs map[string]any) {
 	defs["PdfSpec"] = objectSchemaFromStruct(spec.PdfSpec{}, nil)
+	defs["DocxSpec"] = objectSchemaFromStruct(spec.DocxSpec{}, nil)
+	defs["PeSpec"] = objectSchemaFromStruct(spec.PeSpec{}, nil)
+	defs["PeSection"] = objectSchemaFromStruct(spec.PeSection{}, []string{"name"})
+	defs["PeVersion"] = objectSchemaFromStruct(spec.PeVersion{}, nil)
+	defs["HistorySpec"] = objectSchemaFromStruct(spec.HistorySpec{}, nil)
+	defs["HistoryVisit"] = objectSchemaFromStruct(spec.HistoryVisit{}, []string{"url"})
+	defs["HistoryDownload"] = objectSchemaFromStruct(spec.HistoryDownload{}, []string{"url", "target_path"})
+	defs["ArchiveSpec"] = objectSchemaFromStruct(spec.ArchiveSpec{}, nil)
+	defs["EditSpec"] = objectSchemaFromStruct(spec.EditSpec{}, nil)
+	defs["EditReplace"] = objectSchemaFromStruct(spec.EditReplace{}, []string{"pattern"})
+	defs["EditInsert"] = objectSchemaFromStruct(spec.EditInsert{}, []string{"pattern", "text"})
 	defs["Header"] = objectSchemaFromStruct(spec.Header{}, []string{"name"})
 	defs["Attachment"] = objectSchemaFromStruct(spec.Attachment{}, nil)
 	defs["EmailSpec"] = objectSchemaFromStruct(spec.EmailSpec{}, nil)
@@ -269,6 +281,66 @@ func nestedDefs(defs map[string]any) {
 	}
 	vault := defs["VaultSpec"].(map[string]any)["properties"].(map[string]any)
 	vault["salt"] = map[string]any{"type": "string", "pattern": "^[0-9a-fA-F]{64}$"}
+
+	doc := defs["DocxSpec"].(map[string]any)["properties"].(map[string]any)
+	doc["created"] = map[string]any{"$ref": "#/$defs/Rfc3339Time"}
+	doc["modified"] = map[string]any{"$ref": "#/$defs/Rfc3339Time"}
+
+	pe := defs["PeSpec"].(map[string]any)["properties"].(map[string]any)
+	pe["machine"] = map[string]any{"type": "string", "enum": libgen.PEMachines}
+	pe["subsystem"] = map[string]any{"type": "string", "enum": libgen.PESubsystems}
+	pe["timestamp"] = map[string]any{
+		"type":        "string",
+		"description": "RFC 3339, or \"0\" for the zero stamp a reproducible build writes. Defaults to the operation time.",
+	}
+	pe["imports"] = map[string]any{
+		"type":        "array",
+		"items":       map[string]any{"type": "string", "pattern": "^[^!]+![^!]+$"},
+		"description": "Imported functions as dll!function, for example kernel32.dll!CreateFileW.",
+	}
+	sec := defs["PeSection"].(map[string]any)["properties"].(map[string]any)
+	sec["name"] = map[string]any{"type": "string", "maxLength": 8}
+	sec["size"] = map[string]any{"type": "integer", "minimum": 0}
+	sec["flags"] = map[string]any{"type": "array", "items": map[string]any{"type": "string", "enum": libgen.PESectionFlags}}
+
+	visit := defs["HistoryVisit"].(map[string]any)["properties"].(map[string]any)
+	visit["time"] = map[string]any{"$ref": "#/$defs/Rfc3339Time"}
+	visit["transition"] = map[string]any{"type": "string", "enum": libgen.Transitions}
+	visit["from_visit"] = map[string]any{"type": "integer", "minimum": 0}
+	down := defs["HistoryDownload"].(map[string]any)["properties"].(map[string]any)
+	down["start"] = map[string]any{"$ref": "#/$defs/Rfc3339Time"}
+	down["end"] = map[string]any{"$ref": "#/$defs/Rfc3339Time"}
+	down["received_bytes"] = map[string]any{"type": "integer", "minimum": 0}
+	down["total_bytes"] = map[string]any{"type": "integer", "minimum": 0}
+
+	arc := defs["ArchiveSpec"].(map[string]any)
+	arcProps := arc["properties"].(map[string]any)
+	arcProps["method"] = map[string]any{
+		"type":        "string",
+		"enum":        compile.ArchiveMethods,
+		"description": "store (the default) is byte-identical on every toolchain; deflate is not.",
+	}
+	arcProps["comment"] = map[string]any{"type": "string", "maxLength": 65535}
+	arc["anyOf"] = []any{
+		map[string]any{"required": []string{"members"}},
+		map[string]any{"required": []string{"member_refs"}},
+	}
+
+	ed := defs["EditSpec"].(map[string]any)
+	edProps := ed["properties"].(map[string]any)
+	edProps["delete_lines"] = map[string]any{
+		"type":        "string",
+		"pattern":     "^[0-9]+(-[0-9]+)?$",
+		"description": "A 1-based inclusive line or range of lines, for example 40-60.",
+	}
+	ed["anyOf"] = []any{
+		map[string]any{"required": []string{"delete_lines"}},
+		map[string]any{"required": []string{"delete_matching"}},
+		map[string]any{"required": []string{"replace"}},
+		map[string]any{"required": []string{"insert_after"}},
+	}
+	defs["EditReplace"].(map[string]any)["properties"].(map[string]any)["count"] =
+		map[string]any{"type": "integer", "minimum": 0, "description": "0 means every match."}
 }
 
 // commonOperationProps applies the value constraints shared by manifest
@@ -282,7 +354,12 @@ func commonOperationProps(props map[string]any) {
 	props["crtime"] = map[string]any{"$ref": "#/$defs/Rfc3339Time", "description": "Creation (birth) time. Windows only; elsewhere a pre-flight error unless --on-unsupported=skip."}
 	props["zone_id"] = map[string]any{"type": "integer", "minimum": 0, "maximum": 4}
 	props["content_len"] = map[string]any{"type": "integer", "minimum": 1}
-	props["format"] = map[string]any{"type": "string", "enum": []string{"raw", "text", "pdf", "eml", "mbox"}}
+	props["format"] = map[string]any{"type": "string", "enum": allFormats()}
+	props["content_kind"] = map[string]any{
+		"type":        "string",
+		"enum":        compile.ContentKinds,
+		"description": "What the invented bytes look like. Only applies when fsagen invents them.",
+	}
 	props["mode"] = map[string]any{
 		"type":        "string",
 		"pattern":     "^0?[0-7]{3,4}$",
@@ -343,6 +420,22 @@ func operationConditionals(playbook bool) []any {
 			continue
 		}
 		out = append(out, map[string]any{"not": map[string]any{"required": pair}})
+	}
+	return out
+}
+
+// allFormats is every format value any action accepts, for the property
+// schema; the per-action allOf narrows it to the ones that action takes.
+func allFormats() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, action := range compile.Actions {
+		for _, f := range compile.Formats[action] {
+			if !seen[f] {
+				seen[f] = true
+				out = append(out, f)
+			}
+		}
 	}
 	return out
 }

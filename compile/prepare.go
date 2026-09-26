@@ -229,28 +229,27 @@ func checkValues(op *Op, src *sandbox.Sources) ErrorList {
 		}
 	}
 
-	// Random content under an extension that promises a structured format is
-	// exactly the silent wrong output this tool must not produce: a ".exe" of
-	// base32 text is not an executable. Literal content is the author's own
-	// bytes and always allowed; format: text marks a placeholder as deliberate.
-	op.Random = randomLength(op)
-	if randomContent(op) && !k.has("format") {
-		if format, ok := typedExtensions[strings.ToLower(path.Ext(op.Path))]; ok {
-			at("path", "%s implies %s, which fsagen cannot generate from random content yet; set format: text to write placeholder text on purpose, or supply content or content_file", path.Ext(op.Path), format)
+	// An extension that promises a structured file now gets one: writing
+	// base32 text into a ".exe" is exactly the silent wrong output this tool
+	// must not produce. Literal content is the author's own bytes and is
+	// written through; format: text marks a placeholder as deliberate.
+	if !k.has("format") && randomContent(op) {
+		ext := strings.ToLower(path.Ext(op.Path))
+		format, known := inferredFormats[ext]
+		switch {
+		case known && (op.Action == "create" || op.Action == "update"):
+			op.Format = format
+		case known:
+			at("path", "%s implies a %s file; adding filler to one would corrupt it, so give content or content_file, or format: text to write placeholder text on purpose", ext, format)
+		default:
+			if what, refused := refusedExtensions[ext]; refused {
+				at("path", "%s implies %s, which fsagen cannot build; set format: text to write placeholder text on purpose, or supply content or content_file", ext, what)
+			}
 		}
 	}
+	op.Random = randomLength(op)
+	checkTyped(op, at)
 	return errs
-}
-
-// typedExtensions maps extensions to the structured format they promise.
-var typedExtensions = map[string]string{
-	".exe": "a PE executable", ".dll": "a PE executable", ".sys": "a PE executable", ".scr": "a PE executable",
-	".zip": "a zip archive", ".jar": "a zip archive", ".docx": "an OOXML document", ".xlsx": "an OOXML document", ".pptx": "an OOXML document",
-	".png": "a PNG image", ".jpg": "a JPEG image", ".jpeg": "a JPEG image", ".gif": "a GIF image", ".bmp": "a BMP image",
-	".pdf":    "a PDF (use format: pdf to render text into one)",
-	".sqlite": "an SQLite database", ".db": "an SQLite database",
-	".mp4": "an MP4 video", ".mov": "a QuickTime video",
-	".eml": "an RFC 5322 message (use action: email)", ".mbox": "an mbox mailbox (use action: email)",
 }
 
 // randomContent reports whether an operation's file content will be drawn
@@ -283,6 +282,11 @@ func randomLength(op *Op) int {
 	}
 	if op.ContentLen > 0 {
 		return op.ContentLen
+	}
+	// A format that builds its own file needs no filler unless asked: the
+	// minimal valid file is the honest default.
+	if Structured(op.Format) && !DocumentText(op.Format) {
+		return 0
 	}
 	switch op.Action {
 	case "append":
@@ -324,13 +328,13 @@ func checkEmail(op *Op, src *sandbox.Sources) ErrorList {
 	for i := range e.Attachments {
 		a := &e.Attachments[i]
 		n := 0
-		for _, s := range []string{a.SourceFile, a.SourceRoot, a.Content} {
+		for _, s := range []string{a.SourceFile, a.SourceRoot, a.Ref, a.Content} {
 			if s != "" {
 				n++
 			}
 		}
 		if n != 1 {
-			fail("attachments[%d]: give exactly one of source_file, source_root and content", i)
+			fail("attachments[%d]: give exactly one of source_file, source_root, ref and content", i)
 			continue
 		}
 		switch {

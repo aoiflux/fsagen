@@ -1,11 +1,272 @@
 # Changelog
 
+## Unreleased: P4, artefacts forensic tools can actually parse
+
+Generator version: **5**. Every file whose extension promises a format now
+holds one, so the bytes of those files change, and so do the examples that
+write them. The dry-run listing changes with them (it carries each
+operation's content digest).
+
+P0 made fsagen refuse to write base32 text into a file called `.exe`. This
+phase replaces most of those refusals with a generator, and keeps the refusal
+where there is none.
+
+### Typed content
+
+- **The extension picks the format** when a `create` or `update` gives no
+  content of its own: `.exe` `.dll` `.sys` `.scr` build a PE, `.zip` `.jar` a
+  zip, `.png` a PNG, `.jpg` `.jpeg` a JPEG, `.mp4` an MP4 and `.docx` an
+  OOXML package. `format:` says so outright, and adds `chrome_history`,
+  `firefox_places` and `text`.
+- **`.pdf` is still not inferred.** A PDF's dates are settled while the
+  operation is compiled, before its path has been rendered, so it stays an
+  explicit `format: pdf` — which is what the P0 error already suggested.
+- **Still refused, with a reason and a suggestion**: `.xlsx`, `.pptx`,
+  `.gif`, `.bmp`, `.mov`, `.sqlite`, `.db` (use `format: chrome_history`),
+  `.eml` and `.mbox` (use `action: email`).
+- **PE** (F-GEN-3): PE32 and PE32+, for amd64, i386 and arm64; console, GUI
+  or native; EXE or DLL; a TimeDateStamp the scenario sets (`"0"` included,
+  which is what a reproducible build writes); named sections with
+  characteristics; an import table written as `dll!function`, from which
+  tools compute a stable imphash; a VS_VERSIONINFO resource; and a Windows
+  checksum, which `TestPEChecksumMatchesWindows` compares with what
+  `imagehlp!CheckSumMappedFile` computes for the same bytes. What fsagen
+  writes is a container for a parser to read: there is no code in the image
+  beyond the standard DOS stub, and the entry point points into filler.
+- **zip, PNG, JPEG, MP4, docx**: `archive/zip`, `image/png`, `image/jpeg`, a
+  box walk and an OOXML reader each read their own back in the tests.
+- **`content_len` is the size of the filler region, not of the file.** A
+  structured file carries it where such a file carries a payload: the PE
+  overlay, a zip member, a private PNG chunk, JPEG comment segments, the MP4
+  `mdat`, and for `pdf` and `docx` the document's text. With no
+  `content_len`, a structured format writes the smallest valid file.
+- **`content_kind`** (F-GEN-8): `text` (the default, today's base32),
+  `bytes`, `zeros`, `pattern` or `lorem`. It says what invented bytes look
+  like, so a scenario can ask for something that does not compress rather
+  than for text that does.
+
+### Browser history, and the epoch it was getting wrong
+
+`format: chrome_history` and `format: firefox_places` (F-GEN-5) take a
+`history:` block of visits — url, title, time, transition, `from_visit` — and
+Chrome also takes downloads. They write the tables a parser queries, with
+their indexes: Chrome's `meta`, `urls`, `visits`, `downloads`,
+`downloads_url_chains` and `keyword_search_terms`; Firefox's `moz_origins`,
+`moz_places` (with a reversed `rev_host`) and `moz_historyvisits`.
+
+**The epochs were wrong before**, which the audit found (F-GEN-5) and the
+code itself admitted in a comment: both databases were filled with Unix
+seconds. Chrome counts
+microseconds from 1601-01-01 and Firefox from 1970-01-01, so every visit in
+a generated Chrome profile read back as a date in 1601 — not a rounding
+error but four centuries. `TestChromeWebKitEpoch` and `TestFirefoxPRTime`
+now pin each engine's own epoch against a fixed scenario time. Writing the
+fix turned up a second bug of the same shape: 1601 to 2024 is about 423
+years, past what a `time.Duration` holds, so the first version of
+`chromeTime` overflowed and returned the same number for every visit. It is
+integer seconds now, and the test caught it. `TestBrowserHistoryTimestamps`,
+which read the value back as Unix seconds and so asserted the bug, is gone.
+
+Bulk mode's profiles use the names a tool looks for — `Default/History` and
+`Profiles/<name>.default-release/places.sqlite` — inside an invented profile
+directory, instead of a random name with a `.db` or `.sqlite` extension.
+
+### Two new actions
+
+- **`archive`** (F-GEN-2, CR-7) writes a zip of files the scenario has
+  already created. Members come from `member_refs` (every live path under an
+  id, in creation order) and then `members` (glob patterns, in path order),
+  deduplicated; `base` is stripped from the stored names; `comment` sets the
+  archive comment; `method` is `store` by default, because deflated bytes
+  come from `compress/flate` and so hold only for the pinned toolchain.
+  Members are resolved from the model before the archive object exists, so a
+  pattern can never sweep the archive into itself, and each member's stored
+  time is the time the scenario gave that file. A member that does not lie
+  under `base` is an error: fsagen will not invent a name for it. The
+  members are read through quiet handles, so archiving a corpus does not move
+  its access times.
+- **`edit`** (F-GEN-9, CR-9) changes a file in place: `delete_lines` (a
+  1-based inclusive range), `delete_matching` (a regular expression over
+  whole lines), `replace` (a regular expression with `$1` expansion and an
+  optional count) and `insert_after`. The steps run in that fixed order
+  whatever order they are written in, and the file's line endings and its
+  missing final newline survive. A range past the end of the file is an
+  error. This is how a log gets a real gap in it rather than a truncation a
+  tool can see at a glance.
+
+### Smaller things
+
+- **`template: email` is a real message** (F-GEN-7 remainder). It was a
+  hand-written imitation with LF line endings, no Message-ID and no MIME
+  headers. It goes through `email.Build` now, like `action: email`, and
+  `net/mail` reads it.
+- **Email attachments take a `ref`** (reusing P0's ids), so a message can
+  attach a file an earlier step generated without naming its path. A ref
+  that names more than one live path is an error, because a message attaches
+  one file at a time.
+- **`${IP:10.0.0.0/8}`** (F-DOC-3) draws an address inside a block from the
+  operation's stream. IPv4 blocks with room to spare leave out the network
+  and broadcast addresses. Bare `${IP}` keeps its 192.168.x.y walk.
+- **fsagen writes its own zip files.** `archive/zip` always emits a data
+  descriptor and leaves the sizes out of the local header, which real-world
+  zips mostly do not, and exact size arithmetic is needed to place
+  `content_len` filler. The docx writer moved onto it as well, and gained
+  the two `docProps` parts, so a document now carries the title, author and
+  dates a metadata tool reports. (`gingfrederik/docx` went in P1; this is
+  the rest of D-10.)
+- **A PNG's zlib stream is hand-rolled** from stored blocks, so PNG bytes do
+  not depend on the Go release. JPEG, deflated zip members and SQLite
+  databases do; the determinism contract says which.
+
+### Deviations from the plan
+
+- The plan padded a zip with its **archive comment** and an SQLite file with
+  **page padding**. A zip gets a filler member instead, which is where a real
+  archive carries bytes, and a history database takes no `content_len` at
+  all: it is as big as its contents make it, and padding a database is not a
+  thing a browser does.
+- There is **no `format: eml` or `format: bytes`**. `action: email` writes
+  messages and `content_kind: bytes` writes uniform bytes; a second way to do
+  either would be a second thing to test.
+- The plan allowed `delete_lines` to take a regular expression. It is
+  `delete_matching`, a field of its own, because one field that means a line
+  number or a pattern depending on what it looks like is the kind of guess
+  this tool is not supposed to make.
+- MP4 is written by hand rather than through `go-mp4`. The plan allowed
+  dropping `.mp4` if a library proved impractical; writing the boxes turned
+  out to be less code than a dependency.
+
+### API
+
+New in `libgen`: `Filler` and the `Kind*` constants, `BuildZip`, `ZipEntry`,
+`ZipFiller`, `StoredZipOverhead`, `PNG`, `JPEG`, `DefaultImageSize`, `MP4`,
+`BuildPE`, `PESpec`, `PESection`, `PEVersion`, `ParseImports`, `PEMachines`,
+`PESubsystems`, `PESectionFlags`, `ChromeHistory`, `FirefoxPlaces`,
+`HistorySpec`, `Visit`, `Download`, `Transitions`, and `Docx`, whose
+signature is now `Docx(text string, meta DocxMeta)`. New in `compile`:
+`ContentKinds`, `ArchiveMethods`, `TypedFormats`, `Structured`,
+`DocumentText`, `FormatBlocks`, `ParseLineRange`. New in `spec`: `DocxSpec`,
+`PeSpec`, `PeSection`, `PeVersion`, `HistorySpec`, `HistoryVisit`,
+`HistoryDownload`, `ArchiveSpec`, `EditSpec`, `EditReplace`, `EditInsert`,
+and `Attachment.Ref`.
+
+### Examples
+
+Twelve of the fifteen changed, wherever a placeholder had stood in for a
+real file.
+`manifest-history.yaml` and `playbook-browsing.yaml` build real Chrome and
+Firefox profiles (and the note claiming real databases were bulk-only is
+gone); `playbook-email-and-archive.yaml` writes real messages and JPEGs and
+then a real zip of both, by id; `playbook-adversary-data-theft.yaml`,
+`playbook-comprehensive-ransomware.yaml` and
+`playbook-insider-threat-exfil.yaml` use `action: archive`;
+`playbook-log-tampering.yaml` gained an `edit` step; the dropper in
+`playbook-malware-lifecycle.yaml` is a PE with imports and a version
+resource; and `manifest-bulk-simple.yaml` turned 17 `.exe` placeholders into
+real PEs and 16 `.eml` placeholders into `action: email`. Two `.xlsx` and one
+`.pptx` keep `format: text`, because fsagen still cannot build those and says
+so. `examples_test.go` reads the new artefacts back with a parser: the
+dropper with `debug/pe`, the archives with `archive/zip` (comparing each
+member with the file on disk), the images with `image/jpeg`, the messages
+with `net/mail`, and the profiles with SQLite, checking Chrome's epoch
+arithmetic against a hand-computed value.
+
+### Documentation
+
+README gained a *File formats* section (the format table, the `pe:` and
+`history:` blocks, the `archive` and `edit` actions, and what bulk mode
+writes) in place of *Supported File Types*, whose `.exe` entry said "a
+256-byte DOS stub, not a loadable PE" and whose `.mp4` entry said "holds
+text, not video". The determinism contract now names which bytes depend on
+the toolchain. `examples/INVESTIGATION_WORKFLOW.md` had a sample timeline
+with the old 4 KiB dropper in it.
+
+### Evidence that each test can fail
+
+45 mutations, 44 killed. Every one was run on this machine (Windows 11);
+none of them needs a platform fsagen cannot reach.
+
+Thirteen survived the first pass. Eleven were tests that proved less than
+their names said, and each is now stronger: a `.rsrc` section whose data
+directory pointed nowhere, so nothing that walks resources the way Explorer
+does would have found the version block; a dropped PE overlay, and a filler
+default that put an overlay on a file that had asked for none, neither of
+which anything measured; zip local headers written without their sizes,
+which is the one thing fsagen's own zip writer exists for; a JPEG comment
+segment whose declared length was two bytes short; Firefox's `visit_count`;
+an archive pattern that matched nothing; an attachment `ref` naming several
+files; a docx whose `created` could be zero, because the test only looked
+for the date `modified` carried as well; and two in `${IP:cidr}`, where
+thirty-two draws from a `/8` will practically never land on the network or
+broadcast address — a `/30` and a `/31`, whose every address can be
+enumerated, settle it in one run.
+
+One survivor was a mutation aimed at the wrong test: reading the checksum
+field instead of skipping it changes nothing while that field is still
+zero, which it is when `BuildPE` computes it. It is observable when the
+checksum is recomputed over a finished image, and that is the test it now
+runs against.
+
+The last survivor is an equivalent mutation and is left alone: resolving an
+archive's members after its object exists changes nothing, because the
+archive's own path is excluded by name as well. The order is a second guard,
+not the only one.
+
+| Area | Mutation | Test |
+|---|---|---|
+| F-GEN-3 | `e_lfanew` left at zero (the bug the audit found) | TestPEHeaderFieldsEqualInputs |
+| F-GEN-3 | checksum left at zero | TestPEChecksumMatchesWindows |
+| F-GEN-3 | checksum reads its own field instead of skipping it | TestPEChecksumCoversTheWholeImage |
+| F-GEN-3 | checksum leaves out the file length | TestPEChecksumMatchesWindows |
+| F-GEN-3 | the DLL characteristic is never set | TestTypedFormatsParse |
+| F-GEN-3 | the import data directory is not recorded | TestPEHeaderFieldsEqualInputs |
+| F-GEN-3 | the resource data directory is not recorded | TestTypedFormatsParse |
+| F-GEN-3 | `timestamp: "0"` ignored | TestTypedFormatsParse |
+| F-GEN-3 | the overlay is dropped | TestTypedFormatsParse |
+| F-GEN-1 | local headers omit the sizes, as archive/zip does | TestZipIsReadableWithSizesInPlace |
+| F-GEN-1 | the central directory records the wrong offset | TestZipIsReadableWithSizesInPlace |
+| F-GEN-2 | a member's CRC-32 is wrong | TestArchiveMembersMatchSources |
+| F-GEN-1 | `StoredZipOverhead` off by one per member | TestStoredZipOverheadIsExact |
+| F-GEN-1 | a duplicate member name is allowed | TestZipRefusesDuplicateAndAbsoluteNames |
+| F-GEN-1 | the PNG filler chunk is dropped | TestPNGDecodesAndCarriesPadding |
+| F-GEN-1 | a PNG chunk CRC leaves out the chunk type | TestPNGDecodesAndCarriesPadding |
+| F-GEN-1 | IHDR claims a palette image | TestPNGDecodesAndCarriesPadding |
+| F-GEN-1 | a JPEG comment length leaves out its own two bytes | TestJPEGDecodesAndCarriesPadding |
+| F-GEN-4 | no media data box | TestMP4HasFtypMoovMdat |
+| F-GEN-4 | time counted from 1970, not 1904 | TestMP4DurationAndDimensions |
+| F-GEN-4 | duration in seconds, ignoring the timescale | TestMP4DurationAndDimensions |
+| F-GEN-4 | track dimensions written as pixels, not 16.16 | TestMP4DurationAndDimensions |
+| F-GEN-5 | Chrome given Unix seconds (the original bug) | TestChromeWebKitEpoch |
+| F-GEN-5 | Chrome given microseconds from 1970 | TestChromeWebKitEpoch |
+| F-GEN-5 | Firefox given Chrome's epoch | TestFirefoxPRTime |
+| F-GEN-5 | `rev_host` not reversed | TestStandardHistorySQLReturnsVisits |
+| F-GEN-5 | Chrome's transition codes used for Firefox | TestStandardHistorySQLReturnsVisits |
+| F-GEN-5 | every url gets one visit, however often it was seen | TestStandardHistorySQLReturnsVisits |
+| F-GEN-2 | a member outside `base` keeps its whole path | TestArchiveBaseMustCoverEveryMember |
+| F-GEN-2 | a pattern that matches nothing is accepted | TestArchiveRefusesEmptyPattern |
+| F-GEN-2 | members resolved after the archive exists | *survived: equivalent* |
+| F-GEN-9 | line numbers read as 0-based | TestEditDeleteLines40to60 |
+| F-GEN-9 | a range past the end is silently clamped | TestEditRefusesMissingLines |
+| F-GEN-9 | `delete_matching` keeps the lines it matches | TestEditReplaceAndInsert |
+| F-GEN-8 | every kind writes text | TestFillerKinds |
+| F-GEN-8 | the operation's `content_kind` is ignored | TestContentKindShapesTheBytes |
+| F-GEN-1 | the extension is never used | TestTypedExtensionInfersOrRefuses |
+| F-GEN-1 | an extension fsagen cannot build is accepted | TestTypedExtensionInfersOrRefuses |
+| F-GEN-1 | a format inferred even when the scenario gave content | TestTypedExtensionInfersOrRefuses |
+| F-GEN-1 | a structured file takes filler it did not ask for | TestTypedFormatsParse |
+| F-DOC-3 | the network and broadcast addresses are drawn | TestIPStaysInCIDR |
+| F-DOC-3 | the draw can leave the block | TestIPStaysInCIDR |
+| F-GEN-7 | `template: email` goes back to an LF imitation | TestMailTemplateIsRFC5322 |
+| F-IN-8 | a `ref` naming several files silently takes the first | TestAttachmentRefNamingSeveralFiles |
+| D-10 | a docx loses its `created` date | TestTypedFormatsParse |
+
 ## Unreleased: P3, timelines and ground truth
 
 Generator version: **4**. File and stream contents and the dry-run listing are
 unchanged for every example (the v4 goldens equal v3's). The ledger gains
 fields, the answer key is new, and the modelled timeline is a new covered
-output, which is why the version moves.
+output, which is why the version moves. `testdata/golden/v1` to `v3` are
+removed: no test read them.
 
 ### Timelines
 
@@ -171,8 +432,8 @@ The full suite passes on Windows 11 (the development machine, with `-race`),
 Windows 10 22H2 (last-access updates on) and Fedora 40 on tmpfs, btrfs and a
 whole-second ext4 without birth times. The only skips are what a platform
 cannot do (streams, creation and change times on Linux; POSIX modes on
-Windows; `mactime` where The Sleuth Kit is not installed). macOS remains the
-owner's.
+Windows; `mactime` where The Sleuth Kit is not installed). There is no macOS
+or FreeBSD machine to run it on; those builds are compiled and vetted only.
 
 ## P2: timestamps that mean what the scenario says (af6356e)
 

@@ -212,13 +212,19 @@ func compilePlaybook(file string, root *yaml.Node, p *spec.Playbook, opts Option
 						Ext:         a.Ext,
 						Content:     a.Content,
 						ContentLen:  a.ContentLen,
+						ContentKind: a.ContentKind,
 						ContentFile: a.ContentFile,
 						Render:      a.Render,
 						Mode:        a.Mode,
 						Format:      a.Format,
 						Pdf:         a.Pdf,
+						Docx:        a.Docx,
+						Pe:          a.Pe,
+						History:     a.History,
 						Email:       a.Email,
 						Vault:       a.Vault,
+						Archive:     a.Archive,
+						Edit:        a.Edit,
 						Atime:       a.Atime,
 						Mtime:       a.Mtime,
 						Ctime:       a.Ctime,
@@ -235,11 +241,24 @@ func compilePlaybook(file string, root *yaml.Node, p *spec.Playbook, opts Option
 						errs.add(&Error{Src: ref, Field: ferr.field, Msg: ferr.msg})
 						continue
 					}
+					// An archive names its members under the actor base, as
+					// every other path in the action does.
+					if op.Archive != nil {
+						for mi, g := range op.Archive.Members {
+							op.Archive.Members[mi] = joinPath(actor.Base, g)
+						}
+						op.Archive.Base = joinPath(actor.Base, op.Archive.Base)
+					}
 
 					// A named template supplies already-formatted content, so
 					// it must not be templated a second time.
 					if a.Template != "" {
-						op.Content = getTemplate(a.Template, ctx)
+						body, terr := getTemplate(a.Template, ctx)
+						if terr != nil {
+							errs.add(&Error{Src: ref, Field: "template", Msg: terr.Error()})
+							continue
+						}
+						op.Content = body
 						op.ContentFile = ""
 						op.Render = boolPtr(false)
 					}

@@ -1,0 +1,95 @@
+# input-sha256 a78c3dda886b3486e2cca4dcfb794ff8b441fd6ed0653ddde2d0cdffca2a733d
+d users/
+d users/jsmith/
+f 88837fc36883fa82d12fb51019c255e1410001796213211b0f954bf9d7aff454 675 users/jsmith/.access-log.txt
+f e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 0 users/jsmith/.cloud-sync.log
+d users/jsmith/AppData/
+d users/jsmith/AppData/Local/
+d users/jsmith/AppData/Local/Microsoft/
+d users/jsmith/AppData/Local/Microsoft/Outlook/
+f 7375ff22967b5cf850245711926feda1fbb0f1d121ace8f556e81b5219f105eb 347 users/jsmith/AppData/Local/Microsoft/Outlook/Sent-66.eml
+f 44524b33effce4571fce03790d33db6187653ac989c1f71ecd53d63124ce3ff9 347 users/jsmith/AppData/Local/Microsoft/Outlook/Sent-68.eml
+f 20c5998e72e467a0cc51f9105f44bee445856bc48e78872d21ee2cc2ba179726 347 users/jsmith/AppData/Local/Microsoft/Outlook/Sent-70.eml
+d users/jsmith/Documents/
+d users/jsmith/Documents/PROJ-ALPHA/
+f 8d4c649ccbfca5aeeafd0ea3c1b302076d48e1afe5cc20fefef19ae911c94828 15139 users/jsmith/Documents/PROJ-ALPHA/accessed-0-0.pdf
+f 55124aa0a05cd07cdf3e47f5792c37c5e89b5a0d6f5af32efdaa2e2609608c1f 15119 users/jsmith/Documents/PROJ-ALPHA/accessed-0-1.pdf
+f 73a66901201dcaf3ed484bca0002af133ff7ecbde0c9161835e60518cdecfc06 15127 users/jsmith/Documents/PROJ-ALPHA/accessed-0-2.pdf
+f 0c60312302325f702b8381ae452643004313b32acb48b2a00b5a71eb8607feb7 15116 users/jsmith/Documents/PROJ-ALPHA/accessed-1-0.pdf
+f 4579806b5a2ed9fc3fbbd5ce170123b1c8fd6dfbae5ad7c0f096320aaa81a64e 15145 users/jsmith/Documents/PROJ-ALPHA/accessed-1-1.pdf
+f 6372014c99fa39f9c1946eaca9f1128d60771c199c360ee43decc3ef00679c26 15111 users/jsmith/Documents/PROJ-ALPHA/accessed-1-2.pdf
+f d6d7e2b7c67304ec50aed4443565a6af51b46aaaea8779a7d3d4e5616bc5a1a3 15114 users/jsmith/Documents/PROJ-ALPHA/accessed-2-0.pdf
+f 35354f6a292757f619babe9becf78dafb3021914e4c9e4c4f57a15476a0ad020 15111 users/jsmith/Documents/PROJ-ALPHA/accessed-2-1.pdf
+f 9968cb3e7884489e8f29987d67d0390da21fe35af604ef16dcd00cf6d78f74ae 15141 users/jsmith/Documents/PROJ-ALPHA/accessed-2-2.pdf
+f e48e67affe0b3092704c34041278ba06cc1ec9fbd1f3c87057d76cbaf7798201 15107 users/jsmith/Documents/PROJ-ALPHA/accessed-3-0.pdf
+f eb25774a0e5dfa441e13799a9fb673e72ead1f9787ad68be334658935df365fa 15107 users/jsmith/Documents/PROJ-ALPHA/accessed-3-1.pdf
+f 1988a71f95af4dbe90b21666ca4dfc0a3255ab658c58e08ec849778c52a3f588 15096 users/jsmith/Documents/PROJ-ALPHA/accessed-3-2.pdf
+f ddeaf9679d441e6e991bf015c4ea2edf74cf0b18105841a23f8df34214743467 15130 users/jsmith/Documents/PROJ-ALPHA/accessed-4-0.pdf
+f 2f8129475528044026c6af1e06414cb1670c85a69d1c3d8acbb4c5bef180f1ba 15100 users/jsmith/Documents/PROJ-ALPHA/accessed-4-1.pdf
+f 8864ad658d2f6e7616ebf5a0a6993572bca129c58019f4b31639988ccbc53cad 15129 users/jsmith/Documents/PROJ-ALPHA/accessed-4-2.pdf
+f 918ff11893d3d962b976ad5dc53645863dac2e338bf33ca63341dddee8e83c6d 15091 users/jsmith/Documents/PROJ-ALPHA/accessed-5-0.pdf
+f f6913f304a6b546a1738edd64fae4b81c590de415c3fcc3d7064d74d47404a65 15109 users/jsmith/Documents/PROJ-ALPHA/accessed-5-1.pdf
+f 1b9c7326f3f7360e61cbe6419f575eadc32ee01d61eddab2949a952d7eceff6d 15103 users/jsmith/Documents/PROJ-ALPHA/accessed-5-2.pdf
+f 42996d64005c12419d4d7909987959fbc49ace68bcb2705c1c35f416c07a777a 15112 users/jsmith/Documents/PROJ-ALPHA/accessed-6-0.pdf
+f c1d2456cd8bdd7cece2aea292fc03e01711cd151d68755735be0a97237469446 15162 users/jsmith/Documents/PROJ-ALPHA/accessed-6-1.pdf
+f 2a4b02642a3c883c6b49915945ffeffa072ba79bc7944380896625dabd965b93 15109 users/jsmith/Documents/PROJ-ALPHA/accessed-6-2.pdf
+f 25ccc174a343830933f00ff9b1de2a9bf5d81f7e2e33f9f7a8f16cb62d310bed 247 users/jsmith/Documents/meeting-notes-0.txt
+f fd60852b9480d6fa721483f6c79a9c41bfbabef7b8c865d3268a42d445c7808b 247 users/jsmith/Documents/meeting-notes-1.txt
+f 2312664c7223d97596aa84cd17c4083aa513baa3b0c642a433dda5ef964fe740 249 users/jsmith/Documents/meeting-notes-10.txt
+f 0373585834d933f256a8702eabb529c14f82455ef6edc1e45b7b8363a0172035 249 users/jsmith/Documents/meeting-notes-11.txt
+f 47937ca66f4716b83c2347a124931a9c303333ccf8c0a0e85f72a689bb07e09a 249 users/jsmith/Documents/meeting-notes-12.txt
+f c8f6d82fa1b31cb0749ad64245af26cc6552b4182ccd7f202aa04119ee7cdb7d 249 users/jsmith/Documents/meeting-notes-13.txt
+f f0fbf17413897639f1c4afabf083573942dd1029c303d5346e5d04941ed7d18a 249 users/jsmith/Documents/meeting-notes-14.txt
+f 732d3611db5a5d2ac148acf3313bb45e06949a9d667aae40f491dbd11ce57dbf 249 users/jsmith/Documents/meeting-notes-15.txt
+f d595660d351ee4f4f477ce84362239b129098cde67fd1bc0055a2d07b534b214 249 users/jsmith/Documents/meeting-notes-16.txt
+f 0d43a823618d7fbe16b28a34b0496ddbd7aa6b13dc405806982100d74bae9558 249 users/jsmith/Documents/meeting-notes-17.txt
+f aeaad9e5d70aaa052009dd8f53ca81ba006120f1c0970883ab747bed4e392d96 249 users/jsmith/Documents/meeting-notes-18.txt
+f 8bfa7868711327f69601f8288fde2d760e1f0aa89e40fbfbd7f410bb23d38654 249 users/jsmith/Documents/meeting-notes-19.txt
+f bebba85a1b9e5117fbdbb8c522f0e9f7779344004a2fc515b730cc0febd11ee1 247 users/jsmith/Documents/meeting-notes-2.txt
+f ed73e9924a3ac790f5fc9542814b2280dcc3b88da8c48115d1d8b15d606e168d 247 users/jsmith/Documents/meeting-notes-3.txt
+f fad01664aaed605f964def99f133a2748d3a6af1a6a1a0289959ee6eabcb7c81 247 users/jsmith/Documents/meeting-notes-4.txt
+f 91a11576009460a6495e017ebb53663ec98a5a92b43fec4a59871142d73234b9 247 users/jsmith/Documents/meeting-notes-5.txt
+f 8931d78cc7a013c93a6fe72ce0a5033a0b4ef7abb761cea006f2b12f1a175e9d 247 users/jsmith/Documents/meeting-notes-6.txt
+f 2c1b69798f30fe2e9dd70c3cf4f8b26cabe705daccc6a9bbe7048c6fabbb5c9d 249 users/jsmith/Documents/meeting-notes-7.txt
+f f2ad66d872c637f8821561dc51e33736e51ec9e182fbb2005e271ea8ad842c71 249 users/jsmith/Documents/meeting-notes-8.txt
+f dc315461a2e7c47827eb8244daab25826aacd86c758c17f92220d20e30ff3b5f 249 users/jsmith/Documents/meeting-notes-9.txt
+f cdc847926d32ee059f2514f20aaf489cd72e6137791511664e066af1eb570c89 2048 users/jsmith/Documents/presentation-22XBYVA5.pptx
+f 0e92eadc4a833ceb579c555d289a108e89194f54ea1cba3f701b3b4c93a71fd9 2048 users/jsmith/Documents/presentation-3S37E5WP.pptx
+f 51825b8051d7a0e2898a5ada93909e2d7ade63b2d41c10c045a0d60d8356cbb9 2048 users/jsmith/Documents/presentation-3V6RN37Z.pptx
+f fa10035a153b807b809443dd463c2730002f6e497162b592823714f06aaa352b 2048 users/jsmith/Documents/presentation-COEEJM6D.pptx
+f c34aaab44cc662dfe358f9451550604468f0c630edd08fc7a03a302f6f18130a 2048 users/jsmith/Documents/presentation-CPMRSRS3.pptx
+f ff18b7f1b1ef3a144ac2b3a42239502d190e02d3d37fa32ee4fc5e89632108c0 2048 users/jsmith/Documents/presentation-CZPIOQCR.pptx
+f e155f6d3ee6d042692df1d3c815e46f62bf3db8b6519cce6c4fcd4769af47d6c 2048 users/jsmith/Documents/presentation-D65S6PC4.pptx
+f e1dcac56204b9d145a7310c84ec67179ae02da7b446bc8d9e39ffbb03479cab8 2048 users/jsmith/Documents/presentation-DD377HH7.pptx
+f dc3f87efbab38ba90f0a712deec86b4c4cad9ce54bb9b4feec66d92485a19d86 2048 users/jsmith/Documents/presentation-DXJZ52NA.pptx
+f db5400f0d2b1a6049bd5f6096e3c01f4b89f940a2d4295021af1c7cf8d9d7068 2048 users/jsmith/Documents/presentation-FNVJV3OC.pptx
+f e6c8779ddcfcdb3d20094f80ff19e953020a3e692ee7fbf49abfdf3ae2c7b468 2048 users/jsmith/Documents/presentation-GWR5SIHR.pptx
+f 500aa88af0d3c37b23938e3418cc6eda774abf4364dd67476befa204f8ff7602 2048 users/jsmith/Documents/presentation-IJ2G6PSD.pptx
+f c1aa913a627677469142acb6eb06c3380e1fb7fc63a4d72b752c5e754f78e129 2048 users/jsmith/Documents/presentation-ISTQV6I3.pptx
+f b5f71bb4592f12d4639db215dab6ac9ade2d7d2e1f962f34a81527b768e6631f 2048 users/jsmith/Documents/presentation-LQBRZKRW.pptx
+f 005163939a314d0902b8173bc560a977b3f1e2e785bd01f3121c22e962b131f8 2048 users/jsmith/Documents/presentation-OVYMKTT3.pptx
+f d11504fe7732c44027030649ce1f46c6e1a9d322e05b8bf728f58be3b7626303 2048 users/jsmith/Documents/presentation-PFHU7RYB.pptx
+f fc0531896501f735187fa6d76346436b013926225525ba7fd0ee6182098bf97b 2048 users/jsmith/Documents/presentation-RSXEBFFA.pptx
+f 724cb70aa55866246a55b83f93896786bba200dd905ca70e2a8064c679331e8d 2048 users/jsmith/Documents/presentation-SXHB2HSK.pptx
+f c4d9db4bfaa4fb963daa67a0f2f10041f1f1b284d3bef716e1f5c1973439bf67 2048 users/jsmith/Documents/presentation-U3XBAIQW.pptx
+f e7eb8091b03b8fae3c04ab474820e91f6e0196724a6257b0ce8c66264852a337 2048 users/jsmith/Documents/presentation-UK2IQTGB.pptx
+f a7ffd8e4d4c5902a7cdb1b0a3c133adf3a2e1085c6b04c028e364bbf712973e3 29 users/jsmith/Documents/resignation-letter.docx
+f 7c46b46bcf55362018548e465215878ed75da34e76705f202d960a9b1c75b54c 245 users/jsmith/Documents/work-notes-2024-06-01.txt
+d users/jsmith/Downloads/
+d users/jsmith/USB-STAGING/
+f 462c69b061fc3637ed7083c75a9df86136cf7d599cbf1cc0af2667bb00454b45 8093 users/jsmith/USB-STAGING/PROJ-ALPHA-doc-1.pdf
+f 95f7072f956ae4704a84d691bb6b685a32a288449234666b7b631abafcaa43de 8111 users/jsmith/USB-STAGING/PROJ-ALPHA-doc-11.pdf
+f f9e22c99b3f488e860e02508412aaf985846558103b0ef7467dcd621af5d3f2a 8093 users/jsmith/USB-STAGING/PROJ-ALPHA-doc-13.pdf
+f 8bc775bc08c0963c9c39f4d91ebb8d8c58d106a01b618ef89538204bef31bcc3 8084 users/jsmith/USB-STAGING/PROJ-ALPHA-doc-3.pdf
+f ddbc9c87134b39123c26a6f639970fc4b7d78e19e535fe857abc8b2b686dec0e 8112 users/jsmith/USB-STAGING/PROJ-ALPHA-doc-5.pdf
+f 4881072814c9ee0985597cdba06052c5a9d9d1a2ce3d81a64214ba721477d9b4 8097 users/jsmith/USB-STAGING/PROJ-ALPHA-doc-7.pdf
+f 806c5ec071762c1d9424bab710e40c10bc34d6a3e504227f2ad0208db223825f 8106 users/jsmith/USB-STAGING/PROJ-ALPHA-doc-9.pdf
+f be89c3da9b442b0bfea35f35111f32fb448f0be09b19782b4f84450aff1a68d4 91236 users/jsmith/USB-STAGING/backup-20240604.zip
+f 3def9c2479a373c988e526171a4cd68092cc2630b4fa32f529318175f1eafdd1 4096 users/jsmith/USB-STAGING/customer-list-0.xlsx
+f 8ab89de4e1ba9e090e2c01cc7114da6cf23049d386585af4e00b1d691798a573 4096 users/jsmith/USB-STAGING/customer-list-10.xlsx
+f 09e172849f75e99847231a07ffb02613d8d8d75e718a2ac85a86cd4253cd8df8 4096 users/jsmith/USB-STAGING/customer-list-12.xlsx
+f 9b44fa9b6c616b173b8a74c28e62b62e1cfcc19f10607b392c0afe862b1cc8b8 4096 users/jsmith/USB-STAGING/customer-list-14.xlsx
+f 459f2e35cfc35688e1f4085a57a475808cb40a7664de2245f8e5d71410dbaaa0 4096 users/jsmith/USB-STAGING/customer-list-2.xlsx
+f fcfba6561b55d227c8a24d602d2fdf656b68cf100da79582a8c2abca8e90eb95 4096 users/jsmith/USB-STAGING/customer-list-4.xlsx
+f 6ab78faaf0bed3b07935c44faf2d4b7c41df336c41a733f3f472c7469b7fb340 4096 users/jsmith/USB-STAGING/customer-list-6.xlsx
+f 2ac8e4c53a7f62a7575d8f5e4c476698e9529070a764cc26a1725f15a993a456 4096 users/jsmith/USB-STAGING/customer-list-8.xlsx

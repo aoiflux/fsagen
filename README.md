@@ -5,14 +5,15 @@ Deterministic generator for creating diverse file-system artifacts to test foren
 ## Features
 
 - Deterministic output with `--seed`: the same seed and inputs give byte-identical files (see *Determinism contract*)
-- Manifest mode: simple, declarative file operations (create/update/append/delete/mace/rename/copy/truncate/rotate/ads/motw/email/ansible-vault)
+- Manifest mode: simple, declarative file operations (create/update/append/edit/delete/mace/rename/copy/truncate/rotate/archive/ads/motw/email/ansible-vault)
 - Playbook mode: complex timelines with actors, timed steps, and templating
 - Bulk mode: super-simple synthetic corpus generation with `--bulk` and `--depth`
 - Author content in real files with `content_file`, shared across scenarios with `--vars-file`
+- Files a tool can actually parse: PE executables, zip, PNG, JPEG, MP4, docx, PDF, and Chrome and Firefox history databases. Every one of them is read back in the test suite — by `debug/pe`, `archive/zip`, `image/png`, `image/jpeg`, a box walk, SQLite — and fsagen refuses the formats it cannot build rather than writing random bytes under a name that promises one (see *File formats*)
 - Real RFC 5322 email: MIME multipart, threading headers, base64 attachments, `.eml` and `.mbox`
 - Real PDFs from Markdown, with full control of document metadata
 - Real `$ANSIBLE_VAULT;1.1;AES256` files that `ansible-vault` can decrypt
-- Extensive file type support: documents, logs, archives, media, emails, Windows artifacts
+- `archive` zips what the scenario staged, and `edit` cuts lines back out of a log
 - All four timestamps (access, modification, change, creation) taken from the scenario on Windows NTFS, access and modification elsewhere; set, then settled and verified after the last operation (see *Timestamps*)
 - Forensic timelines in The Sleuth Kit's bodyfile, a mactime-style MACB listing, CSV, JSON lines and text, with four times per entry and every NTFS stream; observed (read back from disk) or modelled (what the scenario intends, deleted files included, byte-identical on every run)
 - A ledger of every operation and an answer key of what a tool should find, beside the output
@@ -116,7 +117,7 @@ YAML with an optional `start` and a sequence of operations:
 
 - start (top level, optional): RFC 3339, or `now` for a run that cannot be reproduced. It is the reference time for operations without an `mtime` or `atime`: when they happen (see *Timestamps*), what `${DATE}` formats and what an unpinned pdf's dates and an email's `Date` default to. With neither, those are errors; fsagen never reads the wall clock for them.
 
-- action: `create|update|append|truncate|rotate|delete|mace|rename|copy|ads|motw|email|ansible-vault`
+- action: `create|update|append|edit|truncate|rotate|delete|mace|rename|copy|archive|ads|motw|email|ansible-vault`
 - path: target path relative to output root (see *Paths* below)
 - id: name for what this action creates or renames, so a later action can refer to it
 - ref / refs: instead of `path`, act on the one path (`ref`) or every path (`refs`) created under an `id` that still exists; ids follow renames
@@ -125,13 +126,19 @@ YAML with an optional `start` and a sequence of operations:
 - ext: file extension to append if `path` has no extension
 - content: literal content (optional); `content: ''` writes an empty file
 - content_file: load content from a file inside the manifest's directory (optional)
-- content_len: size of deterministic random content, at least 1. With no content of any kind, the default is 1024 characters (256 for `append`, 128 for `ads`)
+- content_len: how much deterministic filler the file carries, at least 1. With no content of any kind the default is 1024 characters (256 for `append`, 128 for `ads`). For a structured format it is the size of the *filler region*, not of the file: the PE overlay, the zip member, the PNG chunk, the JPEG comments, the MP4 `mdat`, the PDF or docx text (see *File formats*). A structured format with no `content_len` gets the smallest valid file
+- content_kind: what invented bytes look like — `text` (the default: base32), `bytes` (uniform random), `zeros`, `pattern` (a counting ramp) or `lorem` (words). It only applies to bytes fsagen invents, so giving it beside `content`, `content_file` or `template` is an error
 - render: run `${...}` substitution over the content. Defaults to `true` for inline
   `content` and `false` for `content_file`, because scripts and PEM keys contain
   `${...}` sequences of their own that must survive verbatim
 - mode: octal file permissions, e.g. `"0600"` (default 0644 files, 0755 directories)
-- format: `raw` (default) or `pdf`; for the `email` action, `eml` or `mbox`
+- format: what to build — `raw` (default) or `text` writes the content through; `pdf`, `docx`, `pe`, `zip`, `png`, `jpeg`, `mp4`, `chrome_history` and `firefox_places` build a file of that type. With no `format` and no content of its own, the extension picks one (see *File formats*). For the `email` action, `eml` or `mbox`
 - pdf: document metadata for `format: pdf` — see below
+- docx: `title`, `author`, `created`, `modified` for `format: docx`
+- pe: machine, subsystem, dll, timestamp, sections, imports and version resource for `format: pe` — see *File formats*
+- history: `visits` and (Chrome) `downloads` for `format: chrome_history` or `firefox_places` — see *File formats*
+- archive: what goes into the `archive` action's zip — see *File formats*
+- edit: the changes the `edit` action makes — see *File formats*
 - email: message definition for the `email` action — see below
 - vault: password, vault_id and salt for the `ansible-vault` action
 - atime/mtime/ctime/crtime: RFC 3339 access, modification, change and creation (birth) times, fractions of a second kept. They override what the action would otherwise set (see *Timestamps*). `ctime` needs Windows on NTFS or ReFS and `crtime` Windows; elsewhere either is a pre-flight error unless `--on-unsupported=skip`, which drops the field and records that
@@ -156,9 +163,16 @@ operation or step/action, and the field). All of these are errors:
   `rename`/`copy`/`rotate` onto a path that already exists, deleting a non-empty
   directory. `append` creates a missing file, as a log comes into being.
 - random content (`content_len`, or no content at all) under an extension that
-  promises a structured format fsagen cannot generate yet (`.exe`, `.zip`,
-  `.png`, `.jpg`, `.sqlite`, `.docx`, `.mp4`, `.eml`, ...). Add `format: text`
-  to write placeholder text on purpose, or give `content`/`content_file`.
+  promises a format fsagen cannot build: `.xlsx`, `.pptx`, `.gif`, `.bmp`,
+  `.mov`, `.sqlite`, `.db`, `.eml`, `.mbox`, and `.pdf` without `format: pdf`.
+  The error says what the extension promises and what to use instead
+  (`action: email` for a message, `format: chrome_history` for a profile).
+  Add `format: text` to write placeholder text on purpose, or give
+  `content`/`content_file`. An extension fsagen *can* build gets a real file
+  of that type instead of an error (see *File formats*).
+- a typed block beside the wrong format (`pe:` with `format: docx`), or
+  `content`, `content_file`, `template` or `render` beside a format that
+  builds the file itself
 - an operation the platform cannot perform (`ads`/`motw` off NTFS), unless
   `--on-unsupported=skip`
 
@@ -177,7 +191,8 @@ must name a file already generated in the output.
 
 **Examples:**
 - `examples/manifest-basic.yaml` - Basic create/update/delete operations
-- `examples/manifest-bulk-simple.yaml` - Quick bulk file generation across multiple types
+- `examples/manifest-bulk-simple.yaml` - Many files of every type fsagen can build, in one manifest
+- `examples/manifest-history.yaml` - Chrome and Firefox history databases, each in its own epoch
 
 ## Playbook schema
 
@@ -209,7 +224,7 @@ every action in the order it is written, so two actions rendering
 `file-${SEQ}.txt` name two different files: give the first an `id` and refer
 to it with `ref`/`refs`.
 
-Operations supported: `create|update|append|truncate|rotate|delete|mace|rename|copy|ads|motw|email|ansible-vault` (all operations work in both manifest and playbook). `ads` and `motw` are Windows-only. Each action happens at its scheduled time, which sets the times of what it creates or changes (see *Timestamps*); explicit `atime`/`mtime`/`ctime`/`crtime` override them.
+Operations supported: `create|update|append|edit|truncate|rotate|delete|mace|rename|copy|archive|ads|motw|email|ansible-vault` (all operations work in both manifest and playbook). `ads` and `motw` are Windows-only. Each action happens at its scheduled time, which sets the times of what it creates or changes (see *Timestamps*); explicit `atime`/`mtime`/`ctime`/`crtime` override them.
 
 Durations accept `d` and `w` in addition to Go's own units, so a step can be
 `offset: 2d6h` rather than `54h`.
@@ -222,6 +237,7 @@ Durations accept `d` and `w` in addition to Go's own units, so a step can be
 - `${VAR:name}` - Variable substitution (from global or actor-specific variables); undefined names are errors
 - `${UUID}` - Deterministic random version-4 UUID
 - `${IP}` - Deterministic IP address (192.168.x.x range)
+- `${IP:cidr}` - Deterministic address inside a block, e.g. `${IP:10.10.0.0/16}` or `${IP:2001:db8::/32}`. IPv4 blocks with room to spare leave out the network and broadcast addresses (`TestIPStaysInCIDR`)
 - `${HASH:N}` - Deterministic lowercase hex string of length N
 - `${BATCH}` - Current batch index (when using batch_count)
 - `${ITER}` - Current iteration index (when using repeat)
@@ -268,7 +284,7 @@ steps:
 actions:
   - action: create
     path: message.eml
-    template: email  # a simple LF-terminated message; use the email action for RFC 5322
+    template: email  # a real RFC 5322 message; the email action gives full control
 ```
 
 Available templates: `email`, `log`, `script`, `doc`
@@ -276,16 +292,17 @@ Available templates: `email`, `log`, `script`, `doc`
 **Example playbooks:**
 
 - `examples/playbook-basic.yaml` - Simple two-actor workflow
-- `examples/playbook-adversary-data-theft.yaml` - Stages documents, archives, writes exfil logs, backdates
-- `examples/playbook-log-tampering.yaml` - Creates baseline logs, injects tampered entries, backdates, deletes
+- `examples/playbook-adversary-data-theft.yaml` - Stages documents, zips them, writes exfil logs, backdates
+- `examples/playbook-browsing.yaml` - Two users browsing, one Chrome profile and one Firefox
+- `examples/playbook-log-tampering.yaml` - Creates baseline logs, injects tampered entries, backdates, then cuts the injected lines out with `edit`
 - `examples/playbook-persistence-artifacts.yaml` - Drops startup-like files and .reg exports
-- `examples/playbook-email-and-archive.yaml` - Creates emails/images, archives, deletes originals
+- `examples/playbook-email-and-archive.yaml` - Real messages and JPEGs, a real zip of both by id, then deletes the originals
 - `examples/playbook-log-rotate-and-truncate.yaml` - Demonstrates log rotation and truncation
 - `examples/playbook-windows-ads-motw.yaml` - Adds NTFS ADS and Mark-of-the-Web (Windows-only)
 - `examples/playbook-email-thread.yaml` - Four-message RFC 5322 thread as `.eml` and `.mbox`, with a generated PDF attachment
 - `examples/playbook-comprehensive-ransomware.yaml` - **Advanced**: Full ransomware attack with variables, batching, conditions, and templates
 - `examples/playbook-insider-threat-exfil.yaml` - **Advanced**: 7-day insider threat scenario with repeated access patterns
-- `examples/playbook-malware-lifecycle.yaml` - **Advanced**: 48-hour malware infection lifecycle with beaconing and anti-forensics
+- `examples/playbook-malware-lifecycle.yaml` - **Advanced**: 48-hour malware infection lifecycle: a PE dropper with imports and a version resource, beaconing, lateral-movement logs named from `${IP:10.10.0.0/16}`, and anti-forensics
 
 ## Email, PDF and Ansible vault
 
@@ -323,6 +340,8 @@ bodies and attachments). Writes a `.eml`, or appends to a `.mbox` with mboxrd
         name: "Technical_Assessment_Brief.pdf"
       - source_root: reports/review.pdf   # a file an earlier step generated in
                                           # the output root
+      - ref: quarterly                    # the one live path under that id,
+                                          # whatever it was named
 ```
 
 Author-supplied `headers` are emitted first, in order, then the structured
@@ -427,8 +446,8 @@ always wins:
 
 | Action | Times |
 |---|---|
-| `create`, `ansible-vault`, `email` to an `.eml` | born at T: all four times are T (creating a file that exists makes it anew) |
-| `update`, `append`, `truncate`, a later message appended to an `.mbox` | access, modification and change become T; creation is kept |
+| `create`, `archive`, `ansible-vault`, `email` to an `.eml` | born at T: all four times are T (creating a file that exists makes it anew) |
+| `update`, `append`, `edit`, `truncate`, a later message appended to an `.mbox` | access, modification and change become T; creation is kept |
 | `mace` | only the times it names (at least one) |
 | `ads`, `motw` | the file's times do not change |
 | `rename` | the object keeps its times; its change time becomes T |
@@ -459,7 +478,7 @@ for either way.
 
 What can be set:
 
-| | Windows (NTFS, ReFS) | Windows (FAT, exFAT) | Linux, macOS, FreeBSD |
+| | Windows (NTFS, ReFS) | Windows (FAT, exFAT) | Linux |
 |---|---|---|---|
 | access, modification | yes | yes | yes |
 | creation (`crtime`) | yes | yes | no |
@@ -468,7 +487,8 @@ What can be set:
 A time the platform cannot set is never faked: if the input asks for it, the
 run stops before writing (or, with `--on-unsupported=skip`, drops the field
 and records it in the run manifest); if the scenario only implies it, the
-ledger lists it as uncontrolled.
+ledger lists it as uncontrolled. macOS and FreeBSD take the Linux column's
+code path, but no test has run there.
 
 Limits:
 
@@ -508,8 +528,8 @@ Verified by `TestCreateSetsCreationTime`, `TestMaceSetsFourTimes`,
 `TestSettleRetriesOnlyForAccessTimes`,
 `TestChangeTimeSticks` and `TestTimelinePassKeepsAtime`. The creation and
 change time tests run on Windows (11 and 10); on Linux they are skipped, and
-the rest pass on Fedora 40, on tmpfs and btrfs. macOS is part of the release
-check.
+the rest pass on Fedora 40, on tmpfs and btrfs. None of it has run on macOS
+or FreeBSD.
 
 ## Determinism contract
 
@@ -532,6 +552,14 @@ Which operations were skipped as unsupported is recorded, and follows from the
 capability set; skipping one changes no other file's bytes. Bulk mode is
 covered too (with `--bulk-start` as one more input).
 
+Three kinds of bytes hold only for the pinned toolchain and the pinned
+dependency versions, both recorded in `run-manifest.json`: a `deflate`
+archive member (`compress/flate`), a JPEG (`image/jpeg`) and an SQLite
+database (the driver). Everything else is written by fsagen itself and does
+not depend on either — store-only zips (which is what a docx is), PE images,
+MP4, and the PNG, whose zlib stream is hand-rolled from stored blocks for
+exactly this reason.
+
 How: every random value is drawn from a ChaCha8 stream keyed by the seed and
 the name of what it is for (the operation's `id` or the hash of its YAML,
 its iteration and batch, the field, the token), so adding, removing or
@@ -553,26 +581,201 @@ key and modelled bodyfile, and `TestDryRunGoldens`), `TestBulkDeterministic`,
 `TestModelledTimelineIdenticalAcrossRuns` and
 `TestCrossCapabilityContentEquality`. The whole suite has been run on Windows
 11, Windows 10 and Fedora 40 (Linux goldens recorded there: every file is
-byte-identical to Windows, less the NTFS streams); macOS is part of the
-release check.
+byte-identical to Windows, less the NTFS streams). macOS and FreeBSD are
+built by the gate but have never been run.
 
-## Supported File Types
+## File formats
 
-Bulk mode writes these types. Most are structurally valid; the exceptions are
-called out:
+A `create` or `update` that gives no content of its own builds a file of the
+type its extension promises. Give `format:` to say so outright, or to build a
+type whose extension is ambiguous.
+
+| `format` | Inferred from | What is written | Where `content_len` goes | Read back by |
+|---|---|---|---|---|
+| `pe` | `.exe` `.dll` `.sys` `.scr` | PE32 or PE32+: DOS stub, COFF and optional headers, sections, import table, version resource, a Windows checksum | the overlay, after the last section | `debug/pe` (`TestTypedFormatsParse`, `TestPEHeaderFieldsEqualInputs`) |
+| `zip` | `.zip` `.jar` | a zip holding one member, `data.bin` | that member's size | `archive/zip` (`TestZipIsReadableWithSizesInPlace`) |
+| `png` | `.png` | a 64×64 truecolour PNG | an `fsAg` private ancillary chunk | `image/png` (`TestPNGDecodesAndCarriesPadding`) |
+| `jpeg` | `.jpg` `.jpeg` | a 64×64 baseline JPEG | `COM` segments after `SOI` | `image/jpeg` (`TestJPEGDecodesAndCarriesPadding`) |
+| `mp4` | `.mp4` | `ftyp` + `moov` (`mvhd`, one video `trak`) + `mdat`, 320×240, 3 s | the `mdat` payload | a box walk (`TestMP4HasFtypMoovMdat`, `TestMP4DurationAndDimensions`) |
+| `docx` | `.docx` | an OOXML package: `[Content_Types].xml`, `word/document.xml`, `docProps/core.xml` and `app.xml`, stored uncompressed | the document's text | `archive/zip` + the properties (`TestDocxOpensWithParts`) |
+| `pdf` | *(explicit only)* | a paginated PDF from a Markdown subset | the document's text | see *`format: pdf`* |
+| `chrome_history` | *(explicit only)* | Chrome's `meta`, `urls`, `visits`, `downloads`, `downloads_url_chains` and `keyword_search_terms`, with its indexes | not accepted | SQLite + the queries a tool runs (`TestStandardHistorySQLReturnsVisits`) |
+| `firefox_places` | *(explicit only)* | Firefox's `moz_origins`, `moz_places` (with `rev_host`) and `moz_historyvisits`, `user_version = 77` | not accepted | as above |
+| `text`, `raw` | anything else | the content, or filler, byte for byte | the whole file | — |
+
+`.pdf` is deliberately not inferred: a PDF's dates are settled while the
+operation is compiled, before its path is rendered, so it stays an explicit
+`format: pdf`. An extension that promises something fsagen still cannot build
+is an error rather than a fake — see *Input is strict*.
+
+Filler is base32 text unless `content_kind` says otherwise
+(`TestFillerKinds`, `TestBytesEntropyAbove7_9At64KiB`,
+`TestContentKindShapesTheBytes`). A structured format is built by fsagen, so
+it takes no `content`, `content_file`, `template` or `render`; `pdf` and
+`docx` are the exceptions, because there the content *is* the document's
+text.
+
+### `pe:` — Windows executables
+
+What fsagen writes is a container for a parser to read, not a program to run:
+headers, sections of filler, an import table and a version resource. Nothing
+in the image is code — the entry point is inside filler — and it must stay
+that way.
+
+```yaml
+- action: create
+  path: AppData/Local/Temp/wupdmgr32.exe
+  content_len: 8192            # the overlay
+  pe:
+    machine: amd64             # amd64 (default), i386, arm64
+    subsystem: gui             # console (default), gui, native
+    dll: false
+    timestamp: "2024-03-15T09:00:00Z"   # RFC3339, or "0" for a reproducible
+                                        # build; defaults to the action's time
+    sections:                  # default: .text 1024, .rdata 512, .data 256
+      - name: .text
+        size: 4096
+        flags: [code, execute, read]
+      - name: .data
+        size: 1024
+        flags: [initialized_data, read, write]
+    imports:                   # "dll!function"; the imphash is stable
+      - kernel32.dll!CreateFileW
+      - advapi32.dll!RegSetValueExW
+    version:                   # the resource Explorer and every metadata tool read
+      file_version: 10.0.19041.1
+      product_version: 10.0.19041.1
+      company_name: Microsoft Corporation
+      file_description: Windows Update Manager
+      internal_name: wupdmgr32
+      original_filename: wupdmgr32.exe
+      product_name: Microsoft Windows Operating System
+      legal_copyright: "(c) Microsoft Corporation."
+```
+
+Section flags: `code`, `initialized_data`, `uninitialized_data`, `execute`,
+`read`, `write`, `discardable`. The checksum in the header is the one Windows
+itself computes: `TestPEChecksumMatchesWindows` asks `imagehlp` for it and
+compares (on Windows; elsewhere `TestPEChecksumCoversTheWholeImage` checks
+only that the stored value covers the image). The same imports always give
+the same imphash (`TestImphashStable`).
+
+### `history:` — browser profiles
+
+Each engine keeps its own epoch, and getting that wrong is the classic way to
+put a corpus in the year 1601: Chrome counts microseconds from 1601-01-01 and
+Firefox from 1970-01-01 (`TestChromeWebKitEpoch`, `TestFirefoxPRTime`).
+fsagen writes the tables a parser queries, with their indexes:
+`TestStandardHistorySQLReturnsVisits` runs the SQL a history tool runs and
+gets the scenario's visits, hosts, visit counts and transition codes back.
+Nothing has been checked against a named forensic tool.
+
+```yaml
+- action: create
+  path: Users/analyst/AppData/Local/Google/Chrome/User Data/Default/History
+  format: chrome_history
+  history:
+    visits:
+      - url: https://intranet.example/hr/handbook
+        title: Employee handbook
+        time: "2023-10-30T09:12:00Z"   # defaults to the action's time
+        transition: typed               # link (default), typed, bookmark,
+                                        # generated, form_submit, reload
+      - url: https://intranet.example/hr/handbook/leave
+        title: Leave policy
+        time: "2023-10-30T09:13:20Z"
+        from_visit: 1                   # 1-based position in this list
+    downloads:                          # Chrome only
+      - url: https://intranet.example/hr/handbook.pdf
+        target_path: C:\Users\analyst\Downloads\handbook.pdf
+        start: "2023-10-30T09:14:00Z"
+        end: "2023-10-30T09:14:03Z"
+        received_bytes: 284160
+        total_bytes: 284160
+        mime_type: application/pdf
+```
+
+A history database is as big as its contents make it, so it takes no
+`content_len`. `examples/manifest-history.yaml` and
+`examples/playbook-browsing.yaml` are worked profiles.
+
+### `archive` action
+
+Zips files the scenario has already written. Members come from the model, so
+a member's stored modification time is the time the scenario gave that file,
+not the time it happened to be written; and they are resolved before the
+archive object exists, so a pattern can never sweep the archive into itself.
+
+```yaml
+- action: archive
+  path: staging/exfil-ready.zip
+  archive:
+    method: store            # store (default) or deflate
+    comment: staged for transfer
+    member_refs: [mail, media]   # every live path created under these ids,
+                                 # in creation order
+    members:                     # then glob patterns, in path order
+      - "users/alice/staging/*.csv"
+    base: users/alice/staging    # stripped from each stored name
+```
+
+`member_refs` come first, in the order the files were created, then
+`members`, in path order; a path named twice is stored once. A pattern that
+matches nothing is an error, as is a member that does not lie under `base` —
+fsagen will not invent a name for it (`TestArchiveRefusesEmptyPattern`,
+`TestArchiveBaseMustCoverEveryMember`).
+Patterns are `path.Match` globs, so `*` does not cross a `/`. In a playbook,
+both the patterns and `base` are relative to the actor's base.
+
+`store` is the default because deflated bytes come from `compress/flate` and
+so are reproducible only for the Go toolchain `go.mod` pins. Members match
+their sources byte for byte (`TestArchiveMembersMatchSources`).
+
+### `edit` action
+
+Changes a file in place. Cutting the injected lines back out of a log leaves
+a gap in the record; truncating it leaves a file that is obviously short.
+Telling those apart is the kind of thing a tool under test should be able to
+do, so fsagen can produce both.
+
+```yaml
+- action: edit
+  path: var/log/app.jsonl
+  edit:
+    delete_lines: "40-60"            # 1-based, inclusive; or a single line
+    delete_matching: '"level":"warn"' # every line the regexp matches
+    replace:
+      - pattern: 'user=(\w+)'
+        with: 'user=REDACTED'
+        count: 0                     # 0 means every match
+    insert_after:
+      - pattern: '"service start"'
+        text: '{"ts":"2021-07-01T00:00:01Z","level":"info","msg":"ready"}'
+```
+
+The steps run in that fixed order whatever order they are written in: whole
+lines, then substitutions over the text, then insertions. A scenario that
+needs another order uses two `edit` actions, which is also what the ledger
+then shows. Line endings survive, and a file that ended without a newline
+still does. A range past the end of the file is an error
+(`TestEditDeleteLines40to60`, `TestEditReplaceAndInsert`,
+`TestEditRefusesMissingLines`).
+
+### Bulk mode
+
+Bulk mode writes `--bulk` files of every one of these types in each
+directory it makes, all structurally valid:
 
 - **Documents**: .txt, .md, .docx, .pdf
 - **Data**: .csv, .json, .jsonl, .xml, .html
 - **Logs**: .log, .syslog, .jsonl
-- **Media**: .png; .mp4 (holds text, not video)
+- **Media**: .png, .jpg, .mp4
 - **Archives**: .zip
 - **Email**: .eml, .mbox
-- **Browser history**: Chrome `urls`/`visits` (.db) and Firefox `moz_places` (.sqlite) databases
-- **Windows**: .reg; .exe (a 256-byte DOS stub, not a loadable PE)
-
-Manifests and playbooks write text, PDFs (`format: pdf`), email (`action: email`),
-Ansible vaults and NTFS streams (`ads`, `motw`); see *Input is strict* for the
-formats they refuse to fake.
+- **Browser history**: a Chrome profile (`Chrome-xxxxxx/Default/History`) and
+  a Firefox one (`Firefox-xxxxxx/Profiles/xxxxxxxx.default-release/places.sqlite`),
+  under the names a tool looks for
+- **Windows**: .reg; .exe (a real PE with imports and a version resource)
 
 ## Forensic Timeline Generation
 
@@ -626,7 +829,7 @@ an error, never a silent fall-back):
 **Every entry has four times**: accessed, modified, changed (metadata) and
 born (created), each read from its own source and never copied into another:
 `FILE_BASIC_INFO` on Windows, `statx` on Linux (the birth time only where the
-file system keeps one), `lstat` on macOS and FreeBSD
+file system keeps one), `lstat` on macOS and FreeBSD (built, never run)
 (`TestBodyfileCrtimeNotCtime`, `TestLinuxBtimeFromStatxOrZero`). Every named
 stream is its own entry, with its size and MD5 and its file's times
 (`TestStreamsQuillAndSpaceNameWithSizes`). The inode is the NTFS MFT record
@@ -677,7 +880,7 @@ fsagen --seed 7 --bulk 3 --depth 2 --timeline timeline.csv ./quick-bulk
 
 What it does:
 - Creates a directory fan-out up to `--depth` with `--bulk` sub-branches per level
-- Populates each level with many file types (txt, docx, png, pdf, mp4, csv, json, xml, html, log, reg, zip, exe, jsonl, syslog, md, eml, mbox, Chrome .db, Firefox .sqlite)
+- Populates each level with one file of every type in *File formats* (txt, docx, png, jpg, pdf, mp4, csv, json, xml, html, log, reg, zip, exe, jsonl, syslog, md, eml, mbox, a Chrome profile and a Firefox one)
 - Draws names and contents from `--seed`, reproducibly (see *Determinism contract*); dates inside files count from `--bulk-start`
 
 Intended use:

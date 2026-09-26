@@ -30,7 +30,7 @@ steps:
     actions:
       - action: create
         path: Documents/${VAR:project_code}/accessed-${ITER}-${BATCH}.pdf
-        format: text   # placeholder text, not a real file of this type
+        format: pdf
         content_len: 16384
       - action: append
         path: .access-log.txt
@@ -54,7 +54,7 @@ steps:
     actions:
       - action: create
         path: USB-STAGING/${VAR:project_code}-doc-${BATCH}.pdf
-        format: text   # placeholder text, not a real file of this type
+        format: pdf
         content_len: 8192
         condition: odd
       - action: create
@@ -67,11 +67,15 @@ steps:
   - actor: insider
     offset: 73h
     actions:
-      - action: create
+      # A real archive of the staged documents.
+      - action: archive
         path: USB-STAGING/backup-${DATE:20060102}.zip
-        format: text   # placeholder text, not a real file of this type
-        content_len: 131072
         mtime: "2024-05-15T10:00:00Z"
+        archive:
+          base: USB-STAGING
+          members:
+            - USB-STAGING/*.pdf
+            - USB-STAGING/*.xlsx
 
   # Email artifacts (sending to personal email)
   - actor: insider
@@ -85,7 +89,6 @@ steps:
       - action: create
         path: Downloads/attachment-${UUID}.zip
         id: attachments
-        format: text   # placeholder text, not a real file of this type
         content_len: 65536
 
   # Cloud upload simulation

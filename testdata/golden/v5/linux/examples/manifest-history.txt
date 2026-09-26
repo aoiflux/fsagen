@@ -1,0 +1,8 @@
+# input-sha256 860f94d6577cd62152c3e8bc412760aca89e893b809af3fb74be43d8f4eb4f4e
+d Chrome/
+d Chrome/Default/
+f 7e001eed1b96018cd5b0f770c193bb9d368b71a1eaa61195620f9aa61de4c9f8 53248 Chrome/Default/History
+d Firefox/
+d Firefox/Profiles/
+d Firefox/Profiles/default/
+f b05b482c7581ab326e4347beb781d76f24295907d0c5ab0a9978a95ba15de64c 28672 Firefox/Profiles/default/places.sqlite

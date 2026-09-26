@@ -1,0 +1,5 @@
+# input-sha256 46f3ad2725542506b5aeb3a069fcc20842e31f2586347240ef408d31a43ae77a
+0|/users|1|d/drwxr-xr-x|0|0|0|1635760800|1635760800|0|0
+0|/users/winuser|2|d/drwxr-xr-x|0|0|0|1635760800|1635760800|0|0
+0|/users/winuser/downloads|3|d/drwxr-xr-x|0|0|0|1635760800|1635760800|0|0
+5b10f047777a941a457f142500fc5932|/users/winuser/downloads/installer.exe|4|r/rrw-r--r--|0|0|2816|1635760800|1635760800|0|0

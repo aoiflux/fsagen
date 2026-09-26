@@ -4,31 +4,40 @@ actors:
     base: users/bob
 
 steps:
-  # Create emails and images, then bundle in an archive
+  # Real messages and real images, then a real archive of both.
   - actor: insider
     offset: 0s
     actions:
       - action: create
         type: dir
         path: mail
-      - action: create
+      - action: email
         path: mail/msg-${SEQ}.eml
         id: mail
-        format: text   # placeholder text, not a real file of this type
-        content_len: 400
+        email:
+          from: bob@example.com
+          to: ["personal-${SEQ}@mail.example"]
+          subject: "Handover notes ${SEQ}"
+          body_text: |
+            Notes from today, as discussed.
       - action: create
         path: media/pic-${SEQ}.jpg
         id: media
-        format: text   # placeholder text, not a real file of this type
         content_len: 256
 
   - actor: insider
     offset: 20m
     actions:
-      - action: create
+      # The members are named by id, so the archive holds exactly what was
+      # created above however the names were generated.
+      - action: archive
         path: bundles/bundle.zip
-        format: text   # placeholder text, not a real file of this type
-        content_len: 2048
+        archive:
+          base: .
+          comment: staged for transfer
+          member_refs:
+            - mail
+            - media
 
   # Clean up originals to look like staging/exfil
   - actor: insider

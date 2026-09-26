@@ -1,5 +1,50 @@
 {
   "$defs": {
+    "ArchiveSpec": {
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "members"
+          ]
+        },
+        {
+          "required": [
+            "member_refs"
+          ]
+        }
+      ],
+      "properties": {
+        "base": {
+          "type": "string"
+        },
+        "comment": {
+          "maxLength": 65535,
+          "type": "string"
+        },
+        "member_refs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "members": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "method": {
+          "description": "store (the default) is byte-identical on every toolchain; deflate is not.",
+          "enum": [
+            "store",
+            "deflate"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "Attachment": {
       "additionalProperties": false,
       "oneOf": [
@@ -39,11 +84,116 @@
         "name": {
           "type": "string"
         },
+        "ref": {
+          "type": "string"
+        },
         "source_file": {
           "type": "string"
         },
         "source_root": {
           "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "DocxSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "author": {
+          "type": "string"
+        },
+        "created": {
+          "$ref": "#/$defs/Rfc3339Time"
+        },
+        "modified": {
+          "$ref": "#/$defs/Rfc3339Time"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "EditInsert": {
+      "additionalProperties": false,
+      "properties": {
+        "pattern": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pattern",
+        "text"
+      ],
+      "type": "object"
+    },
+    "EditReplace": {
+      "additionalProperties": false,
+      "properties": {
+        "count": {
+          "description": "0 means every match.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pattern": {
+          "type": "string"
+        },
+        "with": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pattern"
+      ],
+      "type": "object"
+    },
+    "EditSpec": {
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "delete_lines"
+          ]
+        },
+        {
+          "required": [
+            "delete_matching"
+          ]
+        },
+        {
+          "required": [
+            "replace"
+          ]
+        },
+        {
+          "required": [
+            "insert_after"
+          ]
+        }
+      ],
+      "properties": {
+        "delete_lines": {
+          "description": "A 1-based inclusive line or range of lines, for example 40-60.",
+          "pattern": "^[0-9]+(-[0-9]+)?$",
+          "type": "string"
+        },
+        "delete_matching": {
+          "type": "string"
+        },
+        "insert_after": {
+          "items": {
+            "$ref": "#/$defs/EditInsert"
+          },
+          "type": "array"
+        },
+        "replace": {
+          "items": {
+            "$ref": "#/$defs/EditReplace"
+          },
+          "type": "array"
         }
       },
       "type": "object"
@@ -138,6 +288,90 @@
       ],
       "type": "object"
     },
+    "HistoryDownload": {
+      "additionalProperties": false,
+      "properties": {
+        "end": {
+          "$ref": "#/$defs/Rfc3339Time"
+        },
+        "mime_type": {
+          "type": "string"
+        },
+        "received_bytes": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "start": {
+          "$ref": "#/$defs/Rfc3339Time"
+        },
+        "target_path": {
+          "type": "string"
+        },
+        "total_bytes": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "url",
+        "target_path"
+      ],
+      "type": "object"
+    },
+    "HistorySpec": {
+      "additionalProperties": false,
+      "properties": {
+        "downloads": {
+          "items": {
+            "$ref": "#/$defs/HistoryDownload"
+          },
+          "type": "array"
+        },
+        "visits": {
+          "items": {
+            "$ref": "#/$defs/HistoryVisit"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "HistoryVisit": {
+      "additionalProperties": false,
+      "properties": {
+        "from_visit": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "time": {
+          "$ref": "#/$defs/Rfc3339Time"
+        },
+        "title": {
+          "type": "string"
+        },
+        "transition": {
+          "enum": [
+            "link",
+            "typed",
+            "bookmark",
+            "generated",
+            "form_submit",
+            "reload"
+          ],
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "type": "object"
+    },
     "Operation": {
       "additionalProperties": false,
       "allOf": [
@@ -158,7 +392,15 @@
                 "enum": [
                   "raw",
                   "text",
-                  "pdf"
+                  "pdf",
+                  "docx",
+                  "pe",
+                  "zip",
+                  "png",
+                  "jpeg",
+                  "mp4",
+                  "chrome_history",
+                  "firefox_places"
                 ]
               }
             },
@@ -168,16 +410,20 @@
                 "atime",
                 "content",
                 "content_file",
+                "content_kind",
                 "content_len",
                 "crtime",
                 "ctime",
+                "docx",
                 "ext",
                 "format",
+                "history",
                 "id",
                 "mode",
                 "mtime",
                 "path",
                 "pdf",
+                "pe",
                 "render",
                 "type"
               ]
@@ -216,7 +462,15 @@
                 "enum": [
                   "raw",
                   "text",
-                  "pdf"
+                  "pdf",
+                  "docx",
+                  "pe",
+                  "zip",
+                  "png",
+                  "jpeg",
+                  "mp4",
+                  "chrome_history",
+                  "firefox_places"
                 ]
               }
             },
@@ -226,14 +480,18 @@
                 "atime",
                 "content",
                 "content_file",
+                "content_kind",
                 "content_len",
                 "crtime",
                 "ctime",
+                "docx",
                 "format",
+                "history",
                 "mode",
                 "mtime",
                 "path",
                 "pdf",
+                "pe",
                 "ref",
                 "render"
               ]
@@ -270,6 +528,7 @@
                 "atime",
                 "content",
                 "content_file",
+                "content_kind",
                 "content_len",
                 "crtime",
                 "ctime",
@@ -281,6 +540,54 @@
                 "render"
               ]
             }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "edit"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "oneOf": [
+              {
+                "required": [
+                  "path"
+                ]
+              },
+              {
+                "required": [
+                  "ref"
+                ]
+              },
+              {
+                "required": [
+                  "refs"
+                ]
+              }
+            ],
+            "propertyNames": {
+              "enum": [
+                "action",
+                "atime",
+                "crtime",
+                "ctime",
+                "edit",
+                "mode",
+                "mtime",
+                "path",
+                "ref",
+                "refs"
+              ]
+            },
+            "required": [
+              "edit"
+            ]
           }
         },
         {
@@ -560,6 +867,37 @@
           "if": {
             "properties": {
               "action": {
+                "const": "archive"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "propertyNames": {
+              "enum": [
+                "action",
+                "archive",
+                "atime",
+                "crtime",
+                "ctime",
+                "id",
+                "mode",
+                "mtime",
+                "path"
+              ]
+            },
+            "required": [
+              "archive",
+              "path"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
                 "const": "email"
               }
             },
@@ -665,6 +1003,7 @@
                 "atime",
                 "content",
                 "content_file",
+                "content_kind",
                 "content_len",
                 "mtime",
                 "path",
@@ -744,6 +1083,9 @@
         "action": {
           "$ref": "#/$defs/OperationAction"
         },
+        "archive": {
+          "$ref": "#/$defs/ArchiveSpec"
+        },
         "atime": {
           "$ref": "#/$defs/Rfc3339Time"
         },
@@ -751,6 +1093,17 @@
           "type": "string"
         },
         "content_file": {
+          "type": "string"
+        },
+        "content_kind": {
+          "description": "What the invented bytes look like. Only applies when fsagen invents them.",
+          "enum": [
+            "text",
+            "bytes",
+            "zeros",
+            "pattern",
+            "lorem"
+          ],
           "type": "string"
         },
         "content_len": {
@@ -765,6 +1118,12 @@
           "$ref": "#/$defs/Rfc3339Time",
           "description": "Metadata change time. Windows on NTFS or ReFS only; elsewhere a pre-flight error unless --on-unsupported=skip."
         },
+        "docx": {
+          "$ref": "#/$defs/DocxSpec"
+        },
+        "edit": {
+          "$ref": "#/$defs/EditSpec"
+        },
         "email": {
           "$ref": "#/$defs/EmailSpec"
         },
@@ -777,10 +1136,21 @@
             "raw",
             "text",
             "pdf",
+            "docx",
+            "pe",
+            "zip",
+            "png",
+            "jpeg",
+            "mp4",
+            "chrome_history",
+            "firefox_places",
             "eml",
             "mbox"
           ],
           "type": "string"
+        },
+        "history": {
+          "$ref": "#/$defs/HistorySpec"
         },
         "host_url": {
           "type": "string"
@@ -809,6 +1179,9 @@
         },
         "pdf": {
           "$ref": "#/$defs/PdfSpec"
+        },
+        "pe": {
+          "$ref": "#/$defs/PeSpec"
         },
         "ref": {
           "description": "Instead of path: the one live path created under this id.",
@@ -853,12 +1226,14 @@
         "create",
         "update",
         "append",
+        "edit",
         "delete",
         "mace",
         "rename",
         "copy",
         "truncate",
         "rotate",
+        "archive",
         "email",
         "ansible-vault",
         "ads",
@@ -900,6 +1275,114 @@
           "type": "string"
         },
         "title": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "PeSection": {
+      "additionalProperties": false,
+      "properties": {
+        "flags": {
+          "items": {
+            "enum": [
+              "code",
+              "initialized_data",
+              "uninitialized_data",
+              "execute",
+              "read",
+              "write",
+              "discardable"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "name": {
+          "maxLength": 8,
+          "type": "string"
+        },
+        "size": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "PeSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "dll": {
+          "type": "boolean"
+        },
+        "imports": {
+          "description": "Imported functions as dll!function, for example kernel32.dll!CreateFileW.",
+          "items": {
+            "pattern": "^[^!]+![^!]+$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "machine": {
+          "enum": [
+            "amd64",
+            "i386",
+            "arm64"
+          ],
+          "type": "string"
+        },
+        "sections": {
+          "items": {
+            "$ref": "#/$defs/PeSection"
+          },
+          "type": "array"
+        },
+        "subsystem": {
+          "enum": [
+            "console",
+            "gui",
+            "native"
+          ],
+          "type": "string"
+        },
+        "timestamp": {
+          "description": "RFC 3339, or \"0\" for the zero stamp a reproducible build writes. Defaults to the operation time.",
+          "type": "string"
+        },
+        "version": {
+          "$ref": "#/$defs/PeVersion"
+        }
+      },
+      "type": "object"
+    },
+    "PeVersion": {
+      "additionalProperties": false,
+      "properties": {
+        "company_name": {
+          "type": "string"
+        },
+        "file_description": {
+          "type": "string"
+        },
+        "file_version": {
+          "type": "string"
+        },
+        "internal_name": {
+          "type": "string"
+        },
+        "legal_copyright": {
+          "type": "string"
+        },
+        "original_filename": {
+          "type": "string"
+        },
+        "product_name": {
+          "type": "string"
+        },
+        "product_version": {
           "type": "string"
         }
       },

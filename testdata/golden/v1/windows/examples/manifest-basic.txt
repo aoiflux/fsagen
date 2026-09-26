@@ -1,5 +1,0 @@
-# input-sha256 d00182cc90ebd4522cac01279664a090ad8b1219018ea35010d30d91f12597aa
-d docs/
-d media/
-d media/videos/
-f 05ef96d21b7ad53da35d1f8c270a8c71312663635687b80da942b3e6da84a84b 256 media/videos/sample-renamed.mp4

@@ -1,0 +1,18 @@
+# input-sha256 18f6cd3b25f1b0019395fa2494480b84c961ee9b9f7cacdc0f10797f6cceb4d0
+0|/Users/User1|2|d/drwxr-xr-x|0|0|0|1698663600|1698663600|1698663600|1698663600
+0|/Users/User1/AppData|3|d/drwxr-xr-x|0|0|0|1698663600|1698663600|1698663600|1698663600
+0|/Users/User1/AppData/Local|4|d/drwxr-xr-x|0|0|0|1698663600|1698663600|1698663600|1698663600
+0|/Users/User1/AppData/Local/Google|5|d/drwxr-xr-x|0|0|0|1698663600|1698663600|1698663600|1698663600
+0|/Users/User1/AppData/Local/Google/Chrome|6|d/drwxr-xr-x|0|0|0|1698663600|1698663600|1698663600|1698663600
+0|/Users/User1/AppData/Local/Google/Chrome/User Data|7|d/drwxr-xr-x|0|0|0|1698663600|1698663600|1698663600|1698663600
+0|/Users/User1/AppData/Local/Google/Chrome/User Data/Default|8|d/drwxr-xr-x|0|0|0|1698663600|1698663600|1698663600|1698663600
+60ba5530089aa00651eb67624bb12196|/Users/User1/AppData/Local/Google/Chrome/User Data/Default/History|9|r/rrw-r--r--|0|0|53248|1698663600|1698663600|1698663600|1698663600
+0|/Users|1|d/drwxr-xr-x|0|0|0|1698663600|1698667200|1698667200|1698663600
+0|/Users/User2|10|d/drwxr-xr-x|0|0|0|1698667200|1698667200|1698667200|1698667200
+0|/Users/User2/AppData|11|d/drwxr-xr-x|0|0|0|1698667200|1698667200|1698667200|1698667200
+0|/Users/User2/AppData/Roaming|12|d/drwxr-xr-x|0|0|0|1698667200|1698667200|1698667200|1698667200
+0|/Users/User2/AppData/Roaming/Mozilla|13|d/drwxr-xr-x|0|0|0|1698667200|1698667200|1698667200|1698667200
+0|/Users/User2/AppData/Roaming/Mozilla/Firefox|14|d/drwxr-xr-x|0|0|0|1698667200|1698667200|1698667200|1698667200
+0|/Users/User2/AppData/Roaming/Mozilla/Firefox/Profiles|15|d/drwxr-xr-x|0|0|0|1698667200|1698667200|1698667200|1698667200
+0|/Users/User2/AppData/Roaming/Mozilla/Firefox/Profiles/default|16|d/drwxr-xr-x|0|0|0|1698667200|1698667200|1698667200|1698667200
+34d28ca5fe00bd8755e2722d012f5db6|/Users/User2/AppData/Roaming/Mozilla/Firefox/Profiles/default/places.sqlite|17|r/rrw-r--r--|0|0|28672|1698667200|1698667200|1698667200|1698667200

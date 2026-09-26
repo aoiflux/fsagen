@@ -1,0 +1,5 @@
+# input-sha256 07e7b56184ddd13624d821287d8c99235e1d4df800c8e054ec8f3701d3497783
+d systems/
+d systems/server01/
+d systems/server01/var/
+d systems/server01/var/log/

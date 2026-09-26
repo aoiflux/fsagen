@@ -1,0 +1,3 @@
+# input-sha256 18f6cd3b25f1b0019395fa2494480b84c961ee9b9f7cacdc0f10797f6cceb4d0
+{"event":"created","n":1,"at":"2023-10-30T11:00:00Z","object":9,"kind":"file","path":"Users/User1/AppData/Local/Google/Chrome/User Data/Default/History","size":53248,"sha256":"978802a3d5e1d58d9874c2f8ffb06624bad371fd594f4c2a279cf200c41bd224"}
+{"event":"created","n":2,"at":"2023-10-30T12:00:00Z","object":17,"kind":"file","path":"Users/User2/AppData/Roaming/Mozilla/Firefox/Profiles/default/places.sqlite","size":28672,"sha256":"3fe439d20f6d2c63898e50e4fb6d8b3e7bbe0a136c944bb4c160c53e9ffbba9f"}

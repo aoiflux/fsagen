@@ -10,6 +10,7 @@ package render
 
 import (
 	"fmt"
+	"net/netip"
 	"regexp"
 	"sort"
 	"strconv"
@@ -51,6 +52,7 @@ var (
 	reVar   = regexp.MustCompile(`\$\{VAR\:([^}]+)\}`)
 	reUUID  = regexp.MustCompile(`\$\{UUID\}`)
 	reIP    = regexp.MustCompile(`\$\{IP\}`)
+	reIPNet = regexp.MustCompile(`\$\{IP\:([^}]+)\}`)
 	reHash  = regexp.MustCompile(`\$\{HASH\:(\d+)\}`)
 	reBatch = regexp.MustCompile(`\$\{BATCH\}`)
 	reIter  = regexp.MustCompile(`\$\{ITER\}`)
@@ -58,7 +60,7 @@ var (
 )
 
 // Tokens lists the supported tokens, for error messages.
-const Tokens = "${SEQ} ${BATCH} ${ITER} ${RND:N} ${RANDOM:N} ${DATE:layout} ${ACTOR} ${VAR:name} ${UUID} ${IP} ${HASH:N}"
+const Tokens = "${SEQ} ${BATCH} ${ITER} ${RND:N} ${RANDOM:N} ${DATE:layout} ${ACTOR} ${VAR:name} ${UUID} ${IP} ${IP:cidr} ${HASH:N}"
 
 // literal stands in for an escaped "$${" while the rules run. It cannot occur
 // in YAML text, which may not contain raw NUL bytes.
@@ -120,6 +122,18 @@ func Apply(s string, ctx Context) (string, error) {
 		return ctx.draw("UUID", nUUID-1).UUID()
 	})
 
+	// ${IP:10.0.0.0/8} draws an address inside the block from the operation's
+	// own stream; bare ${IP} keeps the old walk through 192.168.x.y.
+	nIP := 0
+	out = reIPNet.ReplaceAllStringFunc(out, func(m string) string {
+		nIP++
+		addr, err := addressIn(reIPNet.FindStringSubmatch(m)[1], ctx.draw("IP", nIP-1))
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", m, err))
+			return ""
+		}
+		return addr
+	})
 	out = reIP.ReplaceAllString(out, fmt.Sprintf("192.168.%d.%d", (ctx.Seq/256)%256, ctx.Seq%256))
 
 	// Lowercase hex: a "SHA256" containing Z or = fails the sniff test.
@@ -148,6 +162,43 @@ func Apply(s string, ctx Context) (string, error) {
 		return "", fmt.Errorf("%s", strings.Join(errs, "; "))
 	}
 	return strings.ReplaceAll(out, literal, "${"), nil
+}
+
+// addressIn returns an address inside the CIDR block, drawn from s. For an
+// IPv4 block big enough to have them, the network and broadcast addresses are
+// left out: no host has one, so a corpus should not either.
+func addressIn(cidr string, s *prng.Stream) (string, error) {
+	p, err := netip.ParsePrefix(strings.TrimSpace(cidr))
+	if err != nil {
+		return "", fmt.Errorf("%q is not a CIDR block (for example 10.0.0.0/8)", cidr)
+	}
+	p = p.Masked()
+	base := p.Addr()
+	host := base.BitLen() - p.Bits()
+	if host == 0 {
+		return base.String(), nil
+	}
+	// An IPv6 block can hold more addresses than fit in a 64-bit draw, so
+	// only the low bits of the block are used.
+	if host > 62 {
+		host = 62
+	}
+	size := int(1) << host
+	n := s.IntN(size)
+	if base.Is4() && host >= 2 {
+		n = 1 + s.IntN(size-2)
+	}
+	b := base.AsSlice()
+	for i := len(b) - 1; i >= 0 && n > 0; i-- {
+		sum := int(b[i]) + n&0xff
+		b[i] = byte(sum)
+		n = n>>8 + sum>>8
+	}
+	addr, ok := netip.AddrFromSlice(b)
+	if !ok {
+		return "", fmt.Errorf("%q produced no address", cidr)
+	}
+	return addr.Unmap().String(), nil
 }
 
 func knownVars(vars map[string]string) string {

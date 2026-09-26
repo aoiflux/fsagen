@@ -10,13 +10,9 @@
 package libgen
 
 import (
-	"archive/zip"
 	"bytes"
 	"database/sql"
 	"fmt"
-	"image"
-	"image/color"
-	"image/png"
 	"os"
 	"path"
 	"path/filepath"
@@ -64,6 +60,7 @@ var kinds = []kind{
 	{id: "txt", ext: constant.TxtExtension, gen: genTxt},
 	{id: "docx", ext: constant.DocxExtension, gen: genDocx},
 	{id: "png", ext: constant.PngExtension, gen: genPng},
+	{id: "jpg", ext: constant.JpgExtension, gen: genJpg},
 	{id: "pdf", ext: constant.PdfExtension, gen: genPdf},
 	{id: "mp4", ext: constant.Mp4Extension, gen: genMp4},
 	{id: "csv", ext: constant.CsvExtension, gen: genCsv},
@@ -79,9 +76,14 @@ var kinds = []kind{
 	{id: "md", ext: constant.MdExtension, gen: genMarkdown},
 	{id: "eml", ext: constant.EmlExtension, gen: genEml},
 	{id: "mbox", ext: constant.MboxExtension, gen: genMbox},
-	{id: "chrome-history", ext: constant.DbExtension, gen: genChromeHistory},
+	// The browser profiles keep the names a tool looks for; the profile
+	// directory invented around each one keeps them apart.
+	{id: "chrome-history", ext: constant.DbExtension, gen: genChromeHistory,
+		name: func(s *prng.Stream) string { return "Chrome-" + s.Text(6) + "/Default/History" }},
 	{id: "firefox-places", ext: constant.SqLiteExtension, gen: genFirefoxPlaces,
-		name: func(s *prng.Stream) string { return "places_" + s.Text(6) + constant.SqLiteExtension }},
+		name: func(s *prng.Stream) string {
+			return "Firefox-" + s.Text(6) + "/Profiles/" + s.Text(8) + ".default-release/places" + constant.SqLiteExtension
+		}},
 }
 
 // Job is one planned file.
@@ -206,36 +208,15 @@ func genTxt(s *prng.Stream, _ time.Time) ([]byte, error) {
 }
 
 func genDocx(s *prng.Stream, start time.Time) ([]byte, error) {
-	return docx(s.Text(constant.ContentLen), start)
+	return Docx(s.Text(constant.ContentLen), DocxMeta{Author: "fsagen", Created: start, Modified: start})
 }
 
-var (
-	pngOnce sync.Once
-	pngData []byte
-	pngErr  error
-)
+func genPng(s *prng.Stream, _ time.Time) ([]byte, error) {
+	return PNG(DefaultImageSize, DefaultImageSize, s, nil)
+}
 
-// genPng draws the same 500x500 two-tone image every time.
-func genPng(_ *prng.Stream, _ time.Time) ([]byte, error) {
-	pngOnce.Do(func() {
-		const width, height = 500, 500
-		img := image.NewRGBA(image.Rect(0, 0, width, height))
-		cyan := color.RGBA{100, 200, 200, 0xff}
-		for x := 0; x < width; x++ {
-			for y := 0; y < height; y++ {
-				switch {
-				case x < width/2 && y < height/2:
-					img.Set(x, y, cyan)
-				case x >= width/2 && y >= height/2:
-					img.Set(x, y, color.White)
-				}
-			}
-		}
-		var buf bytes.Buffer
-		pngErr = png.Encode(&buf, img)
-		pngData = buf.Bytes()
-	})
-	return pngData, pngErr
+func genJpg(s *prng.Stream, _ time.Time) ([]byte, error) {
+	return JPEG(DefaultImageSize, DefaultImageSize, s, nil)
 }
 
 func genPdf(s *prng.Stream, start time.Time) ([]byte, error) {
@@ -255,10 +236,8 @@ func genPdf(s *prng.Stream, start time.Time) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// genMp4 writes random text under an .mp4 name: a placeholder, not a video
-// (a real container is planned).
-func genMp4(s *prng.Stream, _ time.Time) ([]byte, error) {
-	return []byte(s.Text(constant.ContentLen)), nil
+func genMp4(s *prng.Stream, start time.Time) ([]byte, error) {
+	return MP4(start, 3*time.Second, 320, 240, s.Bytes(4096)), nil
 }
 
 func genCsv(s *prng.Stream, _ time.Time) ([]byte, error) {
@@ -299,34 +278,43 @@ func genReg(s *prng.Stream, _ time.Time) ([]byte, error) {
 }
 
 func genZip(s *prng.Stream, start time.Time) ([]byte, error) {
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
+	var entries []ZipEntry
 	for i := 0; i < 3; i++ {
-		w, err := zw.CreateHeader(&zip.FileHeader{
+		entries = append(entries, ZipEntry{
 			Name:     fmt.Sprintf("file%d.txt", i+1),
-			Method:   zip.Store,
+			Data:     []byte(s.Text(32)),
 			Modified: start.Add(time.Duration(i) * time.Hour),
 		})
-		if err != nil {
-			return nil, err
-		}
-		if _, err := w.Write([]byte(s.Text(32))); err != nil {
-			return nil, err
-		}
 	}
-	if err := zw.Close(); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
+	return BuildZip(entries, "")
 }
 
-// genExe writes a 256-byte DOS MZ stub: the signature and the DOS-mode
-// message, not a loadable PE (a real PE writer is planned).
-func genExe(_ *prng.Stream, _ time.Time) ([]byte, error) {
-	buf := make([]byte, 256)
-	buf[0], buf[1] = 'M', 'Z'
-	copy(buf[0x40:], "This program cannot be run in DOS mode.\r\r\n$")
-	return buf, nil
+// genExe writes a real PE: headers, sections of filler, an import table and a
+// version resource. It holds no code and does nothing if it is run.
+func genExe(s *prng.Stream, start time.Time) ([]byte, error) {
+	imports, err := ParseImports([]string{
+		"kernel32.dll!CreateFileW", "kernel32.dll!ReadFile", "kernel32.dll!CloseHandle",
+		"advapi32.dll!RegOpenKeyExW", "user32.dll!MessageBoxW",
+	})
+	if err != nil {
+		return nil, err
+	}
+	name := s.Text(8)
+	return BuildPE(PESpec{
+		Timestamp: start,
+		Sections: []PESection{
+			{Name: ".text", Data: s.Bytes(2048)},
+			{Name: ".rdata", Data: []byte(s.Text(512))},
+			{Name: ".data", Data: s.Bytes(256)},
+		},
+		Imports: imports,
+		Version: &PEVersion{
+			FileVersion: "1.0.0.0", ProductVersion: "1.0.0.0",
+			CompanyName: "Example Software", FileDescription: "Example utility",
+			InternalName: name, OriginalFilename: name + constant.ExeExtension,
+			ProductName: "Example Tools", LegalCopyright: "(c) Example Software",
+		},
+	})
 }
 
 func genJsonl(s *prng.Stream, start time.Time) ([]byte, error) {
@@ -412,53 +400,36 @@ func execAll(db *sql.DB, stmts ...string) error {
 	return nil
 }
 
-// genChromeHistory writes Chrome-style urls and visits tables. The visit
-// times are Unix seconds, not Chrome's WebKit epoch; the real schema and
-// epoch are planned.
-func genChromeHistory(s *prng.Stream, start time.Time) ([]byte, error) {
-	return buildSQLite(func(db *sql.DB) error {
-		if err := execAll(db,
-			`CREATE TABLE urls(id INTEGER PRIMARY KEY, url LONGVARCHAR, title LONGVARCHAR, visit_count INTEGER, typed_count INTEGER, last_visit_time INTEGER)`,
-			`CREATE TABLE visits(id INTEGER PRIMARY KEY, url INTEGER, visit_time INTEGER, from_visit INTEGER, transition INTEGER)`,
-		); err != nil {
-			return err
-		}
-		for i := 1; i <= 5; i++ {
-			url := fmt.Sprintf("https://example.com/%d/%s", i, s.Text(6))
-			title := "Example " + s.Text(6)
-			lastVisit := start.Add(-time.Duration(i) * time.Minute).Unix()
-			if _, err := db.Exec(`INSERT INTO urls(url, title, visit_count, typed_count, last_visit_time) VALUES(?,?,?,?,?)`, url, title, i*10, i*2, lastVisit); err != nil {
-				return err
-			}
-			if _, err := db.Exec(`INSERT INTO visits(url, visit_time, from_visit, transition) VALUES(?,?,?,?)`, i, lastVisit, 0, 0); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+// bulkHistory invents five visits to one host, counted back from the bulk
+// start so no date inside the corpus comes from the wall clock.
+func bulkHistory(host string, s *prng.Stream, start time.Time) HistorySpec {
+	var spec HistorySpec
+	for i := 1; i <= 5; i++ {
+		spec.Visits = append(spec.Visits, Visit{
+			URL:        fmt.Sprintf("https://%s/%d/%s", host, i, s.Text(6)),
+			Title:      "Page " + s.Text(6),
+			Time:       start.Add(-time.Duration(i) * time.Minute),
+			Transition: Transitions[s.IntN(len(Transitions))],
+		})
+	}
+	return spec
 }
 
-// genFirefoxPlaces writes Firefox-style moz_places and moz_historyvisits
-// tables, with the same epoch caveat as genChromeHistory.
+func genChromeHistory(s *prng.Stream, start time.Time) ([]byte, error) {
+	spec := bulkHistory("example.com", s, start)
+	name := s.Text(6) + constant.ZipExtension
+	spec.Downloads = []Download{{
+		URL:        "https://example.com/files/" + name,
+		TargetPath: `C:\Users\user\Downloads\` + name,
+		Start:      start.Add(-2 * time.Hour),
+		End:        start.Add(-2*time.Hour + time.Minute),
+		Received:   4096,
+		Total:      4096,
+		MimeType:   "application/zip",
+	}}
+	return ChromeHistory(spec, s)
+}
+
 func genFirefoxPlaces(s *prng.Stream, start time.Time) ([]byte, error) {
-	return buildSQLite(func(db *sql.DB) error {
-		if err := execAll(db,
-			`CREATE TABLE moz_places (id INTEGER PRIMARY KEY, url TEXT, title TEXT, rev_host TEXT, visit_count INTEGER, hidden INTEGER, typed INTEGER, last_visit_date INTEGER)`,
-			`CREATE TABLE moz_historyvisits (id INTEGER PRIMARY KEY, place_id INTEGER, visit_date INTEGER, from_visit INTEGER)`,
-		); err != nil {
-			return err
-		}
-		for i := 1; i <= 5; i++ {
-			url := fmt.Sprintf("https://mozilla.example/%d/%s", i, s.Text(6))
-			title := "Mozilla " + s.Text(4)
-			lastVisit := start.Add(-time.Duration(i) * time.Minute).Unix()
-			if _, err := db.Exec(`INSERT INTO moz_places (id, url, title, visit_count, typed, last_visit_date) VALUES (?, ?, ?, ?, ?, ?)`, i, url, title, i*3, i%2, lastVisit); err != nil {
-				return err
-			}
-			if _, err := db.Exec(`INSERT INTO moz_historyvisits (id, place_id, visit_date, from_visit) VALUES (?, ?, ?, ?)`, i, i, lastVisit, 0); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	return FirefoxPlaces(bulkHistory("mozilla.example", s, start), s)
 }

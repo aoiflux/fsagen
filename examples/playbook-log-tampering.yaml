@@ -29,6 +29,18 @@ steps:
         atime: "2021-06-15T12:00:00Z"
         mtime: "2021-06-15T12:00:00Z"
 
+  # Anti-forensics: cut the injected lines back out, leaving a gap in the
+  # record rather than an obviously truncated file.
+  - actor: attacker
+    offset: 1h
+    actions:
+      - action: edit
+        path: var/log/app.jsonl
+        mtime: "2021-06-15T12:00:00Z"
+        atime: "2021-06-15T12:00:00Z"
+        edit:
+          delete_matching: '"level":"warn"'
+
   # Cleanup: delete the log after a period
   - actor: attacker
     offset: 2h

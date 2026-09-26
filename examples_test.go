@@ -1,15 +1,21 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
+	"database/sql"
+	"debug/pe"
 	"flag"
 	"fmt"
+	"image/jpeg"
 	"net/mail"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	_ "github.com/glebarez/go-sqlite" // reads the generated browser profiles back
 
 	"github.com/aoiflux/fsagen/compile"
 	"github.com/aoiflux/fsagen/constant"
@@ -124,6 +130,105 @@ var exampleChecks = map[string]func(t *testing.T, root string, fsys *sandbox.FS)
 		mustExist(t, root, "users/bob/bundles/bundle.zip")
 		mustBeEmpty(t, root, "users/bob/mail")
 		mustBeEmpty(t, root, "users/bob/media")
+		// The archive still holds the message and the image the scenario
+		// deleted afterwards, which is the point of staging then cleaning up.
+		data := read(t, root, "users/bob/bundles/bundle.zip")
+		zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+		if err != nil {
+			t.Fatalf("bundle.zip: %v", err)
+		}
+		if zr.Comment != "staged for transfer" {
+			t.Errorf("comment %q", zr.Comment)
+		}
+		if len(zr.File) != 2 {
+			t.Fatalf("bundle.zip holds %d members", len(zr.File))
+		}
+		for _, f := range zr.File {
+			r, err := f.Open()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var b bytes.Buffer
+			b.ReadFrom(r)
+			r.Close()
+			switch {
+			case strings.HasSuffix(f.Name, ".eml"):
+				if _, err := mail.ReadMessage(bytes.NewReader(b.Bytes())); err != nil {
+					t.Errorf("%s in the archive is not a message: %v", f.Name, err)
+				}
+			case strings.HasSuffix(f.Name, ".jpg"):
+				if _, err := jpeg.Decode(bytes.NewReader(b.Bytes())); err != nil {
+					t.Errorf("%s in the archive is not a JPEG: %v", f.Name, err)
+				}
+			default:
+				t.Errorf("unexpected member %s", f.Name)
+			}
+		}
+	},
+	"playbook-adversary-data-theft": func(t *testing.T, root string, _ *sandbox.FS) {
+		data := read(t, root, "users/alice/staging/data.zip")
+		zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+		if err != nil {
+			t.Fatalf("data.zip: %v", err)
+		}
+		var names []string
+		for _, f := range zr.File {
+			names = append(names, f.Name)
+			r, _ := f.Open()
+			var b bytes.Buffer
+			b.ReadFrom(r)
+			r.Close()
+			// The member is the file as it stood, byte for byte.
+			if want := read(t, root, "users/alice/staging/"+f.Name); !bytes.Equal(b.Bytes(), want) {
+				t.Errorf("%s in the archive differs from the file on disk", f.Name)
+			}
+		}
+		if strings.Join(names, ",") != "customers.csv,quarterly.csv" {
+			t.Errorf("members = %v", names)
+		}
+	},
+	"manifest-history": func(t *testing.T, root string, _ *sandbox.FS) {
+		// Chrome counts microseconds from 1601; 2023-10-30T09:12:00Z is
+		// 1698657120 seconds after the Unix epoch.
+		chrome := exampleDB(t, filepath.Join(root, "Chrome", "Default", "History"))
+		var first int64
+		if err := chrome.QueryRow("SELECT visit_time FROM visits ORDER BY id LIMIT 1").Scan(&first); err != nil {
+			t.Fatal(err)
+		}
+		if want := (int64(1698657120) + 11644473600) * 1e6; first != want {
+			t.Errorf("chrome visit_time %d, want %d", first, want)
+		}
+		var downloads int
+		chrome.QueryRow("SELECT COUNT(*) FROM downloads").Scan(&downloads)
+		if downloads != 1 {
+			t.Errorf("%d downloads recorded", downloads)
+		}
+		firefox := exampleDB(t, filepath.Join(root, "Firefox", "Profiles", "default", "places.sqlite"))
+		var visits int
+		if err := firefox.QueryRow("SELECT COUNT(*) FROM moz_historyvisits").Scan(&visits); err != nil {
+			t.Fatal(err)
+		}
+		if visits != 3 {
+			t.Errorf("%d firefox visits, want 3", visits)
+		}
+	},
+	"playbook-browsing": func(t *testing.T, root string, _ *sandbox.FS) {
+		chrome := exampleDB(t, filepath.Join(root, "Users", "User1", "AppData", "Local", "Google", "Chrome", "User Data", "Default", "History"))
+		var urls int
+		if err := chrome.QueryRow("SELECT COUNT(*) FROM urls").Scan(&urls); err != nil {
+			t.Fatal(err)
+		}
+		if urls != 3 {
+			t.Errorf("%d pages in the chrome profile, want 3", urls)
+		}
+		firefox := exampleDB(t, filepath.Join(root, "Users", "User2", "AppData", "Roaming", "Mozilla", "Firefox", "Profiles", "default", "places.sqlite"))
+		var rev string
+		if err := firefox.QueryRow("SELECT rev_host FROM moz_places ORDER BY id LIMIT 1").Scan(&rev); err != nil {
+			t.Fatal(err)
+		}
+		if rev != "elpmaxe.ikiw." {
+			t.Errorf("rev_host %q", rev)
+		}
 	},
 	"playbook-insider-threat-exfil": func(t *testing.T, root string, _ *sandbox.FS) {
 		left, _ := filepath.Glob(filepath.Join(root, "users", "jsmith", "Downloads", "attachment-*.zip"))
@@ -133,6 +238,24 @@ var exampleChecks = map[string]func(t *testing.T, root string, fsys *sandbox.FS)
 	},
 	"playbook-malware-lifecycle": func(t *testing.T, root string, fsys *sandbox.FS) {
 		mustExist(t, root, "users/alice/AppData/Local/Temp/wupdmgr32.exe")
+		// The dropper is a PE a tool can read, with the imports an imphash is
+		// built from and the version resource Explorer shows.
+		dropper := read(t, root, "users/alice/AppData/Local/Temp/wupdmgr32.exe")
+		pf, err := pe.NewFile(bytes.NewReader(dropper))
+		if err != nil {
+			t.Fatalf("the dropper is not a PE: %v", err)
+		}
+		defer pf.Close()
+		syms, err := pf.ImportedSymbols()
+		if err != nil || !strings.Contains(strings.Join(syms, " "), "RegSetValueExW") {
+			t.Errorf("imports = %v (%v)", syms, err)
+		}
+		if !bytes.Contains(dropper, utf16of("Windows Update Manager")) {
+			t.Error("no version resource in the dropper")
+		}
+		if zipped := read(t, root, "users/alice/AppData/Local/Temp/exfil-ready.zip"); !bytes.HasPrefix(zipped, []byte("PK\x03\x04")) {
+			t.Error("exfil-ready.zip is not a zip archive")
+		}
 		if reg := string(read(t, root, "users/alice/AppData/Roaming/.persistence.reg")); !strings.Contains(reg, `Temp\\wupdmgr32.exe`) {
 			t.Errorf("the Run key does not name the dropper:\n%s", reg)
 		}
@@ -272,4 +395,29 @@ func mustHaveStream(t *testing.T, fsys *sandbox.FS, name, stream, contains strin
 	if !strings.Contains(string(data), contains) {
 		t.Errorf("%s:%s = %q, want it to contain %q", name, stream, data, contains)
 	}
+}
+
+// exampleDB opens a generated SQLite database read-only and checks it is not
+// corrupt before a test reads it.
+func exampleDB(t *testing.T, path string) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	var check string
+	if err := db.QueryRow("PRAGMA integrity_check").Scan(&check); err != nil || check != "ok" {
+		t.Fatalf("%s: integrity_check = %q, %v", path, check, err)
+	}
+	return db
+}
+
+// utf16of is how the version resource stores a string.
+func utf16of(s string) []byte {
+	out := make([]byte, 0, 2*len(s))
+	for _, r := range s {
+		out = append(out, byte(r), byte(r>>8))
+	}
+	return out
 }

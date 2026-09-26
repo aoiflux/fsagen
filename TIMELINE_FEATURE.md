@@ -41,6 +41,8 @@ them per file and as The Sleuth Kit lists them. The root is not an entry.
 | Linux | `statx` relative to the parent directory's descriptor, not following a final link | `statx` when it sets `STATX_BTIME`, else unknown | `sandbox/times_linux.go` |
 | macOS, FreeBSD, NetBSD | `lstat` through the root | `Birthtimespec` when not negative | `sandbox/times_bsd.go` |
 
+The macOS and BSD row is built and vetted, never run.
+
 No time is ever copied into another's column. The file ID comes from
 `FileIdInfo` on Windows (the low 48 bits of the file reference on NTFS: the MFT
 record number) and from the inode number on Unix.
@@ -80,7 +82,7 @@ streams, the change/birth split), `manifest/timeline_test.go` (the modelled
 timeline and answer key from real runs, including
 `TestModelledMatchesObserved`), `sandbox/times_linux_test.go` (statx birth
 times), and the goldens of every example's modelled bodyfile under
-`testdata/golden/v4/<os>/bodyfile`.
+`testdata/golden/v<generator version>/<os>/bodyfile`.
 
 ## Known limits
 

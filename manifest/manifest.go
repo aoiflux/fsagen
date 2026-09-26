@@ -450,18 +450,24 @@ func executeOp(ctx ExecContext, c compile.Op) error {
 			}
 			return applyMode(fs, op, target)
 		}
-		content, err := renderContent(op, contentOf(c))
+		content, err := buildContent(c)
 		if err != nil {
 			return err
 		}
 		return writeArtifact(fs, op, target, content)
 
 	case "update":
-		content, err := renderContent(op, contentOf(c))
+		content, err := buildContent(c)
 		if err != nil {
 			return err
 		}
 		return writeArtifact(fs, op, target, content)
+
+	case "edit":
+		return editFile(fs, c)
+
+	case "archive":
+		return writeArchive(ctx, c)
 
 	case "append":
 		if err := fs.MkdirParent(target); err != nil {
@@ -560,20 +566,49 @@ func executeOp(ctx ExecContext, c compile.Op) error {
 	return fmt.Errorf("unknown action %q", op.Action)
 }
 
-// renderContent applies the typed generator selected by format. Without one,
-// content is written through unchanged.
-func renderContent(op spec.Operation, raw []byte) ([]byte, error) {
-	switch op.Format {
-	case "", "raw", "text":
-		return raw, nil
-	case "pdf":
-		meta, err := pdfMeta(op)
-		if err != nil {
-			return nil, err
-		}
-		return libgen.RenderPDF(string(raw), meta)
+// editFile rewrites a file through the edit block. The whole result is built
+// before anything is written, so a bad pattern leaves the file alone.
+func editFile(fs *sandbox.FS, c compile.Op) error {
+	before, err := fs.ReadFile(c.Path)
+	if err != nil {
+		return err
 	}
-	return nil, fmt.Errorf("unknown format %q (want raw or pdf)", op.Format)
+	after, err := applyEdit(*c.Edit, before)
+	if err != nil {
+		return err
+	}
+	return writeArtifact(fs, c.Operation, c.Path, after)
+}
+
+// writeArchive packs the members compile settled against the model. Each one
+// is read through a quiet handle, so making an archive of a corpus does not
+// move the access times of everything in it, and is stored under the
+// modification time the model says it has.
+func writeArchive(ctx ExecContext, c compile.Op) error {
+	a := c.Archive
+	entries := make([]libgen.ZipEntry, 0, len(c.Members))
+	for _, m := range c.Members {
+		f, err := ctx.FS.OpenQuiet(m.Path)
+		if err != nil {
+			return err
+		}
+		data, err := io.ReadAll(f)
+		f.Close()
+		if err != nil {
+			return err
+		}
+		entries = append(entries, libgen.ZipEntry{
+			Name:     m.Name,
+			Data:     data,
+			Modified: m.Times.Mtime,
+			Deflate:  a.Method == "deflate",
+		})
+	}
+	data, err := libgen.BuildZip(entries, a.Comment)
+	if err != nil {
+		return err
+	}
+	return writeArtifact(ctx.FS, c.Operation, c.Path, data)
 }
 
 func pdfMeta(op spec.Operation) (libgen.PDFMeta, error) {
@@ -704,12 +739,12 @@ func fileModeFor(op spec.Operation) os.FileMode {
 	return sandbox.FileMode
 }
 
-// contentOf returns what the operation writes: its random text when compile
-// decided it has no content of its own, else exactly its content, which may
-// be empty.
+// contentOf returns the bytes the operation supplies: the filler compile
+// decided it needs when it has no content of its own, else exactly its
+// content, which may be empty.
 func contentOf(c compile.Op) []byte {
 	if c.Random > 0 {
-		return []byte(c.Rand.Derive("content").Stream().Text(c.Random))
+		return libgen.Filler(c.ContentKind, c.Random, c.Rand.Derive("content").Stream())
 	}
 	return []byte(c.Content)
 }

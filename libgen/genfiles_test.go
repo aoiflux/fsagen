@@ -89,10 +89,21 @@ func TestBulkNoJournalExactCounts(t *testing.T) {
 			}
 			return nil
 		})
-		// 2 directories at the top, 2 under each: 6, each holding 2 of
-		// every kind.
-		if dirs != 6 || files != 6*2*len(kinds) {
-			t.Fatalf("run %d: %d dirs and %d files, want 6 and %d", run, dirs, files, 6*2*len(kinds))
+		// Exactly the plan: 2 directories at the top and 2 under each, every
+		// one holding 2 files of every kind, plus the profile directories a
+		// browser history file brings with it.
+		planned, jobs := Plan(int64(run), 2, 2)
+		want := map[string]bool{}
+		for _, d := range planned {
+			want[d] = true
+		}
+		for _, j := range jobs {
+			for q := path.Dir(j.Path); q != "."; q = path.Dir(q) {
+				want[q] = true
+			}
+		}
+		if dirs != len(want) || files != 6*2*len(kinds) {
+			t.Fatalf("run %d: %d dirs and %d files, want %d and %d", run, dirs, files, len(want), 6*2*len(kinds))
 		}
 	}
 }
@@ -197,8 +208,27 @@ func TestDocxOpensWithParts(t *testing.T) {
 			t.Errorf("%s: method %d, modified %v", f.Name, f.Method, f.Modified)
 		}
 	}
-	if got := strings.Join(names, ","); got != "[Content_Types].xml,_rels/.rels,word/document.xml" {
+	if got := strings.Join(names, ","); got != "[Content_Types].xml,_rels/.rels,word/document.xml,docProps/core.xml,docProps/app.xml" {
 		t.Errorf("parts = %s", got)
+	}
+	// The dates inside the package are what a document-metadata tool reports.
+	for _, f := range zr.File {
+		if f.Name != "docProps/core.xml" {
+			continue
+		}
+		r, err := f.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var core bytes.Buffer
+		if _, err := core.ReadFrom(r); err != nil {
+			t.Fatal(err)
+		}
+		r.Close()
+		want := DefaultStart.Format("2006-01-02T15:04:05Z")
+		if !strings.Contains(core.String(), ">"+want+"<") {
+			t.Errorf("docProps/core.xml does not carry %s:\n%s", want, core.String())
+		}
 	}
 }
 
@@ -242,42 +272,147 @@ func TestBrowserHistoryTables(t *testing.T) {
 	}
 }
 
-// TestBrowserHistoryTimestamps: visit times are counted back from the bulk
-// start, one minute apart. They are Unix seconds, not the browsers' own
-// epochs; the real encodings are planned.
-func TestBrowserHistoryTimestamps(t *testing.T) {
+// TestChromeWebKitEpoch: Chrome counts microseconds from 1601-01-01, so a
+// visit in 2024 is about 1.3e16, not 1.7e9. Writing Unix seconds here puts
+// every visit in the corpus in the year 1601.
+func TestChromeWebKitEpoch(t *testing.T) {
 	start := time.Date(2024, 5, 6, 7, 8, 9, 0, time.UTC)
-	for _, tc := range []struct {
-		gen   func(*prng.Stream, time.Time) ([]byte, error)
-		query string
-	}{
-		{genChromeHistory, "SELECT last_visit_time FROM urls ORDER BY id"},
-		{genFirefoxPlaces, "SELECT last_visit_date FROM moz_places ORDER BY id"},
-	} {
-		data, err := tc.gen(prng.Root(1).Stream(), start)
-		if err != nil {
-			t.Fatal(err)
-		}
-		rows, err := openDB(t, data).Query(tc.query)
-		if err != nil {
-			t.Fatal(err)
-		}
-		i := 1
-		for rows.Next() {
-			var ts int64
-			if err := rows.Scan(&ts); err != nil {
-				t.Fatal(err)
-			}
-			if want := start.Add(-time.Duration(i) * time.Minute).Unix(); ts != want {
-				t.Errorf("%s row %d = %d, want %d", tc.query, i, ts, want)
-			}
-			i++
-		}
-		if err := rows.Err(); err != nil {
-			t.Fatal(err)
-		}
-		rows.Close()
+	data, err := genChromeHistory(prng.Root(1).Stream(), start)
+	if err != nil {
+		t.Fatal(err)
 	}
+	db := openDB(t, data)
+	for i, ts := range queryInts(t, db, "SELECT visit_time FROM visits ORDER BY id") {
+		want := start.Add(-time.Duration(i+1)*time.Minute).Unix() + 11644473600
+		if ts/1_000_000 != want {
+			t.Errorf("visit %d at %d microseconds, want %d seconds since 1601", i+1, ts, want)
+		}
+	}
+	// And the same reading, taken the way a tool takes it.
+	for i, secs := range queryInts(t, db, "SELECT (visit_time/1000000)-11644473600 FROM visits ORDER BY id") {
+		if want := start.Add(-time.Duration(i+1) * time.Minute); time.Unix(secs, 0).UTC() != want {
+			t.Errorf("visit %d reads back as %v, want %v", i+1, time.Unix(secs, 0).UTC(), want)
+		}
+	}
+}
+
+// TestFirefoxPRTime: Firefox counts microseconds from the Unix epoch.
+func TestFirefoxPRTime(t *testing.T) {
+	start := time.Date(2024, 5, 6, 7, 8, 9, 0, time.UTC)
+	data, err := genFirefoxPlaces(prng.Root(1).Stream(), start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := openDB(t, data)
+	for i, ts := range queryInts(t, db, "SELECT visit_date FROM moz_historyvisits ORDER BY id") {
+		if want := start.Add(-time.Duration(i+1) * time.Minute).UnixMicro(); ts != want {
+			t.Errorf("visit %d at %d, want %d", i+1, ts, want)
+		}
+	}
+}
+
+// TestStandardHistorySQLReturnsVisits: the query a forensic tool writes
+// returns the pages the scenario named, joined through the tables it expects.
+func TestStandardHistorySQLReturnsVisits(t *testing.T) {
+	start := time.Date(2024, 5, 6, 7, 8, 9, 0, time.UTC)
+	spec := HistorySpec{Visits: []Visit{
+		{URL: "https://intranet.example/hr/salaries", Title: "Salaries", Time: start, Transition: "typed"},
+		{URL: "https://intranet.example/hr/salaries", Title: "Salaries", Time: start.Add(time.Hour), Transition: "reload"},
+		{URL: "https://news.example/", Title: "News", Time: start.Add(2 * time.Hour)},
+	}}
+
+	chrome, err := ChromeHistory(spec, prng.Root(2).Stream())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := queryStrings(t, openDB(t, chrome),
+		`SELECT urls.url || " " || urls.visit_count || " " || urls.typed_count FROM urls ORDER BY urls.id`)
+	want := []string{"https://intranet.example/hr/salaries 2 1", "https://news.example/ 1 0"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("chrome urls = %v, want %v", got, want)
+	}
+	if n := queryInts(t, openDB(t, chrome), "SELECT COUNT(*) FROM visits")[0]; n != 3 {
+		t.Errorf("%d chrome visits, want 3", n)
+	}
+
+	firefox, err := FirefoxPlaces(spec, prng.Root(2).Stream())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fdb := openDB(t, firefox)
+	got = queryStrings(t, fdb, `SELECT p.url || " " || p.rev_host || " " || p.visit_count FROM moz_places p ORDER BY p.id`)
+	want = []string{
+		"https://intranet.example/hr/salaries elpmaxe.tenartni. 2",
+		"https://news.example/ elpmaxe.swen. 1",
+	}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("firefox places = %v, want %v", got, want)
+	}
+	// visit_type 2 is TYPED and 9 is RELOAD; Chrome numbers them 1 and 8.
+	if types := queryInts(t, fdb, "SELECT visit_type FROM moz_historyvisits ORDER BY id"); len(types) != 3 || types[0] != 2 || types[1] != 9 || types[2] != 1 {
+		t.Errorf("firefox visit types = %v, want [2 9 1]", types)
+	}
+	if hosts := queryStrings(t, fdb, "SELECT host FROM moz_origins ORDER BY id"); len(hosts) != 2 {
+		t.Errorf("moz_origins = %v, want one row per host", hosts)
+	}
+}
+
+// TestChromeDownloadsRecorded: a download reaches the tables a tool reads.
+func TestChromeDownloadsRecorded(t *testing.T) {
+	data, err := genChromeHistory(prng.Root(1).Stream(), DefaultStart)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := openDB(t, data)
+	rows := queryStrings(t, db, `SELECT target_path || " " || mime_type || " " || total_bytes FROM downloads`)
+	if len(rows) != 1 || !strings.Contains(rows[0], "application/zip 4096") {
+		t.Errorf("downloads = %v", rows)
+	}
+	if chains := queryStrings(t, db, "SELECT url FROM downloads_url_chains"); len(chains) != 1 {
+		t.Errorf("downloads_url_chains = %v", chains)
+	}
+}
+
+func queryInts(t *testing.T, db *sql.DB, query string) []int64 {
+	t.Helper()
+	rows, err := db.Query(query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var v int64
+		if err := rows.Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func queryStrings(t *testing.T, db *sql.DB, query string) []string {
+	t.Helper()
+	rows, err := db.Query(query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
 }
 
 // TestSQLiteDeterministic: the database bytes depend only on the stream.

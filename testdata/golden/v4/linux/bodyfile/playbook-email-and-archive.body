@@ -1,9 +1,0 @@
-# input-sha256 995b83c7f1e8502ec14a060e376201326fb045d471de1ce7d71eb3ac36292c2d
-0|/users|1|d/drwxr-xr-x|0|0|0|1631700000|1631700000|0|0
-8a2ce087a74b81edefbca6ea07ae2148|/users/bob/mail/msg-2.eml (deleted)|4|r/rrw-r--r--|0|0|400|1631700000|1631700000|0|0
-71358f363f3286c436b61a2ed274d4c7|/users/bob/media/pic-3.jpg (deleted)|6|r/rrw-r--r--|0|0|256|1631700000|1631700000|0|0
-0|/users/bob|2|d/drwxr-xr-x|0|0|0|1631700000|1631701200|0|0
-0|/users/bob/bundles|7|d/drwxr-xr-x|0|0|0|1631701200|1631701200|0|0
-3dd1475ecbe50e3b3f345026daead1bd|/users/bob/bundles/bundle.zip|8|r/rrw-r--r--|0|0|2048|1631701200|1631701200|0|0
-0|/users/bob/mail|3|d/drwxr-xr-x|0|0|0|1631700000|1631701800|0|0
-0|/users/bob/media|5|d/drwxr-xr-x|0|0|0|1631700000|1631701800|0|0

@@ -30,7 +30,7 @@ const (
 // dry-run listing. Version 4 adds MD5s, the kind of a deleted object, the
 // stream an ads or motw wrote, the object a rotate moves and the explicit
 // time fields to the ledger, and writes the answer key.
-const GeneratorVersion = 4
+const GeneratorVersion = 5
 
 const (
 	TxtExtension    = ".txt"
@@ -51,6 +51,7 @@ const (
 	MdExtension     = ".md"
 	SyslogExtension = ".syslog"
 	ExeExtension    = ".exe"
+	JpgExtension    = ".jpg"
 	DbExtension     = ".db"
 	SqLiteExtension = ".sqlite"
 )

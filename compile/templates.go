@@ -7,28 +7,39 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aoiflux/fsagen/email"
 	"github.com/aoiflux/fsagen/render"
+	"github.com/aoiflux/fsagen/spec"
 )
 
 // getTemplate returns a predefined content template. The name has already
 // been checked against Templates.
-func getTemplate(templateName string, ctx render.Context) string {
+func getTemplate(templateName string, ctx render.Context) (string, error) {
 	switch templateName {
 	case "email":
-		return fmt.Sprintf(`From: %s@example.com
-To: recipient@example.com
-Subject: %s
-Date: %s
-
-This is an automated message from %s.
-
-Message ID: %d
-`,
-			strings.ToLower(ctx.Actor),
-			ctx.Rand.Derive("template", "email", "subject").Stream().Text(20),
-			ctx.Timestamp.Format(time.RFC1123Z),
-			ctx.Actor,
-			ctx.Seq)
+		// Built by the same code as action: email, so the message has CRLF
+		// line endings, a Message-ID and MIME headers, and net/mail reads it.
+		// It used to be a hand-written imitation with none of those.
+		key := ctx.Rand.Derive("template", "email")
+		from := strings.ToLower(ctx.Actor)
+		if from == "" {
+			from = "user"
+		}
+		msg, _, err := email.Build(email.Options{
+			Spec: spec.EmailSpec{
+				From:      from + "@example.com",
+				To:        []string{"recipient@example.com"},
+				Subject:   key.Derive("subject").Stream().Text(20),
+				Date:      ctx.Timestamp.UTC().Format(time.RFC3339),
+				MessageID: "<" + key.Derive("message-id").Stream().Hex(24) + "@example.com>",
+				BodyText:  fmt.Sprintf("This is an automated message from %s.\n\nMessage ID: %d\n", ctx.Actor, ctx.Seq),
+			},
+			Boundary: func() string { return "----=_fsagen_" + key.Derive("boundary").Stream().Hex(24) },
+		})
+		if err != nil {
+			return "", err
+		}
+		return string(msg), nil
 
 	case "log":
 		return fmt.Sprintf(`%s [INFO] User=%s Action=file_access File=document_%d.txt Result=success
@@ -42,7 +53,7 @@ Message ID: %d
 			ctx.Actor,
 			ctx.Timestamp.Add(2*time.Minute).Format(time.RFC3339),
 			ctx.Actor,
-			ctx.Seq)
+			ctx.Seq), nil
 
 	case "script":
 		return fmt.Sprintf(`#!/bin/bash
@@ -57,7 +68,7 @@ echo "Timestamp: %s"
 			ctx.Timestamp.Format(time.RFC3339),
 			ctx.Seq,
 			ctx.Actor,
-			ctx.Timestamp.Format(time.RFC3339))
+			ctx.Timestamp.Format(time.RFC3339)), nil
 
 	case "doc":
 		return fmt.Sprintf(`Document Title: Report %d
@@ -72,7 +83,7 @@ Generated content: %s
 			ctx.Actor,
 			ctx.Timestamp.Format("2006-01-02"),
 			ctx.Seq,
-			ctx.Rand.Derive("template", "doc", "body").Stream().Text(100))
+			ctx.Rand.Derive("template", "doc", "body").Stream().Text(100)), nil
 	}
 	panic("unchecked template " + templateName)
 }

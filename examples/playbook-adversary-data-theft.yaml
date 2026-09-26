@@ -18,7 +18,7 @@ steps:
         type: dir
         path: staging
 
-  # Move staged documents to staging folder (rename), then create an archive
+  # Move staged documents to staging folder (rename), then archive them
   - actor: intruder
     offset: 10m
     actions:
@@ -28,10 +28,13 @@ steps:
       - action: rename
         path: docs/customers.csv
         new_path: staging/customers.csv
-      - action: create
+      # A real archive of what was just staged, not a file named .zip.
+      - action: archive
         path: staging/data.zip
-        format: text   # placeholder text, not a real file of this type
-        content_len: 1024
+        archive:
+          base: staging
+          members:
+            - staging/*.csv
 
   # Append exfiltration log entries
   - actor: intruder

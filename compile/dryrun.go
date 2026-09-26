@@ -28,6 +28,8 @@ type dryRunOp struct {
 	Format        string     `json:"format,omitempty"`
 	Mode          string     `json:"mode,omitempty"`
 	Times         *TimesJSON `json:"times,omitempty"`
+	Members       []string   `json:"members,omitempty"`
+	ContentKind   string     `json:"content_kind,omitempty"`
 	Stream        string     `json:"stream,omitempty"`
 	ZoneID        *int       `json:"zone_id,omitempty"`
 	HostURL       string     `json:"host_url,omitempty"`
@@ -78,6 +80,7 @@ func WriteDryRun(w io.Writer, p *Program) error {
 			Dir:         op.Dir,
 			ID:          op.ID,
 			Format:      op.Format,
+			ContentKind: op.ContentKind,
 			Mode:        op.Mode,
 			Times:       TimesOf(op.Times),
 			Stream:      op.Stream,
@@ -104,6 +107,9 @@ func WriteDryRun(w io.Writer, p *Program) error {
 		}
 		if op.Email != nil {
 			line.EmailSubject = op.Email.Subject
+		}
+		for _, m := range op.Members {
+			line.Members = append(line.Members, m.Name+"="+m.Path)
 		}
 		if err := enc.Encode(line); err != nil {
 			return err

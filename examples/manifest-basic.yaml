@@ -22,7 +22,6 @@ operations:
 
   - action: create
     path: media/videos/sample.mp4
-    format: text   # placeholder text, not a real file of this type
     content_len: 256
     mtime: "2021-04-01T12:00:00Z"
 

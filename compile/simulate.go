@@ -8,6 +8,7 @@ import (
 
 	"github.com/aoiflux/fsagen/model"
 	"github.com/aoiflux/fsagen/pathpolicy"
+	"github.com/aoiflux/fsagen/spec"
 	"github.com/aoiflux/fsagen/util"
 )
 
@@ -162,11 +163,28 @@ func apply(t *model.Tree, op *Op, opts Options) error {
 		}
 		tag(p)
 
-	case "update", "truncate":
+	case "update", "truncate", "edit":
 		if err := mustFile(op.Action); err != nil {
 			return err
 		}
 		written(t, p, when)
+
+	case "archive":
+		if err := portable(p); err != nil {
+			return err
+		}
+		// The members are settled before the archive exists, so a pattern
+		// can never sweep the archive into itself.
+		members, err := archiveMembers(t, op)
+		if err != nil {
+			return err
+		}
+		op.Members = members
+		if _, err := t.CreateFile(p); err != nil {
+			return err
+		}
+		born(t, p, when)
+		tag(p)
 
 	case "delete":
 		o := t.Get(p)
@@ -238,6 +256,9 @@ func apply(t *model.Tree, op *Op, opts Options) error {
 			return err
 		}
 		if op.Email != nil {
+			if err := resolveAttachmentRefs(t, op); err != nil {
+				return err
+			}
 			for i, a := range op.Email.Attachments {
 				if a.SourceRoot == "" {
 					continue
@@ -332,4 +353,109 @@ func emailFormat(op *Op) string {
 		return "mbox"
 	}
 	return "eml"
+}
+
+// archiveMembers settles what an archive holds: first every live path under
+// each id it names, in the order those were created, then every file each
+// pattern matches, in path order. A file named twice is stored once, and the
+// archive is never a member of itself.
+//
+// Patterns are matched with path.Match, so "*" stops at a slash: write
+// "staging/*/*.pdf" to reach a level down.
+func archiveMembers(t *model.Tree, op *Op) ([]Member, error) {
+	a := op.Archive
+	base := strings.TrimSuffix(a.Base, "/")
+	seen := map[string]bool{op.Path: true}
+	var out []Member
+
+	add := func(q string) error {
+		if seen[q] {
+			return nil
+		}
+		seen[q] = true
+		o := t.Get(q)
+		if o == nil || o.Kind != model.File {
+			return nil
+		}
+		name := q
+		if base != "" && base != "." {
+			if !strings.HasPrefix(q, base+"/") {
+				return fmt.Errorf("archive.base: %s is not under %s, so it has no name inside the archive", q, base)
+			}
+			name = strings.TrimPrefix(q, base+"/")
+		}
+		out = append(out, Member{Path: q, Name: name, Times: o.Times})
+		return nil
+	}
+
+	for _, id := range a.MemberRefs {
+		live, known := t.Live(id)
+		switch {
+		case !known:
+			return nil, fmt.Errorf("archive.member_refs: unknown id %q (ids are declared with id: on an earlier action)", id)
+		case len(live) == 0:
+			return nil, fmt.Errorf("archive.member_refs: every path created under id %q has already been deleted", id)
+		}
+		for _, q := range live {
+			if err := add(q); err != nil {
+				return nil, err
+			}
+		}
+	}
+	for _, g := range a.Members {
+		matched := 0
+		for _, q := range t.Paths() {
+			ok, err := path.Match(g, q)
+			if err != nil {
+				return nil, fmt.Errorf("archive.members: %q is not a valid pattern: %w", g, err)
+			}
+			if !ok || q == op.Path {
+				continue
+			}
+			if o := t.Get(q); o == nil || o.Kind != model.File {
+				continue
+			}
+			matched++
+			if err := add(q); err != nil {
+				return nil, err
+			}
+		}
+		if matched == 0 {
+			return nil, fmt.Errorf("archive.members: %q matches no file in the output at this point", g)
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("archive: every member named has already been deleted")
+	}
+	return out, nil
+}
+
+// resolveAttachmentRefs turns an attachment's ref into the path it names, so
+// a message can attach an artefact an earlier action created without knowing
+// its generated name.
+func resolveAttachmentRefs(t *model.Tree, op *Op) error {
+	attachments := append([]spec.Attachment(nil), op.Email.Attachments...)
+	changed := false
+	for i := range attachments {
+		a := &attachments[i]
+		if a.Ref == "" {
+			continue
+		}
+		live, known := t.Live(a.Ref)
+		switch {
+		case !known:
+			return fmt.Errorf("email.attachments[%d].ref: unknown id %q (ids are declared with id: on an earlier action)", i, a.Ref)
+		case len(live) == 0:
+			return fmt.Errorf("email.attachments[%d].ref: every path created under id %q has already been deleted", i, a.Ref)
+		case len(live) > 1:
+			return fmt.Errorf("email.attachments[%d].ref: id %q names %d paths; a message attaches one file at a time", i, a.Ref, len(live))
+		}
+		a.SourceRoot, a.Ref, changed = live[0], "", true
+	}
+	if changed {
+		e := *op.Email
+		e.Attachments = attachments
+		op.Email = &e
+	}
+	return nil
 }

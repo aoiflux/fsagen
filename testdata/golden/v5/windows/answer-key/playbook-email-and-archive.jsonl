@@ -1,0 +1,6 @@
+# input-sha256 e8eedec097c607c98a557cbfaf9cf740b7b66c3443273aafef910d7a42ed1013
+{"event":"created","n":1,"at":"2021-09-15T10:00:00Z","object":3,"kind":"dir","path":"users/bob/mail"}
+{"event":"created","n":2,"at":"2021-09-15T10:00:00Z","object":4,"kind":"file","path":"users/bob/mail/msg-2.eml","size":260,"sha256":"78b9f591ba4bae3e37f2ade7450f60102a29d0fa274362f8cecba20d48b27aa4"}
+{"event":"created","n":3,"at":"2021-09-15T10:00:00Z","object":6,"kind":"file","path":"users/bob/media/pic-3.jpg","size":1457,"sha256":"f502e1bf5ee09740686cf4b1d65c17c622315fb5ded4114eca128f4dd3ebdbcf"}
+{"event":"deleted","n":5,"at":"2021-09-15T10:30:00Z","object":4,"kind":"file","path":"users/bob/mail/msg-2.eml","sha256":"78b9f591ba4bae3e37f2ade7450f60102a29d0fa274362f8cecba20d48b27aa4"}
+{"event":"deleted","n":6,"at":"2021-09-15T10:30:00Z","object":6,"kind":"file","path":"users/bob/media/pic-3.jpg","sha256":"f502e1bf5ee09740686cf4b1d65c17c622315fb5ded4114eca128f4dd3ebdbcf"}

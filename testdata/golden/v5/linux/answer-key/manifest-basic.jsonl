@@ -1,0 +1,8 @@
+# input-sha256 c53d713eaa4adc93cac1f49b002389361447b81a1144403f4e4e0ed639ac51d3
+{"event":"created","n":1,"object":2,"kind":"file","path":"docs/readme.txt","size":24,"sha256":"109c49e7efb7d7b71aa8ffc46e33f6ecc26a41a607e66759ea6d817ec257a57e"}
+{"event":"modified","n":2,"object":2,"kind":"file","path":"docs/readme.txt","size":128,"sha256_before":"109c49e7efb7d7b71aa8ffc46e33f6ecc26a41a607e66759ea6d817ec257a57e","sha256":"8614df8352e2385a572ea0eb7de813f1a46de59a437d2829a92c4975baf547a8"}
+{"event":"stomped","n":3,"object":1,"kind":"dir","path":"docs","times":{"atime":"2021-03-01T10:00:00Z","mtime":"2021-03-01T10:00:00Z","ctime":"2021-01-01T10:00:00Z","crtime":"2021-01-01T10:00:00Z"},"fields":["atime","mtime"]}
+{"event":"created","n":4,"object":4,"kind":"dir","path":"media/videos"}
+{"event":"created","n":5,"object":5,"kind":"file","path":"media/videos/sample.mp4","size":749,"sha256":"405cc4285a89b1d8901399c48b6c466c621d17a381fc057d8e2aa4aece8d86d3"}
+{"event":"renamed","n":6,"object":5,"kind":"file","path":"media/videos/sample-renamed.mp4","from":"media/videos/sample.mp4"}
+{"event":"deleted","n":7,"object":2,"kind":"file","path":"docs/readme.txt","sha256":"8614df8352e2385a572ea0eb7de813f1a46de59a437d2829a92c4975baf547a8"}

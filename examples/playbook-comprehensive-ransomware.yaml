@@ -48,7 +48,6 @@ steps:
     actions:
       - action: create
         path: AppData/Local/staging/doc-${ITER}-${BATCH}.docx
-        format: text   # placeholder text, not a real file of this type
         content_len: 4096
       - action: create
         path: AppData/Local/staging/spreadsheet-${UUID}.xlsx
@@ -59,11 +58,15 @@ steps:
   - actor: attacker
     offset: 35m
     actions:
-      - action: create
+      # A real archive of the staged documents.
+      - action: archive
         path: AppData/Local/staging/archive-${VAR:campaign_id}.zip
-        format: text   # placeholder text, not a real file of this type
-        content_len: 32768
         mtime: "2024-03-15T02:35:00Z"
+        archive:
+          base: AppData/Local/staging
+          members:
+            - AppData/Local/staging/*.docx
+            - AppData/Local/staging/*.xlsx
 
   # Exfiltration logs
   - actor: attacker

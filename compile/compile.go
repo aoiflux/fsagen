@@ -57,6 +57,9 @@ type Op struct {
 	// Moved is, for a rotate, the object renamed to NewPath; Object is then
 	// the empty file left at Path.
 	Moved int
+	// Members are, for an archive, the files it holds, resolved against the
+	// model at the moment the archive is written.
+	Members []Member
 	// Pre are stamped just before the operation runs: a deleted object gets
 	// its final times first, so what is left of it carries scenario times.
 	// Stamps are applied just after it.
@@ -82,6 +85,15 @@ type Op struct {
 	Random int
 
 	keys keys
+}
+
+// Member is one file an archive holds: where it is in the output tree, the
+// name it is stored under, and the modification time it had when the archive
+// was made.
+type Member struct {
+	Path  string
+	Name  string
+	Times model.Times
 }
 
 // Stamp is the set of intended times for one path.

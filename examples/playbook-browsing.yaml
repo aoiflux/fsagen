@@ -11,20 +11,42 @@ actors:
       browser: firefox
 
 steps:
+  # Chrome keeps its history in microseconds since 1601-01-01.
   - actor: user1
     offset: 1h
     actions:
       - action: create
         path: Default/History
-        format: text   # placeholder text, not a real file of this type
-        ext: .sqlite
-        content_len: 4096
+        format: chrome_history
+        history:
+          visits:
+            - url: https://portal.example/login
+              title: Sign in
+              time: "2023-10-30T10:55:00Z"
+              transition: typed
+            - url: https://portal.example/reports
+              title: Reports
+              time: "2023-10-30T10:56:10Z"
+              from_visit: 1
+            - url: https://portal.example/reports/q3.csv
+              title: Q3 export
+              time: "2023-10-30T10:58:42Z"
+              from_visit: 2
 
+  # Firefox keeps its history in microseconds since 1970-01-01.
   - actor: user2
     offset: 2h
     actions:
       - action: create
-        path: default/places
-        format: text   # placeholder text, not a real file of this type
-        ext: .sqlite
-        content_len: 4096
+        path: default/places.sqlite
+        format: firefox_places
+        history:
+          visits:
+            - url: https://wiki.example/runbooks
+              title: Runbooks
+              time: "2023-10-30T11:50:00Z"
+              transition: bookmark
+            - url: https://wiki.example/runbooks/backup
+              title: Backup runbook
+              time: "2023-10-30T11:52:30Z"
+              from_visit: 1
