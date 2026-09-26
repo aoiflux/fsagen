@@ -605,10 +605,10 @@ the run manifest and in the ledger, never guessed.
 
 Where the suite has actually run: Windows 11 (build 26200) and Windows 10
 (build 19045) on NTFS; Ubuntu 24.04 under WSL2 on ext4; and Fedora 40 on
-tmpfs, btrfs and an ext4 volume made with 128-byte inodes, which keeps whole
-seconds and no birth time. macOS and
-FreeBSD are compiled on every change and have **never been run**: their
-column is what the code paths intend, not a measurement.
+tmpfs, btrfs and an ext4 volume made with 128-byte inodes, which keeps
+whole seconds and no birth time. macOS and FreeBSD are compiled on every
+change and have **never been run**: their column is what the code paths
+intend, not a measurement.
 
 ## Limits
 

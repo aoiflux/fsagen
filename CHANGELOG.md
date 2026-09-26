@@ -172,10 +172,9 @@ the README now states rather than implies.
 It also passes on Linux, on Ubuntu 24.04 under WSL2 on ext4: 295 tests, 13
 skipped, none failed, and every skip is a Windows-only capability (named
 streams, creation and change times, the capability injection that only makes
-sense from the other side, and `mactime`, which is not installed there). The
-Fedora 40 machine that ran the previous phase was not available for this one.
+sense from the other side, and `mactime`, which is not installed there).
 
-That Linux run found a defect in this phase's own work. The acceptance
+That first Linux run found a defect in this phase's own work. The acceptance
 subtest `CR-6_four_stomped_files` asserted the Windows outcome everywhere. A
 file system that cannot be told a creation time cannot show mtime < crtime,
 and fsagen does not pretend it can, so the answer key correctly named none
@@ -184,6 +183,22 @@ a platform: no stomp claimed, and `crtime` recorded as uncontrolled in the
 ledger for each of the four files. Without that second half a reader could
 not tell a scenario that stomps nothing from a platform that could not carry
 a stomp out.
+
+Fedora 40 then ran it on three file systems in turn, `TMPDIR` pointing at
+each: tmpfs and btrfs give 296 tests, 12 skipped, none failed, and an ext4
+volume made with 128-byte inodes gives 295 and 13. The one test that runs
+here but not under WSL2 is `TestMactimeAccepts`, which stands aside where The
+Sleuth Kit is absent and here reads the bodyfile with mactime 4.12.1, the
+tool the format is written for. The one extra skip on the 128-byte-inode
+volume is `TestNanoPrecisionRoundTrip`, on a volume that keeps whole
+seconds — a fact taken from the root's change time, not assumed from the
+file system's name.
+
+That volume is also the only one of the three that keeps no birth time, which
+is what makes both halves of `TestLinuxBtimeFromStatxOrZero` real rather than
+theoretical: on tmpfs and btrfs statx reports a birth time and the timeline
+has to match it, and there statx reports none and the timeline has to say
+unknown instead of putting another time in its place.
 
 ## Unreleased: P4, artefacts forensic tools can actually parse
 
