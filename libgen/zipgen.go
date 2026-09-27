@@ -26,12 +26,14 @@ const (
 	zipLocalLen    = 30
 	zipCentralLen  = 46
 	zipEOCDLen     = 22
-	zipVersion     = 20      // 2.0: store and deflate, no zip64
-	zipUTF8Flag    = 0x0800  // the name is UTF-8, not CP437
-	zipAttrArchive = 0x20    // MS-DOS FILE_ATTRIBUTE_ARCHIVE
-	zipAttrDir     = 0x10    // MS-DOS FILE_ATTRIBUTE_DIRECTORY
-	zipMaxComment  = 0xffff  // the end-of-central-directory comment is 16-bit
-	zipMax         = 1 << 32 // without zip64 every offset and size is 32-bit
+	zipVersion     = 20     // 2.0: store and deflate, no zip64
+	zipUTF8Flag    = 0x0800 // the name is UTF-8, not CP437
+	zipAttrArchive = 0x20   // MS-DOS FILE_ATTRIBUTE_ARCHIVE
+	zipAttrDir     = 0x10   // MS-DOS FILE_ATTRIBUTE_DIRECTORY
+	// MaxZipComment is the longest archive comment the format can record: the
+	// end-of-central-directory field that holds its length is 16-bit.
+	MaxZipComment = 0xffff
+	zipMax        = 1 << 32 // without zip64 every offset and size is 32-bit
 )
 
 // ZipEntry is one member of an archive.
@@ -49,8 +51,11 @@ type ZipEntry struct {
 // BuildZip writes the entries in the order given, with a central directory in
 // the same order and an optional archive comment.
 func BuildZip(entries []ZipEntry, comment string) ([]byte, error) {
-	if len(comment) > zipMaxComment {
-		return nil, fmt.Errorf("zip comment is %d bytes; the format allows %d", len(comment), zipMaxComment)
+	if len(comment) > MaxZipComment {
+		return nil, fmt.Errorf("zip comment is %d bytes; the format allows %d", len(comment), MaxZipComment)
+	}
+	if len(entries) > MaxZipEntries {
+		return nil, fmt.Errorf("zip has %d members; without zip64 the format records at most %d", len(entries), MaxZipEntries)
 	}
 	seen := make(map[string]bool, len(entries))
 	var body, central bytes.Buffer
@@ -69,21 +74,9 @@ func BuildZip(entries []ZipEntry, comment string) ([]byte, error) {
 		if dir && len(data) > 0 {
 			return nil, fmt.Errorf("zip member %q is a directory and cannot hold data", name)
 		}
-		stored := data
-		method := uint16(0)
-		if e.Deflate && !dir {
-			var buf bytes.Buffer
-			w, err := flate.NewWriter(&buf, flate.BestCompression)
-			if err != nil {
-				return nil, err
-			}
-			if _, err := w.Write(data); err != nil {
-				return nil, err
-			}
-			if err := w.Close(); err != nil {
-				return nil, err
-			}
-			stored, method = buf.Bytes(), 8
+		stored, method, err := storedBytes(data, e.Deflate && !dir)
+		if err != nil {
+			return nil, err
 		}
 
 		offset := body.Len()
@@ -139,6 +132,9 @@ func BuildZip(entries []ZipEntry, comment string) ([]byte, error) {
 	out.Write(body.Bytes())
 	out.Write(central.Bytes())
 	put32(&out, zipEOCDSig)
+	// The counts and offsets below are 16- and 32-bit, so an archive past those
+	// limits would record a wrong member count or a wrong directory offset and
+	// read as a smaller archive than it is.
 	put16(&out, 0)
 	put16(&out, 0)
 	put16(&out, uint16(len(entries)))
@@ -214,3 +210,43 @@ func zlibStored(data []byte) []byte {
 	}
 	return append(out, byte(sum>>24), byte(sum>>16), byte(sum>>8), byte(sum))
 }
+
+// The zip compression methods this writer uses.
+const (
+	zipMethodStore   uint16 = 0
+	zipMethodDeflate uint16 = 8
+)
+
+// deflate compresses a member's bytes. The result is only reproducible for the
+// one Go toolchain go.mod pins, which is why store is the default everywhere.
+func deflate(data []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	w, err := flate.NewWriter(&buf, flate.BestCompression)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := w.Write(data); err != nil {
+		return nil, err
+	}
+	if err := w.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// storedBytes is what goes into the archive for one member, with the method code
+// that says how it got there. A directory entry is never compressed.
+func storedBytes(data []byte, compress bool) ([]byte, uint16, error) {
+	if !compress {
+		return data, zipMethodStore, nil
+	}
+	stored, err := deflate(data)
+	if err != nil {
+		return nil, 0, err
+	}
+	return stored, zipMethodDeflate, nil
+}
+
+// MaxZipEntries is how many members the end-of-central-directory record can
+// count: the field that holds the number is 16-bit.
+const MaxZipEntries = 0xffff

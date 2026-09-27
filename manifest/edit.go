@@ -40,47 +40,24 @@ func applyEdit(e spec.EditSpec, data []byte) ([]byte, error) {
 	}
 
 	if e.DeleteMatching != "" {
-		re, err := regexp.Compile(e.DeleteMatching)
-		if err != nil {
-			return nil, fmt.Errorf("delete_matching: %w", err)
+		var err error
+		if lines, err = deleteMatching(lines, e.DeleteMatching); err != nil {
+			return nil, err
 		}
-		kept := lines[:0]
-		for _, l := range lines {
-			if !re.MatchString(l) {
-				kept = append(kept, l)
-			}
-		}
-		lines = kept
 	}
 
 	if len(e.Replace) > 0 {
-		joined := strings.Join(lines, "\n")
-		for i, r := range e.Replace {
-			re, err := regexp.Compile(r.Pattern)
-			if err != nil {
-				return nil, fmt.Errorf("replace[%d].pattern: %w", i, err)
-			}
-			joined = replaceN(re, joined, r.With, r.Count)
-		}
-		lines = strings.Split(joined, "\n")
-		if joined == "" {
-			lines = nil
+		var err error
+		if lines, err = substitute(lines, e.Replace); err != nil {
+			return nil, err
 		}
 	}
 
 	for i, ins := range e.InsertAfter {
-		re, err := regexp.Compile(ins.Pattern)
-		if err != nil {
-			return nil, fmt.Errorf("insert_after[%d].pattern: %w", i, err)
+		var err error
+		if lines, err = insertAfter(lines, ins, i); err != nil {
+			return nil, err
 		}
-		var out []string
-		for _, l := range lines {
-			out = append(out, l)
-			if re.MatchString(l) {
-				out = append(out, ins.Text)
-			}
-		}
-		lines = out
 	}
 
 	result := strings.Join(lines, "\n")
@@ -105,4 +82,53 @@ func replaceN(re *regexp.Regexp, src, repl string, n int) string {
 		last = m[1]
 	}
 	return string(append(out, src[last:]...))
+}
+
+// deleteMatching drops every line the expression matches.
+func deleteMatching(lines []string, pattern string) ([]string, error) {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("delete_matching: %w", err)
+	}
+	kept := lines[:0]
+	for _, l := range lines {
+		if !re.MatchString(l) {
+			kept = append(kept, l)
+		}
+	}
+	return kept, nil
+}
+
+// substitute runs each replacement over the whole file joined back together, so
+// a pattern may span lines.
+func substitute(lines []string, replacements []spec.EditReplace) ([]string, error) {
+	joined := strings.Join(lines, "\n")
+	for i, r := range replacements {
+		re, err := regexp.Compile(r.Pattern)
+		if err != nil {
+			return nil, fmt.Errorf("replace[%d].pattern: %w", i, err)
+		}
+		joined = replaceN(re, joined, r.With, r.Count)
+	}
+	if joined == "" {
+		return nil, nil
+	}
+	return strings.Split(joined, "\n"), nil
+}
+
+// insertAfter puts the text after each line the pattern matches. i names the
+// insertion in an error, so the author knows which one is wrong.
+func insertAfter(lines []string, ins spec.EditInsert, i int) ([]string, error) {
+	re, err := regexp.Compile(ins.Pattern)
+	if err != nil {
+		return nil, fmt.Errorf("insert_after[%d].pattern: %w", i, err)
+	}
+	var out []string
+	for _, l := range lines {
+		out = append(out, l)
+		if re.MatchString(l) {
+			out = append(out, ins.Text)
+		}
+	}
+	return out, nil
 }

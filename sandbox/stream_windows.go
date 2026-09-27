@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"runtime"
 	"unicode/utf16"
 	"unsafe"
 
@@ -63,11 +64,8 @@ func openStream(r *os.Root, name, stream string, access, disposition uint32) (*o
 		0, 0)
 	if err != nil {
 		full := name + ":" + stream
-		if st, ok := errors.AsType[windows.NTStatus](err); ok {
-			switch st {
-			case windows.STATUS_OBJECT_NAME_NOT_FOUND, windows.STATUS_OBJECT_PATH_NOT_FOUND, windows.STATUS_NO_SUCH_FILE:
-				return nil, &os.PathError{Op: "open", Path: full, Err: os.ErrNotExist}
-			}
+		if ntNotExist(err) {
+			return nil, &os.PathError{Op: "open", Path: full, Err: os.ErrNotExist}
 		}
 		return nil, &os.PathError{Op: "open", Path: full, Err: err}
 	}
@@ -113,9 +111,9 @@ func listStreams(r *os.Root, name string) ([]Stream, error) {
 	}
 	defer f.Close()
 
-	buf := make([]byte, 4096)
+	buf := make([]byte, streamBufferSize)
 	for {
-		err = windows.GetFileInformationByHandleEx(windows.Handle(f.Fd()), windows.FileStreamInfo, &buf[0], uint32(len(buf)))
+		err = readStreamInfo(windows.Handle(f.Fd()), buf)
 		if err == nil {
 			break
 		}
@@ -129,12 +127,18 @@ func listStreams(r *os.Root, name string) ([]Stream, error) {
 		return nil, &os.PathError{Op: "list streams", Path: name, Err: err}
 	}
 
+	// GetFileInformationByHandleEx does not report how many bytes it wrote, so
+	// every entry is checked against the buffer before it is read: a header or a
+	// name claiming to run past the end would otherwise be read out of bounds.
 	const nameOffset = int(unsafe.Sizeof(fileStreamInfoHeader{}))
 	var out []Stream
-	for off := 0; ; {
+	for off := 0; off+nameOffset <= len(buf); {
 		hdr := (*fileStreamInfoHeader)(unsafe.Pointer(&buf[off]))
-		n := int(hdr.StreamNameLength) / 2
-		raw := unsafe.Slice((*uint16)(unsafe.Pointer(&buf[off+nameOffset])), n)
+		nameBytes := int(hdr.StreamNameLength)
+		if off+nameOffset+nameBytes > len(buf) {
+			return nil, &os.PathError{Op: "list streams", Path: name, Err: errStreamList}
+		}
+		raw := unsafe.Slice((*uint16)(unsafe.Pointer(&buf[off+nameOffset])), nameBytes/2)
 		full := string(utf16.Decode(raw)) // ":name:$DATA", or "::$DATA" for the default stream
 		if s := trimStreamName(full); s != "" {
 			out = append(out, Stream{Name: s, Size: hdr.StreamSize})
@@ -142,7 +146,12 @@ func listStreams(r *os.Root, name string) ([]Stream, error) {
 		if hdr.NextEntryOffset == 0 {
 			break
 		}
-		off += int(hdr.NextEntryOffset)
+		// A non-advancing offset would read the same entry for ever.
+		next := off + int(hdr.NextEntryOffset)
+		if next <= off {
+			return nil, &os.PathError{Op: "list streams", Path: name, Err: errStreamList}
+		}
+		off = next
 	}
 	return out, nil
 }
@@ -154,3 +163,26 @@ func trimStreamName(full string) string {
 	}
 	return full[1 : len(full)-len(suffix)]
 }
+
+// streamBufferSize is the first buffer tried for a file's stream list; a file
+// with more streams than fit is retried with a larger one.
+const streamBufferSize = 4096
+
+// readStreamInfo fills buf with the file's stream list.
+//
+// The buffer is pinned for the call. The kernel is handed its address and writes
+// into it, and an unpinned Go pointer may be to a goroutine stack, which the
+// runtime is free to move: the write would then land on memory that is no longer
+// the buffer. Pinning also keeps the allocation off the stack in the first
+// place, so the call does not depend on what escape analysis happens to decide
+// about the code around it.
+func readStreamInfo(h windows.Handle, buf []byte) error {
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
+	pinner.Pin(&buf[0])
+	return windows.GetFileInformationByHandleEx(h, windows.FileStreamInfo, &buf[0], uint32(len(buf)))
+}
+
+// errStreamList says the stream list Windows returned does not fit the buffer it
+// was written into, or does not move forward through it.
+var errStreamList = errors.New("stream list is malformed")

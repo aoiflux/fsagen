@@ -97,15 +97,27 @@ func openRel(r *os.Root, name string, access, options uint32) (windows.Handle, e
 		windows.FILE_OPEN_REPARSE_POINT|windows.FILE_SYNCHRONOUS_IO_NONALERT|options,
 		0, 0)
 	if err != nil {
-		if st, ok := errors.AsType[windows.NTStatus](err); ok {
-			switch st {
-			case windows.STATUS_OBJECT_NAME_NOT_FOUND, windows.STATUS_OBJECT_PATH_NOT_FOUND, windows.STATUS_NO_SUCH_FILE:
-				return 0, os.ErrNotExist
-			}
+		if ntNotExist(err) {
+			return 0, os.ErrNotExist
 		}
 		return 0, err
 	}
 	return h, nil
+}
+
+// ntNotExist reports whether an NT status means the name was not there. The
+// three statuses differ in which part of the path was missing, which is not a
+// distinction any caller here makes.
+func ntNotExist(err error) bool {
+	st, ok := errors.AsType[windows.NTStatus](err)
+	if !ok {
+		return false
+	}
+	switch st {
+	case windows.STATUS_OBJECT_NAME_NOT_FOUND, windows.STATUS_OBJECT_PATH_NOT_FOUND, windows.STATUS_NO_SUCH_FILE:
+		return true
+	}
+	return false
 }
 
 func setTimes(r *os.Root, name string, t Times, caps TimeCaps) error {

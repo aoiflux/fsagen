@@ -301,10 +301,7 @@ func loadAttachments(specs []spec.Attachment, readSource, readOutput func(string
 		}
 		ctype := a.ContentType
 		if ctype == "" {
-			ctype = mime.TypeByExtension(filepath.Ext(name))
-		}
-		if ctype == "" {
-			ctype = "application/octet-stream"
+			ctype = contentTypeFor(filepath.Ext(name))
 		}
 		// FormatMediaType rejects a type that already carries parameters.
 		if idx := strings.IndexByte(ctype, ';'); idx >= 0 {
@@ -413,4 +410,51 @@ func EnvelopeSender(s spec.EmailSpec) string {
 		return strings.Trim(strings.TrimSpace(candidate), "<>")
 	}
 	return ""
+}
+
+// contentTypes are the MIME types fsagen gives an attachment whose type the
+// scenario does not state.
+//
+// The standard library's mime.TypeByExtension consults the host (/etc/mime.types
+// on Unix, the registry on Windows), so the same message would otherwise be
+// described differently on different machines, and even on two machines running
+// the same OS. Pinning the table here is what makes an attachment's headers a
+// property of the scenario rather than of the machine that ran it.
+var contentTypes = map[string]string{
+	".txt":    "text/plain; charset=utf-8",
+	".md":     "text/markdown; charset=utf-8",
+	".log":    "text/plain; charset=utf-8",
+	".syslog": "text/plain; charset=utf-8",
+	".csv":    "text/csv; charset=utf-8",
+	".html":   "text/html; charset=utf-8",
+	".htm":    "text/html; charset=utf-8",
+	".xml":    "text/xml; charset=utf-8",
+	".json":   "application/json",
+	".jsonl":  "application/jsonl",
+	".pdf":    "application/pdf",
+	".zip":    "application/zip",
+	".png":    "image/png",
+	".jpg":    "image/jpeg",
+	".jpeg":   "image/jpeg",
+	".gif":    "image/gif",
+	".mp4":    "video/mp4",
+	".eml":    "message/rfc822",
+	".mbox":   "application/mbox",
+	".docx":   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	".xlsx":   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	".pptx":   "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	".exe":    "application/vnd.microsoft.portable-executable",
+	".dll":    "application/vnd.microsoft.portable-executable",
+	".reg":    "text/plain; charset=utf-8",
+	".db":     "application/vnd.sqlite3",
+	".sqlite": "application/vnd.sqlite3",
+}
+
+// contentTypeFor is the MIME type an extension implies. An extension the table
+// does not name gets the type that says only "these are bytes".
+func contentTypeFor(ext string) string {
+	if ctype, ok := contentTypes[strings.ToLower(ext)]; ok {
+		return ctype
+	}
+	return "application/octet-stream"
 }

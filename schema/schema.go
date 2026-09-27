@@ -7,7 +7,9 @@ package schema
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/aoiflux/fsagen/compile"
@@ -158,24 +160,33 @@ func objectSchemaFromStruct(v any, required []string) map[string]any {
 	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
-	properties := map[string]any{}
-	for i := 0; i < t.NumField(); i++ {
-		f := t.Field(i)
-		jsonName, ok := jsonFieldName(f)
-		if !ok {
-			continue
-		}
-		properties[jsonName] = typeToSchema(f.Type)
-	}
 	out := map[string]any{
 		"type":                 "object",
-		"properties":           properties,
+		"properties":           structProperties(t),
 		"additionalProperties": false,
 	}
 	if len(required) > 0 {
 		out["required"] = required
 	}
 	return out
+}
+
+// structProperties is the schema for every field a struct exposes. An embedded
+// struct is flattened into its parent, as the decoders flatten it, so a type
+// composed of another describes the same keys as the one it is built from.
+func structProperties(t reflect.Type) map[string]any {
+	props := map[string]any{}
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if f.Anonymous {
+			maps.Copy(props, structProperties(f.Type))
+			continue
+		}
+		if name, ok := jsonFieldName(f); ok {
+			props[name] = typeToSchema(f.Type)
+		}
+	}
+	return props
 }
 
 func typeToSchema(t reflect.Type) map[string]any {
@@ -216,9 +227,11 @@ func typeToSchema(t reflect.Type) map[string]any {
 		return map[string]any{"type": "object"}
 	case reflect.Struct:
 		return map[string]any{"$ref": fmt.Sprintf("#/$defs/%s", t.Name())}
-	default:
-		return map[string]any{}
 	}
+	// An empty schema accepts anything, so a kind this does not understand
+	// would silently stop constraining the field. Nothing in spec reaches here;
+	// a type added that does should be handled rather than waved through.
+	panic("schema: no schema for " + t.Kind().String() + " (" + t.String() + ")")
 }
 
 func jsonFieldName(f reflect.StructField) (string, bool) {
@@ -245,102 +258,140 @@ func marshalSchema(v any) ([]byte, error) {
 // nestedDefs registers the schemas for the structs that Operation and Action
 // reference by pointer. typeToSchema emits a $ref for each, so every one needs
 // a matching entry in $defs.
+//
+// Reflection gets the shape of each struct right but cannot see the constraints
+// on its values, so each entry is registered and then refined.
 func nestedDefs(defs map[string]any) {
-	defs["PdfSpec"] = objectSchemaFromStruct(spec.PdfSpec{}, nil)
-	defs["DocxSpec"] = objectSchemaFromStruct(spec.DocxSpec{}, nil)
-	defs["PeSpec"] = objectSchemaFromStruct(spec.PeSpec{}, nil)
-	defs["PeSection"] = objectSchemaFromStruct(spec.PeSection{}, []string{"name"})
-	defs["PeVersion"] = objectSchemaFromStruct(spec.PeVersion{}, nil)
-	defs["HistorySpec"] = objectSchemaFromStruct(spec.HistorySpec{}, nil)
-	defs["HistoryVisit"] = objectSchemaFromStruct(spec.HistoryVisit{}, []string{"url"})
-	defs["HistoryDownload"] = objectSchemaFromStruct(spec.HistoryDownload{}, []string{"url", "target_path"})
-	defs["ArchiveSpec"] = objectSchemaFromStruct(spec.ArchiveSpec{}, nil)
-	defs["EditSpec"] = objectSchemaFromStruct(spec.EditSpec{}, nil)
-	defs["EditReplace"] = objectSchemaFromStruct(spec.EditReplace{}, []string{"pattern"})
-	defs["EditInsert"] = objectSchemaFromStruct(spec.EditInsert{}, []string{"pattern", "text"})
-	defs["Header"] = objectSchemaFromStruct(spec.Header{}, []string{"name"})
-	defs["Attachment"] = objectSchemaFromStruct(spec.Attachment{}, nil)
-	defs["EmailSpec"] = objectSchemaFromStruct(spec.EmailSpec{}, nil)
-	defs["VaultSpec"] = objectSchemaFromStruct(spec.VaultSpec{}, []string{"password"})
+	register(defs, "PeVersion", spec.PeVersion{})
+	register(defs, "HistorySpec", spec.HistorySpec{})
+	register(defs, "EditInsert", spec.EditInsert{}, "pattern", "text")
+	register(defs, "Header", spec.Header{}, "name")
 
-	pdf := defs["PdfSpec"].(map[string]any)["properties"].(map[string]any)
-	pdf["created"] = map[string]any{"$ref": "#/$defs/Rfc3339Time"}
-	pdf["modified"] = map[string]any{"$ref": "#/$defs/Rfc3339Time"}
-	pdf["page_size"] = map[string]any{"type": "string", "enum": []string{"A4", "A3", "A5", "Letter"}}
+	register(defs, "PdfSpec", spec.PdfSpec{}).
+		prop("created", rfc3339()).
+		prop("modified", rfc3339()).
+		prop("page_size", enumOf([]string{"A4", "A3", "A5", "Letter"}))
 
-	em := defs["EmailSpec"].(map[string]any)["properties"].(map[string]any)
-	em["date"] = map[string]any{"$ref": "#/$defs/Rfc3339Time"}
+	register(defs, "DocxSpec", spec.DocxSpec{}).
+		prop("created", rfc3339()).
+		prop("modified", rfc3339())
 
-	att := defs["Attachment"].(map[string]any)
-	attProps := att["properties"].(map[string]any)
-	attProps["disposition"] = map[string]any{"type": "string", "enum": []string{"attachment", "inline"}}
-	att["oneOf"] = []any{
-		map[string]any{"required": []string{"source_file"}},
-		map[string]any{"required": []string{"source_root"}},
-		map[string]any{"required": []string{"content"}},
+	register(defs, "EmailSpec", spec.EmailSpec{}).
+		prop("date", rfc3339())
+
+	register(defs, "Attachment", spec.Attachment{}).
+		prop("disposition", enumOf([]string{"attachment", "inline"})).
+		oneOf("source_file", "source_root", "content")
+
+	register(defs, "VaultSpec", spec.VaultSpec{}, "password").
+		prop("salt", map[string]any{"type": "string", "pattern": "^[0-9a-fA-F]{64}$"})
+
+	register(defs, "PeSpec", spec.PeSpec{}).
+		prop("machine", enumOf(libgen.PEMachines)).
+		prop("subsystem", enumOf(libgen.PESubsystems)).
+		prop("timestamp", map[string]any{
+			"type":        "string",
+			"description": "RFC 3339, or \"0\" for the zero stamp a reproducible build writes. Defaults to the operation time.",
+		}).
+		prop("imports", map[string]any{
+			"type":        "array",
+			"items":       map[string]any{"type": "string", "pattern": "^[^!]+![^!]+$"},
+			"description": "Imported functions as dll!function, for example kernel32.dll!CreateFileW.",
+		})
+
+	register(defs, "PeSection", spec.PeSection{}, "name").
+		prop("name", map[string]any{"type": "string", "maxLength": libgen.MaxPESectionName}).
+		prop("size", nonNegative()).
+		prop("flags", map[string]any{"type": "array", "items": enumOf(libgen.PESectionFlags)})
+
+	register(defs, "HistoryVisit", spec.HistoryVisit{}, "url").
+		prop("time", rfc3339()).
+		prop("transition", enumOf(libgen.Transitions)).
+		prop("from_visit", nonNegative())
+
+	register(defs, "HistoryDownload", spec.HistoryDownload{}, "url", "target_path").
+		prop("start", rfc3339()).
+		prop("end", rfc3339()).
+		prop("received_bytes", nonNegative()).
+		prop("total_bytes", nonNegative())
+
+	register(defs, "ArchiveSpec", spec.ArchiveSpec{}).
+		prop("method", map[string]any{
+			"type":        "string",
+			"enum":        compile.ArchiveMethods,
+			"description": "store (the default) is byte-identical on every toolchain; deflate is not.",
+		}).
+		prop("comment", map[string]any{"type": "string", "maxLength": libgen.MaxZipComment}).
+		anyOf("members", "member_refs")
+
+	register(defs, "EditSpec", spec.EditSpec{}).
+		prop("delete_lines", map[string]any{
+			"type":        "string",
+			"pattern":     "^[0-9]+(-[0-9]+)?$",
+			"description": "A 1-based inclusive line or range of lines, for example 40-60.",
+		}).
+		anyOf("delete_lines", "delete_matching", "replace", "insert_after")
+
+	register(defs, "EditReplace", spec.EditReplace{}, "pattern").
+		prop("count", map[string]any{"type": "integer", "minimum": 0, "description": "0 means every match."})
+}
+
+// def is one $defs entry under construction: the schema, and the properties map
+// inside it, so refining a property never has to assert its way back in.
+type def struct {
+	schema map[string]any
+	props  map[string]any
+}
+
+// register generates a $defs entry from a struct and returns it for refining.
+func register(defs map[string]any, name string, v any, required ...string) def {
+	schema := objectSchemaFromStruct(v, required)
+	defs[name] = schema
+	return def{schema: schema, props: schema["properties"].(map[string]any)}
+}
+
+// prop replaces one property's schema, for a constraint reflection cannot see:
+// a closed value set, a pattern, a bound, a shared definition.
+func (d def) prop(name string, schema map[string]any) def {
+	d.props[name] = schema
+	return d
+}
+
+// oneOf requires exactly one of these keys to be given.
+func (d def) oneOf(keys ...string) def {
+	d.schema["oneOf"] = requireEach(keys)
+	return d
+}
+
+// anyOf requires at least one of these keys to be given.
+func (d def) anyOf(keys ...string) def {
+	d.schema["anyOf"] = requireEach(keys)
+	return d
+}
+
+// requireEach is one "required" clause per key, for a oneOf or an anyOf.
+func requireEach(keys []string) []any {
+	out := make([]any, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, map[string]any{"required": []string{k}})
 	}
-	vault := defs["VaultSpec"].(map[string]any)["properties"].(map[string]any)
-	vault["salt"] = map[string]any{"type": "string", "pattern": "^[0-9a-fA-F]{64}$"}
+	return out
+}
 
-	doc := defs["DocxSpec"].(map[string]any)["properties"].(map[string]any)
-	doc["created"] = map[string]any{"$ref": "#/$defs/Rfc3339Time"}
-	doc["modified"] = map[string]any{"$ref": "#/$defs/Rfc3339Time"}
+// rfc3339 points at the shared RFC 3339 time definition, so every time field in
+// the schema is described in one place.
+func rfc3339() map[string]any {
+	return map[string]any{"$ref": "#/$defs/Rfc3339Time"}
+}
 
-	pe := defs["PeSpec"].(map[string]any)["properties"].(map[string]any)
-	pe["machine"] = map[string]any{"type": "string", "enum": libgen.PEMachines}
-	pe["subsystem"] = map[string]any{"type": "string", "enum": libgen.PESubsystems}
-	pe["timestamp"] = map[string]any{
-		"type":        "string",
-		"description": "RFC 3339, or \"0\" for the zero stamp a reproducible build writes. Defaults to the operation time.",
-	}
-	pe["imports"] = map[string]any{
-		"type":        "array",
-		"items":       map[string]any{"type": "string", "pattern": "^[^!]+![^!]+$"},
-		"description": "Imported functions as dll!function, for example kernel32.dll!CreateFileW.",
-	}
-	sec := defs["PeSection"].(map[string]any)["properties"].(map[string]any)
-	sec["name"] = map[string]any{"type": "string", "maxLength": 8}
-	sec["size"] = map[string]any{"type": "integer", "minimum": 0}
-	sec["flags"] = map[string]any{"type": "array", "items": map[string]any{"type": "string", "enum": libgen.PESectionFlags}}
+// enumOf is a string limited to a closed set of values.
+func enumOf(values []string) map[string]any {
+	return map[string]any{"type": "string", "enum": values}
+}
 
-	visit := defs["HistoryVisit"].(map[string]any)["properties"].(map[string]any)
-	visit["time"] = map[string]any{"$ref": "#/$defs/Rfc3339Time"}
-	visit["transition"] = map[string]any{"type": "string", "enum": libgen.Transitions}
-	visit["from_visit"] = map[string]any{"type": "integer", "minimum": 0}
-	down := defs["HistoryDownload"].(map[string]any)["properties"].(map[string]any)
-	down["start"] = map[string]any{"$ref": "#/$defs/Rfc3339Time"}
-	down["end"] = map[string]any{"$ref": "#/$defs/Rfc3339Time"}
-	down["received_bytes"] = map[string]any{"type": "integer", "minimum": 0}
-	down["total_bytes"] = map[string]any{"type": "integer", "minimum": 0}
-
-	arc := defs["ArchiveSpec"].(map[string]any)
-	arcProps := arc["properties"].(map[string]any)
-	arcProps["method"] = map[string]any{
-		"type":        "string",
-		"enum":        compile.ArchiveMethods,
-		"description": "store (the default) is byte-identical on every toolchain; deflate is not.",
-	}
-	arcProps["comment"] = map[string]any{"type": "string", "maxLength": 65535}
-	arc["anyOf"] = []any{
-		map[string]any{"required": []string{"members"}},
-		map[string]any{"required": []string{"member_refs"}},
-	}
-
-	ed := defs["EditSpec"].(map[string]any)
-	edProps := ed["properties"].(map[string]any)
-	edProps["delete_lines"] = map[string]any{
-		"type":        "string",
-		"pattern":     "^[0-9]+(-[0-9]+)?$",
-		"description": "A 1-based inclusive line or range of lines, for example 40-60.",
-	}
-	ed["anyOf"] = []any{
-		map[string]any{"required": []string{"delete_lines"}},
-		map[string]any{"required": []string{"delete_matching"}},
-		map[string]any{"required": []string{"replace"}},
-		map[string]any{"required": []string{"insert_after"}},
-	}
-	defs["EditReplace"].(map[string]any)["properties"].(map[string]any)["count"] =
-		map[string]any{"type": "integer", "minimum": 0, "description": "0 means every match."}
+// nonNegative is an integer that cannot go below zero.
+func nonNegative() map[string]any {
+	return map[string]any{"type": "integer", "minimum": 0}
 }
 
 // commonOperationProps applies the value constraints shared by manifest
@@ -372,8 +423,6 @@ func commonOperationProps(props map[string]any) {
 	props["missing_ok"] = map[string]any{"type": "boolean", "description": "delete: a missing path is a recorded no-op."}
 }
 
-// operationConditionals expresses the field matrix: per action, which keys
-// may appear, which are required, and which values format takes.
 func operationConditionals(playbook bool) []any {
 	var out []any
 	for _, action := range compile.Actions {
@@ -381,14 +430,8 @@ func operationConditionals(playbook bool) []any {
 			"propertyNames": map[string]any{"enum": compile.AllowedFields(action, playbook)},
 		}
 		required := append([]string(nil), compile.Required[action]...)
-		if contains(compile.Fields[action], "ref") {
-			var targets []any
-			for _, t := range []string{"path", "ref", "refs"} {
-				if contains(compile.Fields[action], t) {
-					targets = append(targets, map[string]any{"required": []string{t}})
-				}
-			}
-			then["oneOf"] = targets
+		if slices.Contains(compile.Fields[action], "ref") {
+			then["oneOf"] = targetChoices(action)
 		} else {
 			required = append(required, "path")
 		}
@@ -440,11 +483,14 @@ func allFormats() []string {
 	return out
 }
 
-func contains(set []string, v string) bool {
-	for _, s := range set {
-		if s == v {
-			return true
+// targetChoices is the schema for "exactly one of path, ref and refs", listing
+// only the ones this action takes.
+func targetChoices(action string) []any {
+	var out []any
+	for _, t := range []string{"path", "ref", "refs"} {
+		if slices.Contains(compile.Fields[action], t) {
+			out = append(out, map[string]any{"required": []string{t}})
 		}
 	}
-	return false
+	return out
 }

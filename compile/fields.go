@@ -1,7 +1,7 @@
 package compile
 
 import (
-	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -36,13 +36,26 @@ var Fields = map[string][]string{
 	"motw":          {"path", "ref", "refs", "zone_id", "host_url", "referrer_url", "atime", "mtime"},
 }
 
+// field is a YAML key together with the value given for it, for the checks
+// that run one rule over several keys.
+type field struct{ key, val string }
+
+// Value limits the closed sets cannot express.
+const (
+	// minZoneID and maxZoneID bound a mark-of-the-web zone: My Computer,
+	// Local Intranet, Trusted, Internet, Restricted.
+	minZoneID, maxZoneID = 0, 4
+	// vaultSaltLen is the salt an Ansible vault takes, in bytes.
+	vaultSaltLen = 32
+)
+
+// ZoneIdentifierStream is the named stream a mark of the web lives in, which
+// is where Windows reads the zone a download came from.
+const ZoneIdentifierStream = "Zone.Identifier"
+
 // TimeFields are the explicit time keys, in the order access, modification,
 // change, birth.
 var TimeFields = []string{"atime", "mtime", "ctime", "crtime"}
-
-// PlaybookOnly are keys that exist on playbook actions but not on manifest
-// operations. "template" is further limited to the actions that list it.
-var PlaybookOnly = []string{"offset", "condition", "template"}
 
 // Required lists the keys an action cannot do without (beyond a target).
 var Required = map[string][]string{
@@ -92,13 +105,6 @@ func Structured(format string) bool {
 	return true
 }
 
-// FormatBlocks names the block each format reads, for the error that says a
-// block does not go with the format beside it.
-var FormatBlocks = map[string]string{
-	"pdf": "pdf", "docx": "docx", "pe": "pe",
-	"chrome_history": "history", "firefox_places": "history",
-}
-
 func contains(set []string, v string) bool {
 	for _, s := range set {
 		if s == v {
@@ -132,35 +138,47 @@ func allowed(action string, playbook bool) []string {
 // consumes a random draw.
 func checkFields(src SourceRef, k keys, action string, playbook bool) ErrorList {
 	var errs ErrorList
-	at := func(field, format string, args ...any) {
-		e := &Error{Src: src, Field: field, Msg: fmt.Sprintf(format, args...)}
-		if n := k[field]; n != nil {
-			e.Line, e.Col = n.Line, n.Column
-		}
-		errs.add(e)
-	}
+	r := reporter{errs: &errs, src: src, keys: k}
 
 	if !k.has("action") {
-		errs.add(&Error{Src: src, Msg: "missing field \"action\""})
+		r.whole("missing field %q", "action")
 		return errs
 	}
 	if _, ok := Fields[action]; !ok {
-		at("action", "unknown action %q (want one of: %s)", action, strings.Join(Actions, ", "))
+		r.at("action", "unknown action %q (want one of: %s)", action, strings.Join(Actions, ", "))
 		return errs
 	}
 
 	ok := allowed(action, playbook)
+	for _, name := range sortedKeyNames(k) {
+		if !slices.Contains(ok, name) {
+			r.at(name, "does not apply to %s (it takes: %s)", action, strings.Join(ok, ", "))
+		}
+	}
+
+	checkTargets(r, k, action)
+	for _, req := range Required[action] {
+		if !k.has(req) {
+			r.whole("%s needs %s", action, req)
+		}
+	}
+	checkKeyCombinations(r, k, action)
+	return errs
+}
+
+// sortedKeyNames lists the keys present, in a fixed order, so the errors for
+// one operation come out the same way every run.
+func sortedKeyNames(k keys) []string {
 	names := make([]string, 0, len(k))
 	for name := range k {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	for _, name := range names {
-		if !contains(ok, name) {
-			at(name, "does not apply to %s (it takes: %s)", action, strings.Join(ok, ", "))
-		}
-	}
+	return names
+}
 
+// checkTargets requires exactly one of path, ref and refs.
+func checkTargets(r reporter, k keys, action string) {
 	targets := 0
 	for _, t := range []string{"path", "ref", "refs"} {
 		if k.has(t) {
@@ -168,38 +186,35 @@ func checkFields(src SourceRef, k keys, action string, playbook bool) ErrorList 
 		}
 	}
 	switch {
+	case targets == 0 && slices.Contains(Fields[action], "ref"):
+		r.whole("%s needs path, ref or refs", action)
 	case targets == 0:
-		if contains(Fields[action], "ref") {
-			errs.add(&Error{Src: src, Msg: action + " needs path, ref or refs"})
-		} else {
-			errs.add(&Error{Src: src, Msg: action + " needs path"})
-		}
+		r.whole("%s needs path", action)
 	case targets > 1:
-		at("path", "give exactly one of path, ref and refs")
+		r.at("path", "give exactly one of path, ref and refs")
 	}
-	for _, req := range Required[action] {
-		if !k.has(req) {
-			errs.add(&Error{Src: src, Msg: fmt.Sprintf("%s needs %s", action, req)})
-		}
-	}
+}
 
-	if action == "mace" && !k.has("atime") && !k.has("mtime") && !k.has("ctime") && !k.has("crtime") {
-		errs.add(&Error{Src: src, Msg: "mace needs at least one of atime, mtime, ctime and crtime"})
+// checkKeyCombinations rejects keys that contradict or silently override each
+// other. Each rule names the key that would be ignored, so the message points
+// at what to delete.
+func checkKeyCombinations(r reporter, k keys, action string) {
+	if action == "mace" && !slices.ContainsFunc(TimeFields, k.has) {
+		r.whole("mace needs at least one of atime, mtime, ctime and crtime")
 	}
 	if k.has("template") && (k.has("content") || k.has("content_file")) {
-		at("template", "cannot be combined with content or content_file; the template would silently replace them")
+		r.at("template", "cannot be combined with content or content_file; the template would silently replace them")
 	}
 	if k.has("content") && k.has("content_file") {
-		at("content_file", "content and content_file are mutually exclusive")
+		r.at("content_file", "content and content_file are mutually exclusive")
 	}
 	if k.has("content_len") && (k.has("content") || k.has("content_file") || k.has("template")) {
-		at("content_len", "has no effect when content, content_file or template is given")
+		r.at("content_len", "has no effect when content, content_file or template is given")
 	}
 	if k.has("render") && !k.has("content") && !k.has("content_file") {
-		at("render", "only applies to content or content_file")
+		r.at("render", "only applies to content or content_file")
 	}
 	if k.has("content_kind") && (k.has("content") || k.has("content_file") || k.has("template")) {
-		at("content_kind", "says what invented bytes look like; it has no effect beside content, content_file or template")
+		r.at("content_kind", "says what invented bytes look like; it has no effect beside content, content_file or template")
 	}
-	return errs
 }

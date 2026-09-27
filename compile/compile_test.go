@@ -487,3 +487,19 @@ func TestEmptyContentIsEmpty(t *testing.T) {
 		t.Errorf("content = %q", p.Ops[0].Content)
 	}
 }
+
+// TestEveryActionSimulates: the simulator dispatches on the action name, so an
+// action in the closed set with no entry would compile and then silently do
+// nothing to the model. The table and the set have to agree in both directions.
+func TestEveryActionSimulates(t *testing.T) {
+	for _, action := range Actions {
+		if _, ok := simulators[action]; !ok {
+			t.Errorf("action %q is in Actions but has no simulator", action)
+		}
+	}
+	for action := range simulators {
+		if !contains(Actions, action) {
+			t.Errorf("simulators has %q, which is not in Actions", action)
+		}
+	}
+}

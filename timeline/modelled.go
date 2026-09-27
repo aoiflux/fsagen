@@ -66,15 +66,7 @@ func Modelled(tree *model.Tree, entries []ledger.Entry, c Controlled) *Timeline 
 		if c.Birth {
 			e.Btime = o.Times.Btime
 		}
-		if o.Kind == model.Dir {
-			e.Type, e.Size, e.MD5 = TypeDir, 0, ""
-			if e.Mode == 0 {
-				e.Mode = sandbox.DirMode
-			}
-			e.Mode |= fs.ModeDir
-		} else if e.Mode == 0 {
-			e.Mode = sandbox.FileMode
-		}
+		setKindFields(&e, o.Kind)
 		tl.Entries = append(tl.Entries, e)
 		for _, s := range st.streams {
 			se := e
@@ -107,4 +99,21 @@ func (tl *Timeline) Finals() []ledger.Final {
 		})
 	}
 	return out
+}
+
+// setKindFields settles the fields that follow from what an object is. A
+// directory has no content to size or hash, and an object the scenario gave no
+// mode takes the default one a run would have created it with.
+func setKindFields(e *Entry, kind model.Kind) {
+	if kind != model.Dir {
+		if e.Mode == 0 {
+			e.Mode = sandbox.FileMode
+		}
+		return
+	}
+	e.Type, e.Size, e.MD5 = TypeDir, 0, ""
+	if e.Mode == 0 {
+		e.Mode = sandbox.DirMode
+	}
+	e.Mode |= fs.ModeDir
 }

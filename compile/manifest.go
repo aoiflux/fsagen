@@ -21,7 +21,7 @@ func compileManifest(file string, root *yaml.Node, m *spec.Manifest, opts Option
 	}
 	rootKeys := mappingKeys(root)
 	fileRef := SourceRef{File: file, Line: root.Line, Col: root.Column}
-	start, startNow, err := parseStart(m.Start, rootKeys.has("start"), false, fileRef, rootKeys, opts)
+	start, startNow, err := parseStart(m.Start, false, fileRef, rootKeys, opts)
 	if err != nil {
 		return nil, false, err
 	}
@@ -35,7 +35,7 @@ func compileManifest(file string, root *yaml.Node, m *spec.Manifest, opts Option
 		n := nodes[i]
 		ref := SourceRef{File: file, Line: n.Line, Col: n.Column, Op: i + 1, Name: raw.Action}
 		k := mappingKeys(n)
-		if fieldErrs := checkFields(ref, k, raw.Action, false); len(fieldErrs) > 0 {
+		if fieldErrs := checkFields(ref, k, raw.Action, false); fieldErrs.any() {
 			errs.add(fieldErrs)
 			continue
 		}
@@ -69,14 +69,11 @@ func compileManifest(file string, root *yaml.Node, m *spec.Manifest, opts Option
 
 // parseStart reads a top-level start: an RFC 3339 time, or "now", which is
 // read from the injected clock and marks the run as not reproducible.
-func parseStart(value string, given, required bool, fileRef SourceRef, rootKeys keys, opts Options) (time.Time, bool, error) {
+func parseStart(value string, required bool, fileRef SourceRef, rootKeys keys, opts Options) (time.Time, bool, error) {
+	given := rootKeys.has("start")
 	fail := func(format string, args ...any) (time.Time, bool, error) {
-		e := &Error{Src: fileRef, Field: "start", Msg: fmt.Sprintf(format, args...)}
-		if n := rootKeys["start"]; n != nil {
-			e.Line, e.Col = n.Line, n.Column
-		}
 		var errs ErrorList
-		errs.add(e)
+		reporter{errs: &errs, src: fileRef, keys: rootKeys}.at("start", format, args...)
 		return time.Time{}, false, errs.err()
 	}
 	switch s := strings.TrimSpace(value); {
@@ -109,20 +106,8 @@ func defaultDates(op *spec.Operation, ref time.Time) *fieldError {
 	stamp := ref.UTC().Format(time.RFC3339)
 
 	if op.Format == "pdf" {
-		if op.Pdf == nil {
-			op.Pdf = &spec.PdfSpec{}
-		}
-		created, modified := strings.TrimSpace(op.Pdf.Created), strings.TrimSpace(op.Pdf.Modified)
-		switch {
-		case created == "" && modified != "":
-			op.Pdf.Created = modified
-		case modified == "" && created != "":
-			op.Pdf.Modified = created
-		case created == "" && modified == "":
-			if ref.IsZero() {
-				return &fieldError{"format", "a pdf needs its dates: set pdf.created and pdf.modified, or give the operation an mtime or the manifest a start"}
-			}
-			op.Pdf.Created, op.Pdf.Modified = stamp, stamp
+		if err := defaultPdfDates(op, ref, stamp); err != nil {
+			return err
 		}
 	}
 	if op.Action == "email" && op.Email != nil && strings.TrimSpace(op.Email.Date) == "" {
@@ -130,6 +115,29 @@ func defaultDates(op *spec.Operation, ref time.Time) *fieldError {
 			return &fieldError{"email", "the message needs a date: set email.date, or give the operation an mtime or the manifest a start"}
 		}
 		op.Email.Date = stamp
+	}
+	return nil
+}
+
+// defaultPdfDates settles a pdf's creation and modification dates: either one
+// given stands in for the other, and a pdf that gives neither takes the
+// reference time. Without a reference time there is nothing to fall back to,
+// and a date from the wall clock would make the run unreproducible.
+func defaultPdfDates(op *spec.Operation, ref time.Time, stamp string) *fieldError {
+	if op.Pdf == nil {
+		op.Pdf = &spec.PdfSpec{}
+	}
+	created, modified := strings.TrimSpace(op.Pdf.Created), strings.TrimSpace(op.Pdf.Modified)
+	switch {
+	case created == "" && modified != "":
+		op.Pdf.Created = modified
+	case modified == "" && created != "":
+		op.Pdf.Modified = created
+	case created == "" && modified == "":
+		if ref.IsZero() {
+			return &fieldError{"format", "a pdf needs its dates: set pdf.created and pdf.modified, or give the operation an mtime or the manifest a start"}
+		}
+		op.Pdf.Created, op.Pdf.Modified = stamp, stamp
 	}
 	return nil
 }

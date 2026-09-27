@@ -57,31 +57,34 @@ func unsupported(op *Op, caps Caps) string {
 func Preflight(p *Program, caps Caps, skip bool) error {
 	var errs ErrorList
 	for i := range p.Ops {
-		op := &p.Ops[i]
-		if op.NoOp != "" {
-			continue
+		if op := &p.Ops[i]; op.NoOp == "" {
+			preflightOp(op, caps, skip, &errs)
 		}
-		for _, f := range unsettable(op, caps) {
-			if skip {
-				op.Dropped = append(op.Dropped, f)
-				continue
-			}
-			what := map[string]string{"ctime": "change time", "crtime": "creation time"}[f]
-			e := &Error{Src: op.Src, Field: f, Msg: fmt.Sprintf("the %s cannot be set on this platform or volume (pass --on-unsupported=skip to generate without it and record that)", what)}
-			if n := op.keys[f]; n != nil {
-				e.Line, e.Col = n.Line, n.Column
-			}
-			errs.add(e)
-		}
-		reason := unsupported(op, caps)
-		if reason == "" {
-			continue
-		}
-		if skip {
-			op.Skip = reason
-			continue
-		}
-		errs.add(&Error{Src: op.Src, Msg: reason + " (pass --on-unsupported=skip to generate the rest and record the skip)"})
 	}
 	return errs.err()
+}
+
+// timeFieldNames are the words used to report a time this platform cannot set.
+// A field missing from here would read as "the  cannot be set", so every field
+// unsettable can return needs an entry.
+var timeFieldNames = map[string]string{"ctime": "change time", "crtime": "creation time"}
+
+// preflightOp records every time field this platform cannot set for one
+// operation, and whether the action itself is unsupported here.
+func preflightOp(op *Op, caps Caps, skip bool, errs *ErrorList) {
+	r := op.report(errs)
+	for _, f := range unsettable(op, caps) {
+		if skip {
+			op.Dropped = append(op.Dropped, f)
+			continue
+		}
+		r.at(f, "the %s cannot be set on this platform or volume (pass --on-unsupported=skip to generate without it and record that)", timeFieldNames[f])
+	}
+	switch reason := unsupported(op, caps); {
+	case reason == "":
+	case skip:
+		op.Skip = reason
+	default:
+		r.whole("%s (pass --on-unsupported=skip to generate the rest and record the skip)", reason)
+	}
 }

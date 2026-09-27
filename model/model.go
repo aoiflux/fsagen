@@ -176,19 +176,20 @@ func (t *Tree) MkdirAll(p string) error {
 	return t.add(p, Dir)
 }
 
-// CreateFile creates or replaces the file at p, creating parent directories.
-// replaced reports that a file was already there.
-func (t *Tree) CreateFile(p string) (replaced bool, err error) {
+// CreateFile creates the file at p, creating parent directories, and leaves a
+// file already there in place: the operation that calls this is about to write
+// over it, and the model only tracks that the path is a file.
+func (t *Tree) CreateFile(p string) error {
 	if err := t.MkdirAll(path.Dir(p)); err != nil {
-		return false, err
+		return err
 	}
 	if o := t.byPath[p]; o != nil {
 		if o.Kind == Dir {
-			return false, fmt.Errorf("%s is a directory", p)
+			return fmt.Errorf("%s is a directory", p)
 		}
-		return true, nil
+		return nil
 	}
-	return false, t.add(p, File)
+	return t.add(p, File)
 }
 
 // Remove deletes a file or an empty directory.
@@ -232,17 +233,25 @@ func (t *Tree) Rename(oldp, newp string) error {
 			moved = append(moved, t.byPath[k])
 		}
 	}
-	for _, m := range moved {
+	// The old entries come out first, so a move within one directory does not
+	// collide with itself, and the old paths are remembered so a refused move
+	// can be undone: a rename that fails half way would otherwise leave objects
+	// at neither path.
+	was := make([]string, len(moved))
+	for i, m := range moved {
+		was[i] = m.Path
 		delete(t.byPath, m.Path)
 		t.unindex(m.Path)
 	}
-	for _, m := range moved {
-		m.Path = newp + strings.TrimPrefix(m.Path, oldp)
-		if err := t.collides(m.Path); err != nil {
+	for i, m := range moved {
+		to := newp + strings.TrimPrefix(was[i], oldp)
+		if err := t.collides(to); err != nil {
+			t.putBack(moved, was, i)
 			return err
 		}
-		t.byPath[m.Path] = m
-		t.index(m.Path)
+		m.Path = to
+		t.byPath[to] = m
+		t.index(to)
 	}
 	// A rename changes the object's metadata and both directories' entries.
 	o.Times.Ctime = t.Clock
@@ -266,7 +275,7 @@ func (t *Tree) Copy(src, dst string) error {
 	if t.byPath[dst] != nil {
 		return fmt.Errorf("%s %w", dst, ErrExist)
 	}
-	if _, err := t.CreateFile(dst); err != nil {
+	if err := t.CreateFile(dst); err != nil {
 		return err
 	}
 	c := t.byPath[dst]
@@ -355,4 +364,19 @@ func (t *Tree) children(dir string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// putBack undoes a rename that was refused part way through: the first n
+// objects have already moved, and the rest are out of the tree entirely. It
+// leaves the tree exactly as the rename found it.
+func (t *Tree) putBack(moved []*Object, was []string, n int) {
+	for i, m := range moved {
+		if i < n {
+			delete(t.byPath, m.Path)
+			t.unindex(m.Path)
+		}
+		m.Path = was[i]
+		t.byPath[m.Path] = m
+		t.index(m.Path)
+	}
 }

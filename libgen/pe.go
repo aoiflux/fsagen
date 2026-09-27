@@ -3,6 +3,7 @@ package libgen
 import (
 	"encoding/binary"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -41,6 +42,23 @@ const (
 	scnRead        = 0x40000000
 	scnWrite       = 0x80000000
 )
+
+// MaxPESectionName is the eight bytes a PE section header holds for a name.
+const MaxPESectionName = 8
+
+// idataSection and rsrcSection are the sections BuildPE adds itself and then
+// back-patches by name, once every section has an address.
+const (
+	idataSection = ".idata"
+	rsrcSection  = ".rsrc"
+)
+
+// ReservedPESection reports whether a name belongs to a section BuildPE adds
+// and fills in itself. A caller-supplied section of that name would have its
+// contents overwritten by the import table or the version resource.
+func ReservedPESection(name string) bool {
+	return name == idataSection || name == rsrcSection
+}
 
 var peMachineCodes = map[string]uint16{"i386": 0x014c, "amd64": 0x8664, "arm64": 0xaa64}
 
@@ -95,8 +113,77 @@ type PESpec struct {
 	Overlay []byte
 }
 
+// Header and table sizes the PE format fixes.
+const (
+	dosHeaderLen     = 0x80 // the MZ header and the stub that follows it
+	peSignatureLen   = 4    // "PE\0\0"
+	coffHeaderLen    = 20
+	optHeaderLen32   = 224
+	optHeaderLen64   = 240
+	sectionHeaderLen = 40
+	// maxSections is how many sections the section table can describe.
+	maxSections = 96
+	// dataDirectories is the fixed number of data-directory slots.
+	dataDirectories = 16
+	// importDirIndex, resourceDirIndex and iatDirIndex are the slots the loader
+	// reads for the import table, the resources and the import address table.
+	importDirIndex   = 1
+	resourceDirIndex = 2
+	iatDirIndex      = 12
+)
+
+// placedSection is one section of the image and where it lands, both in memory
+// and in the file.
+type placedSection struct {
+	name  string
+	data  []byte
+	flags uint32
+	// vaddr and vsize are where the loader maps it.
+	vaddr, vsize uint32
+	// raw and rsize are where it sits in the file, both file-aligned.
+	raw, rsize uint32
+}
+
+// peImage is an image being assembled: what it targets, its sections once they
+// have addresses, and the header values that follow from them.
+type peImage struct {
+	spec PESpec
+	// code and subsystem are the machine and subsystem the header names; wide
+	// marks a 64-bit image, which changes the shape of the optional header.
+	code, subsystem uint16
+	wide            bool
+
+	sections []placedSection
+	// imports and versionBlob are laid out with everything else and filled in
+	// afterwards: their length is fixed by the names and strings in them, but
+	// the addresses inside them are only known once every section has one.
+	imports     importPlan
+	versionBlob []byte
+
+	optSize       int
+	sizeOfHeaders uint32
+	sizeOfImage   uint32
+
+	// The data directories that point into the sections above.
+	importDir, importDirSize     uint32
+	iatAddr, iatSize             uint32
+	resourceDir, resourceDirSize uint32
+}
+
 // BuildPE assembles the image.
 func BuildPE(s PESpec) ([]byte, error) {
+	img, err := newPEImage(s)
+	if err != nil {
+		return nil, err
+	}
+	img.layout()
+	img.fillDirectories()
+	return img.bytes(), nil
+}
+
+// newPEImage resolves what the spec targets and builds the section list, adding
+// the import and resource sections the image needs.
+func newPEImage(s PESpec) (*peImage, error) {
 	machine := or(s.Machine, "amd64")
 	code, ok := peMachineCodes[machine]
 	if !ok {
@@ -107,147 +194,203 @@ func BuildPE(s PESpec) ([]byte, error) {
 	if !ok {
 		return nil, fmt.Errorf("pe: unknown subsystem %q (want one of: %s)", subsystem, strings.Join(PESubsystems, ", "))
 	}
-	wide := machine != "i386"
 
-	type section struct {
-		name  string
-		data  []byte
-		flags uint32
-		vaddr uint32
-		vsize uint32
-		raw   uint32 // file offset
-		rsize uint32
+	img := &peImage{spec: s, code: code, subsystem: sub, wide: machine != "i386"}
+	if err := img.addSpecSections(); err != nil {
+		return nil, err
 	}
-	var sections []section
-	for _, in := range s.Sections {
-		if len(in.Name) > 8 {
-			return nil, fmt.Errorf("pe: section name %q is longer than the eight bytes the format stores", in.Name)
+	img.addImportSection()
+	img.addResourceSection()
+	if len(img.sections) > maxSections {
+		return nil, fmt.Errorf("pe: %d sections is more than an image holds", len(img.sections))
+	}
+	return img, nil
+}
+
+// addSpecSections adds the sections the scenario asked for.
+func (img *peImage) addSpecSections() error {
+	for _, in := range img.spec.Sections {
+		if len(in.Name) > MaxPESectionName {
+			return fmt.Errorf("pe: section name %q is longer than the eight bytes the format stores", in.Name)
 		}
 		flags, err := sectionFlags(in.Name, in.Flags)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		sections = append(sections, section{name: in.Name, data: in.Data, flags: flags})
+		img.sections = append(img.sections, placedSection{name: in.Name, data: in.Data, flags: flags})
 	}
-	if len(sections) == 0 {
-		return nil, fmt.Errorf("pe: an image needs at least one section")
+	if len(img.sections) == 0 {
+		return fmt.Errorf("pe: an image needs at least one section")
 	}
+	return nil
+}
 
-	// The import and resource sections are laid out with everything else and
-	// filled in afterwards: their length is fixed by the names and strings in
-	// them, but the addresses inside them are only known once every section
-	// has one.
-	importLayout := planImports(s.Imports, wide)
-	if importLayout.size > 0 {
-		sections = append(sections, section{name: ".idata", data: make([]byte, importLayout.size), flags: scnInitData | scnRead})
+// addImportSection reserves room for the import table, if there is one.
+func (img *peImage) addImportSection() {
+	img.imports = planImports(img.spec.Imports, img.wide)
+	if img.imports.size == 0 {
+		return
 	}
-	var versionBlob []byte
-	if s.Version != nil {
-		versionBlob = versionResource(*s.Version, s.DLL)
-		sections = append(sections, section{name: ".rsrc", data: make([]byte, resourceSize(len(versionBlob))), flags: scnInitData | scnRead})
-	}
-	if len(sections) > 96 {
-		return nil, fmt.Errorf("pe: %d sections is more than an image holds", len(sections))
-	}
+	img.sections = append(img.sections, placedSection{
+		name: idataSection, data: make([]byte, img.imports.size), flags: scnInitData | scnRead,
+	})
+}
 
-	optSize := 224
-	if wide {
-		optSize = 240
+// addResourceSection reserves room for the version resource, if there is one.
+func (img *peImage) addResourceSection() {
+	if img.spec.Version == nil {
+		return
 	}
-	headers := 0x80 + 4 + 20 + optSize + 40*len(sections)
-	sizeOfHeaders := align(uint32(headers), peFileAlign)
+	img.versionBlob = versionResource(*img.spec.Version, img.spec.DLL)
+	img.sections = append(img.sections, placedSection{
+		name: rsrcSection, data: make([]byte, resourceSize(len(img.versionBlob))), flags: scnInitData | scnRead,
+	})
+}
 
-	va, off := uint32(peSectionAlign), sizeOfHeaders
-	for i := range sections {
-		sections[i].vaddr = va
-		sections[i].vsize = uint32(len(sections[i].data))
-		sections[i].raw = off
-		sections[i].rsize = align(uint32(len(sections[i].data)), peFileAlign)
-		va = align(va+max(sections[i].vsize, 1), peSectionAlign)
-		off += sections[i].rsize
+// layout gives every section its address in memory and its offset in the file,
+// and settles how big the headers and the whole image are.
+func (img *peImage) layout() {
+	img.optSize = optHeaderLen32
+	if img.wide {
+		img.optSize = optHeaderLen64
 	}
-	sizeOfImage := va
+	headers := dosHeaderLen + peSignatureLen + coffHeaderLen + img.optSize + sectionHeaderLen*len(img.sections)
+	img.sizeOfHeaders = align(uint32(headers), peFileAlign)
 
-	var importDir, importDirSize, iatAddr, iatSize, resourceDir, resourceDirSize uint32
-	for i := range sections {
-		switch sections[i].name {
-		case ".idata":
-			sections[i].data = importLayout.render(sections[i].vaddr)
-			importDir, importDirSize = sections[i].vaddr, importLayout.descriptorSize
-			iatAddr, iatSize = sections[i].vaddr+importLayout.iatOffset, importLayout.iatSize
-		case ".rsrc":
-			sections[i].data = resourceSection(versionBlob, sections[i].vaddr)
-			resourceDir, resourceDirSize = sections[i].vaddr, uint32(len(sections[i].data))
+	va, off := uint32(peSectionAlign), img.sizeOfHeaders
+	for i := range img.sections {
+		sec := &img.sections[i]
+		sec.vaddr, sec.vsize = va, uint32(len(sec.data))
+		sec.raw, sec.rsize = off, align(uint32(len(sec.data)), peFileAlign)
+		// A zero-length section still occupies one page in memory.
+		va = align(va+max(sec.vsize, 1), peSectionAlign)
+		off += sec.rsize
+	}
+	img.sizeOfImage = va
+}
+
+// fillDirectories renders the import table and the version resource, now that
+// every section has an address, and records where the loader finds them.
+func (img *peImage) fillDirectories() {
+	for i := range img.sections {
+		sec := &img.sections[i]
+		switch sec.name {
+		case idataSection:
+			sec.data = img.imports.render(sec.vaddr)
+			img.importDir, img.importDirSize = sec.vaddr, img.imports.descriptorSize
+			img.iatAddr, img.iatSize = sec.vaddr+img.imports.iatOffset, img.imports.iatSize
+		case rsrcSection:
+			sec.data = resourceSection(img.versionBlob, sec.vaddr)
+			img.resourceDir, img.resourceDirSize = sec.vaddr, uint32(len(sec.data))
 		}
 	}
+}
 
-	var sizeOfCode, sizeOfInit, sizeOfUninit, entry, baseOfCode, baseOfData uint32
-	for _, sec := range sections {
+// sectionSizes totals the section sizes the optional header reports, and the
+// addresses it names: the entry point and the first section of each kind.
+func (img *peImage) sectionSizes() (sizeOfCode, sizeOfInit, sizeOfUninit, entry, baseOfCode, baseOfData uint32) {
+	for _, sec := range img.sections {
 		switch {
 		case sec.flags&scnCode != 0:
 			sizeOfCode += sec.rsize
-			if baseOfCode == 0 {
-				baseOfCode, entry = sec.vaddr, sec.vaddr
-			}
+			setFirst(&baseOfCode, sec.vaddr)
+			setFirst(&entry, sec.vaddr)
 		case sec.flags&scnUninitData != 0:
 			sizeOfUninit += sec.rsize
-			if baseOfData == 0 {
-				baseOfData = sec.vaddr
-			}
+			setFirst(&baseOfData, sec.vaddr)
 		default:
 			sizeOfInit += sec.rsize
-			if baseOfData == 0 {
-				baseOfData = sec.vaddr
-			}
+			setFirst(&baseOfData, sec.vaddr)
 		}
 	}
+	return sizeOfCode, sizeOfInit, sizeOfUninit, entry, baseOfCode, baseOfData
+}
 
-	characteristics := uint16(0x0002) // EXECUTABLE_IMAGE
-	if wide {
-		characteristics |= 0x0020 // LARGE_ADDRESS_AWARE
+// characteristics is the COFF flags word: what kind of image this is.
+func (img *peImage) characteristics() uint16 {
+	c := uint16(0x0002) // EXECUTABLE_IMAGE
+	if img.wide {
+		c |= 0x0020 // LARGE_ADDRESS_AWARE
 	} else {
-		characteristics |= 0x0100 // 32BIT_MACHINE
+		c |= 0x0100 // 32BIT_MACHINE
 	}
-	if s.DLL {
-		characteristics |= 0x2000
+	if img.spec.DLL {
+		c |= 0x2000 // DLL
 	}
-	imageBase := uint64(0x140000000)
-	switch {
-	case !wide && s.DLL:
-		imageBase = 0x10000000
-	case !wide:
-		imageBase = 0x400000
-	case s.DLL:
-		imageBase = 0x180000000
-	}
-	dllCharacteristics := uint16(0x0040 | 0x0100 | 0x8000) // dynamic base, NX, terminal-server aware
-	if wide {
-		dllCharacteristics |= 0x0020 // high-entropy address space
-	}
-	stamp := uint32(0)
-	if !s.Timestamp.IsZero() && s.Timestamp.Unix() > 0 {
-		stamp = uint32(s.Timestamp.UTC().Unix())
-	}
-	major, minor := uint16(0), uint16(0)
-	if s.Version != nil {
-		major, minor = firstTwo(s.Version.FileVersion)
-	}
+	return c
+}
 
-	b := make([]byte, 0, int(sizeOfHeaders))
+// imageBase is where the image prefers to be loaded, which depends on both its
+// width and whether it is a library.
+func (img *peImage) imageBase() uint64 {
+	switch {
+	case !img.wide && img.spec.DLL:
+		return 0x10000000
+	case !img.wide:
+		return 0x400000
+	case img.spec.DLL:
+		return 0x180000000
+	}
+	return 0x140000000
+}
+
+// dllCharacteristics is what the image asks the loader to do with it.
+func (img *peImage) dllCharacteristics() uint16 {
+	c := uint16(0x0040 | 0x0100 | 0x8000) // dynamic base, NX, terminal-server aware
+	if img.wide {
+		c |= 0x0020 // high-entropy address space
+	}
+	return c
+}
+
+// timestamp is the build stamp in the header. A zero stamp is a real thing to
+// want: it is what a reproducible build writes, and tools report it as such.
+func (img *peImage) timestamp() uint32 {
+	if img.spec.Timestamp.IsZero() || img.spec.Timestamp.Unix() <= 0 {
+		return 0
+	}
+	return uint32(img.spec.Timestamp.UTC().Unix())
+}
+
+// bytes writes the whole image: the headers, the section table, then each
+// section's bytes at its file offset, and finally the header checksum over all
+// of it.
+func (img *peImage) bytes() []byte {
+	b := make([]byte, 0, int(img.sizeOfHeaders))
 	b = append(b, dosHeader()...)
+	b = img.writeCOFFHeader(b)
+	b, checksumAt := img.writeOptionalHeader(b)
+	b = img.writeSectionTable(b)
+	b = append(b, make([]byte, int(img.sizeOfHeaders)-len(b))...)
+	b = img.writeSectionData(b)
+
+	binary.LittleEndian.PutUint32(b[checksumAt:], peChecksum(b, checksumAt))
+	return b
+}
+
+// writeCOFFHeader writes the PE signature and the COFF header after it.
+func (img *peImage) writeCOFFHeader(b []byte) []byte {
 	b = append(b, 'P', 'E', 0, 0)
-	b = le16(b, code)
-	b = le16(b, uint16(len(sections)))
-	b = le32(b, stamp)
+	b = le16(b, img.code)
+	b = le16(b, uint16(len(img.sections)))
+	b = le32(b, img.timestamp())
 	b = le32(b, 0) // no symbol table
 	b = le32(b, 0)
-	b = le16(b, uint16(optSize))
-	b = le16(b, characteristics)
+	b = le16(b, uint16(img.optSize))
+	return le16(b, img.characteristics())
+}
 
-	if wide {
-		b = le16(b, 0x20b)
+// writeOptionalHeader writes the optional header and the data directories,
+// returning the offset of the checksum field, which is patched once the whole
+// file exists.
+func (img *peImage) writeOptionalHeader(b []byte) ([]byte, int) {
+	sizeOfCode, sizeOfInit, sizeOfUninit, entry, baseOfCode, baseOfData := img.sectionSizes()
+	imageBase := img.imageBase()
+
+	if img.wide {
+		b = le16(b, 0x20b) // PE32+
 	} else {
-		b = le16(b, 0x10b)
+		b = le16(b, 0x10b) // PE32
 	}
 	b = append(b, 14, 0) // linker version
 	b = le32(b, sizeOfCode)
@@ -255,7 +398,7 @@ func BuildPE(s PESpec) ([]byte, error) {
 	b = le32(b, sizeOfUninit)
 	b = le32(b, entry)
 	b = le32(b, baseOfCode)
-	if !wide {
+	if !img.wide {
 		b = le32(b, baseOfData)
 		b = le32(b, uint32(imageBase))
 	} else {
@@ -265,41 +408,65 @@ func BuildPE(s PESpec) ([]byte, error) {
 	b = le32(b, peFileAlign)
 	b = le16(b, 6) // operating system version
 	b = le16(b, 0)
+	major, minor := img.imageVersion()
 	b = le16(b, major)
 	b = le16(b, minor)
 	b = le16(b, 6) // subsystem version
 	b = le16(b, 0)
 	b = le32(b, 0) // Win32VersionValue
-	b = le32(b, sizeOfImage)
-	b = le32(b, sizeOfHeaders)
+	b = le32(b, img.sizeOfImage)
+	b = le32(b, img.sizeOfHeaders)
 	checksumAt := len(b)
 	b = le32(b, 0) // patched once the whole file exists
-	b = le16(b, sub)
-	b = le16(b, dllCharacteristics)
-	if wide {
-		b = le64(b, 0x100000)
-		b = le64(b, 0x1000)
-		b = le64(b, 0x100000)
-		b = le64(b, 0x1000)
-	} else {
-		b = le32(b, 0x100000)
-		b = le32(b, 0x1000)
-		b = le32(b, 0x100000)
-		b = le32(b, 0x1000)
-	}
-	b = le32(b, 0)  // loader flags
-	b = le32(b, 16) // data directories
-	dirs := make([][2]uint32, 16)
-	dirs[1] = [2]uint32{importDir, importDirSize}
-	dirs[2] = [2]uint32{resourceDir, resourceDirSize}
-	dirs[12] = [2]uint32{iatAddr, iatSize}
-	for _, d := range dirs {
-		b = le32(b, d[0])
-		b = le32(b, d[1])
-	}
+	b = le16(b, img.subsystem)
+	b = le16(b, img.dllCharacteristics())
+	b = img.writeStackAndHeap(b)
+	b = le32(b, 0) // loader flags
+	b = le32(b, dataDirectories)
+	return img.writeDataDirectories(b), checksumAt
+}
 
-	for _, sec := range sections {
-		var name [8]byte
+// imageVersion is the image version in the header, taken from the version
+// resource when there is one.
+func (img *peImage) imageVersion() (major, minor uint16) {
+	if img.spec.Version == nil {
+		return 0, 0
+	}
+	return firstTwo(img.spec.Version.FileVersion)
+}
+
+// writeStackAndHeap writes the four reserve and commit sizes, in the pointer
+// width of the image.
+func (img *peImage) writeStackAndHeap(b []byte) []byte {
+	const reserve, commit = 0x100000, 0x1000
+	for _, v := range []uint64{reserve, commit, reserve, commit} {
+		if img.wide {
+			b = le64(b, v)
+			continue
+		}
+		b = le32(b, uint32(v))
+	}
+	return b
+}
+
+// writeDataDirectories writes every directory slot, filling in the three this
+// image uses and leaving the rest empty.
+func (img *peImage) writeDataDirectories(b []byte) []byte {
+	dirs := make([][2]uint32, dataDirectories)
+	dirs[importDirIndex] = [2]uint32{img.importDir, img.importDirSize}
+	dirs[resourceDirIndex] = [2]uint32{img.resourceDir, img.resourceDirSize}
+	dirs[iatDirIndex] = [2]uint32{img.iatAddr, img.iatSize}
+	for _, dir := range dirs {
+		b = le32(b, dir[0])
+		b = le32(b, dir[1])
+	}
+	return b
+}
+
+// writeSectionTable writes one header per section.
+func (img *peImage) writeSectionTable(b []byte) []byte {
+	for _, sec := range img.sections {
+		var name [MaxPESectionName]byte
 		copy(name[:], sec.name)
 		b = append(b, name[:]...)
 		b = le32(b, max(sec.vsize, 1))
@@ -312,20 +479,19 @@ func BuildPE(s PESpec) ([]byte, error) {
 		b = le16(b, 0)
 		b = le32(b, sec.flags)
 	}
-	b = append(b, make([]byte, int(sizeOfHeaders)-len(b))...)
+	return b
+}
 
-	for _, sec := range sections {
+// writeSectionData writes each section's bytes, padded to its file-aligned
+// length, and then any overlay appended after the image.
+func (img *peImage) writeSectionData(b []byte) []byte {
+	for _, sec := range img.sections {
 		b = append(b, sec.data...)
 		b = append(b, make([]byte, int(sec.rsize)-len(sec.data))...)
 	}
-	b = append(b, s.Overlay...)
-
-	binary.LittleEndian.PutUint32(b[checksumAt:], peChecksum(b, checksumAt))
-	return b, nil
+	return append(b, img.spec.Overlay...)
 }
 
-// sectionFlags turns the named characteristics into bits, or infers them from
-// the section's name when the scenario gives none.
 func sectionFlags(name string, names []string) (uint32, error) {
 	if len(names) == 0 {
 		switch name {
@@ -425,10 +591,9 @@ func planImports(imports []PEImport, wide bool) importPlan {
 	for _, im := range imports {
 		for _, fn := range im.Functions {
 			p.hintAt = append(p.hintAt, at)
-			at += uint32(2 + len(fn) + 1)
-			if at%2 == 1 {
-				at++
-			}
+			// A hint/name entry is a 2-byte hint, the name, and a NUL, and
+			// each one starts on an even offset.
+			at = align(at+uint32(2+len(fn)+1), 2)
 		}
 	}
 	p.dllOffset = at
@@ -453,14 +618,11 @@ func (p importPlan) render(base uint32) []byte {
 		binary.LittleEndian.PutUint32(out[d+12:], base+p.dllAt[i])
 		binary.LittleEndian.PutUint32(out[d+16:], base+iat)
 		for range im.Functions {
-			rva := uint64(base + p.hintAt[fn])
-			if p.wide {
-				binary.LittleEndian.PutUint64(out[ilt:], rva)
-				binary.LittleEndian.PutUint64(out[iat:], rva)
-			} else {
-				binary.LittleEndian.PutUint32(out[ilt:], uint32(rva))
-				binary.LittleEndian.PutUint32(out[iat:], uint32(rva))
-			}
+			// The lookup table and the address table start out identical; the
+			// loader overwrites the address table with real addresses.
+			rva := base + p.hintAt[fn]
+			p.putThunk(out[ilt:], rva)
+			p.putThunk(out[iat:], rva)
 			ilt += p.ptr
 			iat += p.ptr
 			fn++
@@ -555,6 +717,12 @@ func (n *verNode) bytes() []byte {
 	for _, c := range n.children {
 		out = pad4(out)
 		out = append(out, c.bytes()...)
+	}
+	if len(out) > math.MaxUint16 {
+		// The node records its own length in 16 bits, so a longer one would
+		// wrap and describe a resource the parser could not walk. Only a
+		// version string far longer than any real one reaches this.
+		panic(fmt.Sprintf("pe: version resource node %q is %d bytes, more than the format records", n.key, len(out)))
 	}
 	binary.LittleEndian.PutUint16(out, uint16(len(out)))
 	binary.LittleEndian.PutUint16(out[2:], n.valueLen)
@@ -666,4 +834,21 @@ func or(a, b string) string {
 		return b
 	}
 	return a
+}
+
+// setFirst records a value the first time one is seen, leaving a slot that is
+// already set alone. The PE header names the first section of each kind.
+func setFirst(slot *uint32, v uint32) {
+	if *slot == 0 {
+		*slot = v
+	}
+}
+
+// putThunk writes one import thunk, in the pointer width of the image.
+func (p importPlan) putThunk(out []byte, rva uint32) {
+	if p.wide {
+		binary.LittleEndian.PutUint64(out, uint64(rva))
+		return
+	}
+	binary.LittleEndian.PutUint32(out, rva)
 }

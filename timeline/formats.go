@@ -6,27 +6,45 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
 
+// writers is every format a timeline can be written in, and the extensions
+// that imply it. Formats is derived from this, so the set a caller may ask for
+// and the set Write can produce cannot drift apart.
+var writers = map[string]struct {
+	write      func(*Timeline, io.Writer) error
+	extensions []string
+}{
+	"csv":      {(*Timeline).WriteCSV, []string{".csv"}},
+	"txt":      {(*Timeline).WriteTXT, []string{".txt"}},
+	"bodyfile": {(*Timeline).WriteBodyfile, []string{".bodyfile", ".body"}},
+	"macb":     {(*Timeline).WriteMACB, []string{".macb"}},
+	"jsonl":    {(*Timeline).WriteJSONL, []string{".jsonl"}},
+}
+
 // Write writes the timeline in format, one of Formats.
 func (tl *Timeline) Write(w io.Writer, format string) error {
-	switch format {
-	case "csv":
-		return tl.WriteCSV(w)
-	case "txt":
-		return tl.WriteTXT(w)
-	case "bodyfile":
-		return tl.WriteBodyfile(w)
-	case "macb":
-		return tl.WriteMACB(w)
-	case "jsonl":
-		return tl.WriteJSONL(w)
+	f, ok := writers[format]
+	if !ok {
+		return fmt.Errorf("unknown timeline format %q (want %s)", format, strings.Join(Formats, ", "))
 	}
-	return fmt.Errorf("unknown timeline format %q (want %s)", format, strings.Join(Formats, ", "))
+	return f.write(tl, w)
+}
+
+// FormatForExtension is the format a file extension implies, if any. It is how
+// --timeline picks a format when none is given.
+func FormatForExtension(ext string) (string, bool) {
+	for _, name := range Formats {
+		if slices.Contains(writers[name].extensions, ext) {
+			return name, true
+		}
+	}
+	return "", false
 }
 
 // title is the first header line of the text formats: which source, and for
@@ -135,11 +153,17 @@ func (tl *Timeline) WriteTXT(w io.Writer) error {
 // "name:stream", a deleted object "name (deleted)". Times are whole seconds
 // since 1970, 0 when unknown; an MD5 that was not computed is 0.
 func (tl *Timeline) WriteBodyfile(w io.Writer) error {
-	b := bufio.NewWriter(w)
+	// Every entry is checked before anything is written, as the other text
+	// formats do: a bodyfile holding only some of the entries would pass for a
+	// complete one, and a buffered writer may already have flushed part of it by
+	// the time a name it cannot carry is reached.
 	for _, e := range tl.Entries {
 		if err := lineSafe(e, "bodyfile", "|\r\n"); err != nil {
 			return err
 		}
+	}
+	b := bufio.NewWriter(w)
+	for _, e := range tl.Entries {
 		md5 := e.MD5
 		if md5 == "" {
 			md5 = "0"
@@ -157,32 +181,13 @@ func (tl *Timeline) WriteBodyfile(w io.Writer) error {
 // four times are equal has a single MACB line and one with four different
 // times has four. Unknown times have no line.
 func (tl *Timeline) WriteMACB(w io.Writer) error {
-	type line struct {
-		at    time.Time
-		flags string
-		e     *Entry
-	}
-	var lines []line
+	var lines []macbLine
 	for i := range tl.Entries {
 		e := &tl.Entries[i]
 		if err := lineSafe(*e, "macb", "\r\n"); err != nil {
 			return err
 		}
-		times := [4]time.Time{e.Mtime, e.Atime, e.Ctime, e.Btime}
-		done := [4]bool{}
-		for i, t := range times {
-			if t.IsZero() || done[i] {
-				continue
-			}
-			flags := []byte("....")
-			for j := i; j < 4; j++ {
-				if !times[j].IsZero() && times[j].Equal(t) {
-					flags[j] = "MACB"[j]
-					done[j] = true
-				}
-			}
-			lines = append(lines, line{t, string(flags), e})
-		}
+		lines = append(lines, macbRows(e)...)
 	}
 	sort.SliceStable(lines, func(i, j int) bool {
 		a, b := lines[i], lines[j]
@@ -237,4 +242,46 @@ func (tl *Timeline) WriteJSONL(w io.Writer) error {
 		}
 	}
 	return b.Flush()
+}
+
+// macbFields names the four times in the order the MACB view shows them:
+// modified, accessed, changed, born.
+const macbFields = "MACB"
+
+// macbFlags is the MACB column for one instant: every field sharing it, from i
+// onwards, marked with its letter and recorded in done. Fields are marked once,
+// so an instant several of them share produces one row rather than four.
+func macbFlags(times [4]time.Time, t time.Time, i int, done *[4]bool) string {
+	flags := []byte("....")
+	for j := i; j < len(times); j++ {
+		if times[j].IsZero() || !times[j].Equal(t) {
+			continue
+		}
+		flags[j] = macbFields[j]
+		done[j] = true
+	}
+	return string(flags)
+}
+
+// macbLine is one row of the MACB view: an instant, the fields that share it,
+// and the entry it belongs to.
+type macbLine struct {
+	at    time.Time
+	flags string
+	e     *Entry
+}
+
+// macbRows is one row per distinct instant among an entry's four times, so a
+// file whose times all match appears once rather than four times.
+func macbRows(e *Entry) []macbLine {
+	times := [4]time.Time{e.Mtime, e.Atime, e.Ctime, e.Btime}
+	var done [4]bool
+	var out []macbLine
+	for i, t := range times {
+		if t.IsZero() || done[i] {
+			continue
+		}
+		out = append(out, macbLine{t, macbFlags(times, t, i, &done), e})
+	}
+	return out
 }

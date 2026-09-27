@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -498,6 +499,22 @@ func TestObservedModeAndDirSize(t *testing.T) {
 	for p, w := range want {
 		if modes[p] != w {
 			t.Errorf("%s: mode %s, want %s", p, modes[p], w)
+		}
+	}
+}
+
+// TestEveryFormatHasAWriter: Write dispatches on the format name, and Formats
+// is what a caller is told it may ask for. A name in one and not the other
+// would either be unreachable or fail at the last moment.
+func TestEveryFormatHasAWriter(t *testing.T) {
+	for _, name := range Formats {
+		if _, ok := writers[name]; !ok {
+			t.Errorf("format %q is in Formats but has no writer", name)
+		}
+	}
+	for name := range writers {
+		if !slices.Contains(Formats, name) {
+			t.Errorf("writers has %q, which is not in Formats", name)
 		}
 	}
 }

@@ -413,8 +413,8 @@ func TestConsumerAcceptance(t *testing.T) {
 	// CR-11: on a machine with no named streams the run either refuses
 	// before writing anything, or lists what it left out.
 	t.Run("CR-11_unsupported_reported", func(t *testing.T) {
-		capsOverride = &compile.Caps{}
-		defer func() { capsOverride = nil }()
+		testCaps = &compile.Caps{}
+		defer func() { testCaps = nil }()
 
 		refused := filepath.Join(dir, "refused")
 		code, _, errOut := runCLI(t, "--seed", acceptanceSeed, "--playbook", acceptancePlaybook, refused)

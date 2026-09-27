@@ -134,26 +134,17 @@ func (r *pdfRenderer) writeBody(body string) {
 		trimmed := strings.TrimSpace(line)
 
 		switch {
-		case strings.HasPrefix(trimmed, "```"):
+		// The two block cases consume more than one line. Each returns the
+		// index of the last line it used, and the loop advances past it, so
+		// both follow the same convention.
+		case strings.HasPrefix(trimmed, codeFence):
 			var block []string
-			i++
-			for i < len(lines) && !strings.HasPrefix(strings.TrimSpace(lines[i]), "```") {
-				block = append(block, lines[i])
-				i++
-			}
+			block, i = fencedBlock(lines, i)
 			r.writeCode(block)
 
-		case strings.HasPrefix(trimmed, "|") && strings.HasSuffix(trimmed, "|"):
+		case isTableRow(trimmed):
 			var block []string
-			for i < len(lines) {
-				t := strings.TrimSpace(lines[i])
-				if !strings.HasPrefix(t, "|") || !strings.HasSuffix(t, "|") {
-					break
-				}
-				block = append(block, t)
-				i++
-			}
-			i-- // the outer loop advances past the last consumed line
+			block, i = tableBlock(lines, i)
 			r.writeTable(block)
 
 		case trimmed == "":
@@ -222,13 +213,14 @@ func (r *pdfRenderer) writeTable(block []string) {
 	headerRows := 0
 	for _, line := range block {
 		cells := splitTableRow(line)
-		if isTableSeparator(cells) {
-			if len(rows) > 0 && headerRows == 0 {
-				headerRows = len(rows)
-			}
+		if !isTableSeparator(cells) {
+			rows = append(rows, cells)
 			continue
 		}
-		rows = append(rows, cells)
+		// The rule under the first row is what makes those cells a header.
+		if len(rows) > 0 && headerRows == 0 {
+			headerRows = len(rows)
+		}
 	}
 	if len(rows) == 0 {
 		return
@@ -255,16 +247,7 @@ func (r *pdfRenderer) columnWidths(rows [][]string, cols int) []float64 {
 	weights := make([]float64, cols)
 	var total float64
 	for c := 0; c < cols; c++ {
-		longest := 1
-		for _, row := range rows {
-			if c < len(row) && len([]rune(row[c])) > longest {
-				longest = len([]rune(row[c]))
-			}
-		}
-		if longest > 40 {
-			longest = 40
-		}
-		weights[c] = float64(longest)
+		weights[c] = float64(min(longestCell(rows, c), maxWeightedCell))
 		total += weights[c]
 	}
 
@@ -380,4 +363,57 @@ func needsUTF16(s string) bool {
 		}
 	}
 	return false
+}
+
+// codeFence opens and closes a fenced code block.
+const codeFence = "```"
+
+// maxWeightedCell caps how much one long cell may widen its column, so a single
+// wide value cannot squeeze every other column to nothing.
+const maxWeightedCell = 40
+
+// isTableRow reports whether a line is a row of a pipe table.
+func isTableRow(trimmed string) bool {
+	return strings.HasPrefix(trimmed, "|") && strings.HasSuffix(trimmed, "|")
+}
+
+// fencedBlock is the lines inside a fenced code block, and the index of the
+// line the block ends on. An unterminated fence runs to the end of the body.
+func fencedBlock(lines []string, open int) ([]string, int) {
+	var block []string
+	i := open + 1
+	for ; i < len(lines); i++ {
+		if strings.HasPrefix(strings.TrimSpace(lines[i]), codeFence) {
+			break
+		}
+		block = append(block, lines[i])
+	}
+	return block, min(i, len(lines)-1)
+}
+
+// tableBlock is the run of table rows starting at first, and the index of the
+// last one.
+func tableBlock(lines []string, first int) ([]string, int) {
+	var block []string
+	i := first
+	for ; i < len(lines); i++ {
+		t := strings.TrimSpace(lines[i])
+		if !isTableRow(t) {
+			break
+		}
+		block = append(block, t)
+	}
+	return block, i - 1
+}
+
+// longestCell is the length, in runes, of the longest value in one column. It
+// is at least 1, so an empty column still has a width.
+func longestCell(rows [][]string, c int) int {
+	longest := 1
+	for _, row := range rows {
+		if c < len(row) {
+			longest = max(longest, len([]rune(row[c])))
+		}
+	}
+	return longest
 }

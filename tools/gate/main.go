@@ -18,10 +18,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
-func main() {
+func main() { os.Exit(gate()) }
+
+// gate runs every check and reports how many failed. main turns that into the
+// exit status, so the deferred cleanup below always runs.
+func gate() int {
 	failed := 0
 	step := func(name string, err error) {
 		if err != nil {
@@ -54,20 +59,17 @@ func main() {
 		step("temp dir", err)
 	} else {
 		defer os.RemoveAll(tmp)
-		for _, goos := range []string{"windows", "linux", "darwin", "freebsd"} {
-			for _, goarch := range []string{"amd64", "arm64"} {
-				env := []string{"CGO_ENABLED=0", "GOOS=" + goos, "GOARCH=" + goarch}
-				out := filepath.Join(tmp, goos+"-"+goarch)
-				step("build "+goos+"/"+goarch, run(env, "go", "build", "-o", out, "."))
-			}
+		for _, target := range buildTargets() {
+			step("build "+target.goos+"/"+target.goarch, target.build(tmp))
 		}
 	}
 
 	if failed > 0 {
 		fmt.Printf("\n%d check(s) failed\n", failed)
-		os.Exit(1)
+		return 1
 	}
 	fmt.Println("\nall checks passed")
+	return 0
 }
 
 func run(env []string, name string, args ...string) error {
@@ -88,11 +90,10 @@ func gofmtCheck() error {
 		if err != nil {
 			return err
 		}
+		if d.IsDir() && slices.Contains(skippedDirs, d.Name()) {
+			return filepath.SkipDir
+		}
 		if d.IsDir() {
-			switch d.Name() {
-			case ".git", ".codegraph", "testdata", "node_modules":
-				return filepath.SkipDir
-			}
 			return nil
 		}
 		if !strings.HasSuffix(p, ".go") {
@@ -135,3 +136,30 @@ func raceAvailable() bool {
 	_, err = exec.LookPath(strings.Fields(strings.TrimSpace(string(cc)) + " gcc")[0])
 	return err == nil
 }
+
+// target is one platform the product has to build for.
+type target struct{ goos, goarch string }
+
+// buildTargets is every platform fsagen is built for. Setting GOOS and GOARCH
+// for the child build is how cross-compiling works; fsagen itself reads no
+// environment variables.
+func buildTargets() []target {
+	var out []target
+	for _, goos := range []string{"windows", "linux", "darwin", "freebsd"} {
+		for _, goarch := range []string{"amd64", "arm64"} {
+			out = append(out, target{goos, goarch})
+		}
+	}
+	return out
+}
+
+// build compiles the product for this target into dir, without cgo, so the
+// result needs no C toolchain on the machine it runs on.
+func (t target) build(dir string) error {
+	env := []string{"CGO_ENABLED=0", "GOOS=" + t.goos, "GOARCH=" + t.goarch}
+	return run(env, "go", "build", "-o", filepath.Join(dir, t.goos+"-"+t.goarch), ".")
+}
+
+// skippedDirs are the directories the gofmt check does not walk into: version
+// control, the code index, and fixtures that are compared byte for byte.
+var skippedDirs = []string{".git", ".codegraph", "testdata", "node_modules"}

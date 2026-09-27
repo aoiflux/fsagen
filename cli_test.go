@@ -14,13 +14,26 @@ import (
 	"github.com/aoiflux/fsagen/constant"
 	"github.com/aoiflux/fsagen/internal/testutil"
 	"github.com/aoiflux/fsagen/ledger"
+	manifestpkg "github.com/aoiflux/fsagen/manifest"
 	"github.com/aoiflux/fsagen/runinfo"
+	"github.com/aoiflux/fsagen/sandbox"
 )
+
+// testCaps replaces the detected capability set for the tests that exercise a
+// platform they are not running on. nil uses the real detection. It lives here,
+// in the test harness, rather than in the command: the command takes its
+// capability source as an argument.
+var testCaps *compile.Caps
 
 func runCLI(t *testing.T, args ...string) (int, string, string) {
 	t.Helper()
 	var out, errOut bytes.Buffer
-	code := run(args, &out, &errOut)
+	capsFor := manifestpkg.Caps
+	if testCaps != nil {
+		fixed := *testCaps
+		capsFor = func(*sandbox.FS) compile.Caps { return fixed }
+	}
+	code := runWithCaps(args, &out, &errOut, capsFor)
 	return code, out.String(), errOut.String()
 }
 
@@ -255,8 +268,8 @@ steps:
 `
 
 func TestUnsupportedOpsFailBeforeAnyWrite(t *testing.T) {
-	capsOverride = &compile.Caps{NamedStreams: false}
-	defer func() { capsOverride = nil }()
+	testCaps = &compile.Caps{NamedStreams: false}
+	defer func() { testCaps = nil }()
 
 	dir := t.TempDir()
 	p := writeYAML(t, dir, "p.yaml", streamPlaybook)
@@ -287,8 +300,8 @@ func TestOnUnsupportedSkipRecordsAndKeepsOtherBytes(t *testing.T) {
 		}
 	}
 
-	capsOverride = &compile.Caps{NamedStreams: false}
-	defer func() { capsOverride = nil }()
+	testCaps = &compile.Caps{NamedStreams: false}
+	defer func() { testCaps = nil }()
 	skipped := filepath.Join(dir, "skipped")
 	code, out, errOut := runCLI(t, "--playbook", p, "--on-unsupported=skip", skipped)
 	if code != exitOK || !strings.Contains(out, "Skipped 2 unsupported") {
@@ -438,8 +451,8 @@ func TestTimelineFlagErrors(t *testing.T) {
 func TestDroppedTimeFieldRecorded(t *testing.T) {
 	dir := t.TempDir()
 	m := writeYAML(t, dir, "m.yaml", "operations:\n  - { action: create, path: a.txt, content: x, mtime: 2020-01-02T00:00:00Z, crtime: 2020-01-01T00:00:00Z }\n")
-	capsOverride = &compile.Caps{NamedStreams: true}
-	defer func() { capsOverride = nil }()
+	testCaps = &compile.Caps{NamedStreams: true}
+	defer func() { testCaps = nil }()
 
 	out := filepath.Join(dir, "refused")
 	code, _, errOut := runCLI(t, "--manifest", m, out)

@@ -37,7 +37,9 @@ const (
 	SourceModelled = "modelled"
 )
 
-// Formats lists the formats Write accepts.
+// Formats lists the formats Write accepts, in the order they are documented.
+// It names exactly the writers table's keys, which TestEveryFormatHasAWriter
+// proves, so asking for a listed format can never find no writer.
 var Formats = []string{"csv", "txt", "bodyfile", "macb", "jsonl"}
 
 // Type is what an entry describes.
@@ -112,76 +114,140 @@ func Generate(root string, opts Options) (*Timeline, error) {
 	}
 	defer fsys.Close()
 
-	tl := &Timeline{Source: SourceObserved, Root: fsys.Dir()}
-	var walk func(dir string) error
-	walk = func(dir string) error {
-		entries, err := fsys.ReadDirQuiet(dir)
-		if err != nil {
-			return fmt.Errorf("list %s: %w", dir, err)
-		}
-		for _, d := range entries {
-			name := path.Join(dir, d.Name())
-			info, err := d.Info()
-			if err != nil {
-				return fmt.Errorf("%s: %w", name, err)
-			}
-			meta, err := fsys.Meta(name)
-			if err != nil {
-				return err
-			}
-			mode := info.Mode() & (fs.ModePerm | fs.ModeDir)
-			if runtime.GOOS == "windows" {
-				// Windows has no permission bits, only a read-only flag.
-				// Write them as The Sleuth Kit does for NTFS: everything,
-				// less the write bits of a read-only file.
-				mode |= 0o555
-			}
-			e := Entry{
-				Path:  name,
-				Type:  typeOf(info.Mode()),
-				Mode:  mode,
-				Size:  info.Size(),
-				UID:   meta.UID,
-				GID:   meta.GID,
-				Inode: meta.ID,
-				Atime: meta.Atime, Mtime: meta.Mtime, Ctime: meta.Ctime, Btime: meta.Btime,
-			}
-			if e.Type == TypeFile && hashable(e.Size, opts) {
-				if e.MD5, err = digest(func() (io.ReadCloser, error) { return fsys.OpenQuiet(name) }); err != nil {
-					return fmt.Errorf("%s: %w", name, err)
-				}
-			}
-			tl.Entries = append(tl.Entries, e)
-
-			if e.Type == TypeFile || e.Type == TypeDir {
-				streams, err := fsys.Streams(name)
-				if err != nil {
-					return err
-				}
-				for _, s := range streams {
-					se := e
-					se.Type, se.Stream, se.Size, se.MD5 = TypeStream, s.Name, s.Size, ""
-					if hashable(s.Size, opts) {
-						if se.MD5, err = digest(func() (io.ReadCloser, error) { return fsys.OpenStreamQuiet(name, s.Name) }); err != nil {
-							return fmt.Errorf("%s:%s: %w", name, s.Name, err)
-						}
-					}
-					tl.Entries = append(tl.Entries, se)
-				}
-			}
-			if e.Type == TypeDir {
-				if err := walk(name); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	}
-	if err := walk("."); err != nil {
+	w := &walker{fsys: fsys, opts: opts}
+	if err := w.walk("."); err != nil {
 		return nil, fmt.Errorf("timeline of %s: %w", root, err)
 	}
+	tl := &Timeline{Source: SourceObserved, Root: fsys.Dir(), Entries: w.entries}
 	sortEntries(tl.Entries)
 	return tl, nil
+}
+
+// walker reads a tree into timeline entries, depth first.
+type walker struct {
+	fsys    *sandbox.FS
+	opts    Options
+	entries []Entry
+}
+
+// walk records every entry in dir and then descends into its directories.
+func (w *walker) walk(dir string) error {
+	names, err := w.fsys.ReadDirQuiet(dir)
+	if err != nil {
+		return fmt.Errorf("list %s: %w", dir, err)
+	}
+	for _, d := range names {
+		name := path.Join(dir, d.Name())
+		e, err := w.record(name, d)
+		if err != nil {
+			return err
+		}
+		if e.Type != TypeDir {
+			continue
+		}
+		if err := w.walk(name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// record adds the entry for one object, and one more for each of its named
+// streams. It returns the object's own entry so the caller knows to descend.
+func (w *walker) record(name string, d fs.DirEntry) (Entry, error) {
+	e, err := w.entryFor(name, d)
+	if err != nil {
+		return Entry{}, err
+	}
+	w.entries = append(w.entries, e)
+	if e.Type != TypeFile && e.Type != TypeDir {
+		return e, nil
+	}
+	streams, err := w.streamEntries(name, e)
+	if err != nil {
+		return Entry{}, err
+	}
+	w.entries = append(w.entries, streams...)
+	return e, nil
+}
+
+// entryFor reads one object into an entry, hashing its content when the
+// options allow.
+func (w *walker) entryFor(name string, d fs.DirEntry) (Entry, error) {
+	info, err := d.Info()
+	if err != nil {
+		return Entry{}, fmt.Errorf("%s: %w", name, err)
+	}
+	meta, err := w.fsys.Meta(name)
+	if err != nil {
+		return Entry{}, err
+	}
+	e := Entry{
+		Path:  name,
+		Type:  typeOf(info.Mode()),
+		Mode:  reportedMode(info.Mode()),
+		Size:  info.Size(),
+		UID:   meta.UID,
+		GID:   meta.GID,
+		Inode: meta.ID,
+		Atime: meta.Atime, Mtime: meta.Mtime, Ctime: meta.Ctime, Btime: meta.Btime,
+	}
+	if e.Type != TypeFile || !hashable(e.Size, w.opts) {
+		return e, nil
+	}
+	if e.MD5, err = digest(func() (io.ReadCloser, error) { return w.fsys.OpenQuiet(name) }); err != nil {
+		return Entry{}, fmt.Errorf("%s: %w", name, err)
+	}
+	return e, nil
+}
+
+// streamEntries is one entry per named stream of an object. A stream carries
+// its object's times, as NTFS keeps them per file.
+func (w *walker) streamEntries(name string, obj Entry) ([]Entry, error) {
+	streams, err := w.fsys.Streams(name)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Entry, 0, len(streams))
+	for _, s := range streams {
+		e, err := w.streamEntry(name, obj, s)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, nil
+}
+
+// streamEntry is the entry for one named stream: its object's times, with the
+// stream's own name, size and digest.
+func (w *walker) streamEntry(name string, obj Entry, s sandbox.Stream) (Entry, error) {
+	e := obj
+	e.Type, e.Stream, e.Size, e.MD5 = TypeStream, s.Name, s.Size, ""
+	if !hashable(s.Size, w.opts) {
+		return e, nil
+	}
+	md5, err := digest(func() (io.ReadCloser, error) { return w.fsys.OpenStreamQuiet(name, s.Name) })
+	if err != nil {
+		return Entry{}, fmt.Errorf("%s:%s: %w", name, s.Name, err)
+	}
+	e.MD5 = md5
+	return e, nil
+}
+
+// tskReadableBits are the bits The Sleuth Kit reports for an NTFS object:
+// readable and executable by everyone, with write left to the read-only flag.
+const tskReadableBits = 0o555
+
+// reportedMode is the permission bits a timeline records. Windows has no
+// permission bits of its own, only a read-only flag, so the bits are written as
+// The Sleuth Kit writes them for NTFS.
+func reportedMode(m fs.FileMode) fs.FileMode {
+	mode := m & (fs.ModePerm | fs.ModeDir)
+	if runtime.GOOS == "windows" {
+		mode |= tskReadableBits
+	}
+	return mode
 }
 
 func hashable(size int64, opts Options) bool { return opts.HashLimit <= 0 || size <= opts.HashLimit }

@@ -59,30 +59,30 @@ type kind struct {
 var kinds = []kind{
 	{id: "txt", ext: constant.TxtExtension, gen: genTxt},
 	{id: "docx", ext: constant.DocxExtension, gen: genDocx},
-	{id: "png", ext: constant.PngExtension, gen: genPng},
-	{id: "jpg", ext: constant.JpgExtension, gen: genJpg},
+	{id: "png", ext: constant.PngExtension, gen: genPNG},
+	{id: "jpg", ext: constant.JpgExtension, gen: genJPEG},
 	{id: "pdf", ext: constant.PdfExtension, gen: genPdf},
-	{id: "mp4", ext: constant.Mp4Extension, gen: genMp4},
+	{id: "mp4", ext: constant.MP4Extension, gen: genMP4},
 	{id: "csv", ext: constant.CsvExtension, gen: genCsv},
-	{id: "json", ext: constant.JsonExtension, gen: genJson},
-	{id: "xml", ext: constant.XmlExtension, gen: genXml},
-	{id: "html", ext: constant.HtmlExtension, gen: genHtml},
+	{id: "json", ext: constant.JSONExtension, gen: genJSON},
+	{id: "xml", ext: constant.XMLExtension, gen: genXML},
+	{id: "html", ext: constant.HTMLExtension, gen: genHTML},
 	{id: "log", ext: constant.LogExtension, gen: genLog},
 	{id: "reg", ext: constant.RegExtension, gen: genReg},
 	{id: "zip", ext: constant.ZipExtension, gen: genZip},
 	{id: "exe", ext: constant.ExeExtension, gen: genExe},
-	{id: "jsonl", ext: constant.JsonlExtension, gen: genJsonl},
+	{id: "jsonl", ext: constant.JSONLExtension, gen: genJSONL},
 	{id: "syslog", ext: constant.SyslogExtension, gen: genSyslog},
 	{id: "md", ext: constant.MdExtension, gen: genMarkdown},
 	{id: "eml", ext: constant.EmlExtension, gen: genEml},
 	{id: "mbox", ext: constant.MboxExtension, gen: genMbox},
 	// The browser profiles keep the names a tool looks for; the profile
 	// directory invented around each one keeps them apart.
-	{id: "chrome-history", ext: constant.DbExtension, gen: genChromeHistory,
+	{id: "chrome-history", ext: constant.DBExtension, gen: genChromeHistory,
 		name: func(s *prng.Stream) string { return "Chrome-" + s.Text(6) + "/Default/History" }},
-	{id: "firefox-places", ext: constant.SqLiteExtension, gen: genFirefoxPlaces,
+	{id: "firefox-places", ext: constant.SQLiteExtension, gen: genFirefoxPlaces,
 		name: func(s *prng.Stream) string {
-			return "Firefox-" + s.Text(6) + "/Profiles/" + s.Text(8) + ".default-release/places" + constant.SqLiteExtension
+			return "Firefox-" + s.Text(6) + "/Profiles/" + s.Text(8) + ".default-release/places" + constant.SQLiteExtension
 		}},
 }
 
@@ -98,41 +98,73 @@ type Job struct {
 // directories at a level holds limit files of every kind and, below the
 // last level, limit directories of its own.
 func Plan(seed int64, limit, depth int) (dirs []string, jobs []Job) {
-	root := prng.Root(seed).Derive("bulk")
-	var walk func(parent string, depth int)
-	walk = func(parent string, depth int) {
-		if depth == 0 {
-			return
-		}
-		for index := 0; index < limit; index++ {
-			name := root.Derive("dir", parent, strconv.Itoa(index)).Stream().Text(constant.FileNameLen)
-			dir := path.Join(parent, fmt.Sprintf("%s_%d", name, index))
-			dirs = append(dirs, dir)
+	p := &planner{root: prng.Root(seed).Derive("bulk"), limit: limit}
+	p.level("", depth)
+	return p.dirs, p.jobs
+}
 
-			taken := map[string]bool{}
-			for i := 0; i < limit; i++ {
-				for ki, k := range kinds {
-					key := root.Derive("file", dir, k.id, strconv.Itoa(i))
-					file := ""
-					// A repeated name would overwrite a file; draw again,
-					// deterministically, until the name is new.
-					for try := 0; file == "" || taken[strings.ToLower(file)]; try++ {
-						s := key.Derive("name", strconv.Itoa(try)).Stream()
-						if k.name != nil {
-							file = k.name(s)
-						} else {
-							file = s.Text(constant.FileNameLen) + k.ext
-						}
-					}
-					taken[strings.ToLower(file)] = true
-					jobs = append(jobs, Job{Path: path.Join(dir, file), kind: ki, key: key})
-				}
-			}
-			walk(dir, depth-1)
+// planner builds a bulk plan from the seed alone. Every name and key comes from
+// the plan's own position in the tree, so the same seed and shape always give
+// the same corpus.
+type planner struct {
+	root  prng.Key
+	limit int
+	dirs  []string
+	jobs  []Job
+}
+
+// level plans the directories at one level and everything beneath them.
+func (p *planner) level(parent string, depth int) {
+	if depth == 0 {
+		return
+	}
+	for index := 0; index < p.limit; index++ {
+		dir := p.dirName(parent, index)
+		p.dirs = append(p.dirs, dir)
+		p.files(dir)
+		p.level(dir, depth-1)
+	}
+}
+
+// dirName is the name of one directory, drawn from its parent and its position
+// so that what else the plan holds cannot change it.
+func (p *planner) dirName(parent string, index int) string {
+	name := p.root.Derive("dir", parent, strconv.Itoa(index)).Stream().Text(constant.FileNameLen)
+	return path.Join(parent, fmt.Sprintf("%s_%d", name, index))
+}
+
+// files plans limit files of every kind in one directory.
+func (p *planner) files(dir string) {
+	taken := map[string]bool{}
+	for i := 0; i < p.limit; i++ {
+		for ki, k := range kinds {
+			key := p.root.Derive("file", dir, k.id, strconv.Itoa(i))
+			p.jobs = append(p.jobs, Job{Path: path.Join(dir, uniqueName(k, key, taken)), kind: ki, key: key})
 		}
 	}
-	walk("", depth)
-	return dirs, jobs
+}
+
+// uniqueName draws a name for one file. A repeated name would overwrite a file
+// already planned, so the draw repeats, deterministically, until it is new.
+func uniqueName(k kind, key prng.Key, taken map[string]bool) string {
+	for try := 0; ; try++ {
+		file := k.fileName(key.Derive("name", strconv.Itoa(try)).Stream())
+		if file == "" || taken[strings.ToLower(file)] {
+			continue
+		}
+		taken[strings.ToLower(file)] = true
+		return file
+	}
+}
+
+// fileName draws a name for a file of this kind: the kind's own naming when it
+// has one (a browser profile keeps the names a tool looks for), else a random
+// name with the kind's extension.
+func (k kind) fileName(s *prng.Stream) string {
+	if k.name != nil {
+		return k.name(s)
+	}
+	return s.Text(constant.FileNameLen) + k.ext
 }
 
 // Generate writes a bulk corpus into fsys.
@@ -156,51 +188,73 @@ func Generate(fsys *sandbox.FS, limit, depth int, opts Options) error {
 	})
 }
 
-// runJobs runs do(0..n-1) on at most workers goroutines. After a failure no
-// new job starts; every running one is waited for. The error returned is the
-// one from the lowest-numbered failing job, so it does not depend on
-// scheduling.
+// runJobs runs do(0..n-1) on at most workers goroutines. Jobs are handed out in
+// order, so once one has failed nothing still unstarted can be an earlier
+// failure and the queue stops; every job already running is waited for. The
+// error returned is therefore the one from the lowest-numbered failing job,
+// whatever order the workers happened to run in.
 func runJobs(n, workers int, do func(int) error) error {
 	if workers <= 0 {
 		workers = runtime.NumCPU()
 	}
-	var (
-		mu       sync.Mutex
-		firstIdx = n
-		firstErr error
-		next     int
-		wg       sync.WaitGroup
-	)
-	take := func() (int, bool) {
-		mu.Lock()
-		defer mu.Unlock()
-		if firstErr != nil || next >= n {
-			return 0, false
-		}
-		next++
-		return next - 1, true
-	}
-	for w := 0; w < workers; w++ {
+	q := &jobQueue{do: do, n: n, firstIdx: n}
+	var wg sync.WaitGroup
+	for range workers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for {
-				i, ok := take()
-				if !ok {
-					return
-				}
-				if err := do(i); err != nil {
-					mu.Lock()
-					if i < firstIdx {
-						firstIdx, firstErr = i, err
-					}
-					mu.Unlock()
-				}
-			}
+			q.work()
 		}()
 	}
 	wg.Wait()
-	return firstErr
+	return q.firstErr
+}
+
+// jobQueue hands out job numbers in order and remembers the first failure.
+type jobQueue struct {
+	do func(int) error
+	n  int
+
+	mu sync.Mutex
+	// next is the next job to hand out.
+	next int
+	// firstIdx is the lowest-numbered job that has failed and firstErr its
+	// error. firstIdx starts past every job, so nothing has failed yet.
+	firstIdx int
+	firstErr error
+}
+
+// work runs jobs until none are left worth starting.
+func (q *jobQueue) work() {
+	for {
+		i, ok := q.take()
+		if !ok {
+			return
+		}
+		if err := q.do(i); err != nil {
+			q.fail(i, err)
+		}
+	}
+}
+
+// take is the next job to run, if one is still worth running.
+func (q *jobQueue) take() (int, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.next >= q.n || q.next >= q.firstIdx {
+		return 0, false
+	}
+	q.next++
+	return q.next - 1, true
+}
+
+// fail records a failure, keeping the lowest-numbered one.
+func (q *jobQueue) fail(i int, err error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if i < q.firstIdx {
+		q.firstIdx, q.firstErr = i, err
+	}
 }
 
 func genTxt(s *prng.Stream, _ time.Time) ([]byte, error) {
@@ -211,11 +265,11 @@ func genDocx(s *prng.Stream, start time.Time) ([]byte, error) {
 	return Docx(s.Text(constant.ContentLen), DocxMeta{Author: "fsagen", Created: start, Modified: start})
 }
 
-func genPng(s *prng.Stream, _ time.Time) ([]byte, error) {
+func genPNG(s *prng.Stream, _ time.Time) ([]byte, error) {
 	return PNG(DefaultImageSize, DefaultImageSize, s, nil)
 }
 
-func genJpg(s *prng.Stream, _ time.Time) ([]byte, error) {
+func genJPEG(s *prng.Stream, _ time.Time) ([]byte, error) {
 	return JPEG(DefaultImageSize, DefaultImageSize, s, nil)
 }
 
@@ -236,7 +290,7 @@ func genPdf(s *prng.Stream, start time.Time) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func genMp4(s *prng.Stream, start time.Time) ([]byte, error) {
+func genMP4(s *prng.Stream, start time.Time) ([]byte, error) {
 	return MP4(start, 3*time.Second, 320, 240, s.Bytes(4096)), nil
 }
 
@@ -248,15 +302,15 @@ func genCsv(s *prng.Stream, _ time.Time) ([]byte, error) {
 	return []byte(strings.Join(rows, "\n") + "\n"), nil
 }
 
-func genJson(s *prng.Stream, start time.Time) ([]byte, error) {
+func genJSON(s *prng.Stream, start time.Time) ([]byte, error) {
 	return []byte(fmt.Sprintf(`{"id":%d,"name":"%s","timestamp":"%s"}`, 1, s.Text(8), start.Format(time.RFC3339))), nil
 }
 
-func genXml(s *prng.Stream, _ time.Time) ([]byte, error) {
+func genXML(s *prng.Stream, _ time.Time) ([]byte, error) {
 	return []byte(fmt.Sprintf(`<root><id>%d</id><name>%s</name></root>`, 1, s.Text(8))), nil
 }
 
-func genHtml(s *prng.Stream, _ time.Time) ([]byte, error) {
+func genHTML(s *prng.Stream, _ time.Time) ([]byte, error) {
 	body := s.Text(64)
 	return []byte(fmt.Sprintf(`<!doctype html><html><head><meta charset="utf-8"><title>%s</title></head><body><p>%s</p></body></html>`, body[:8], body)), nil
 }
@@ -317,7 +371,7 @@ func genExe(s *prng.Stream, start time.Time) ([]byte, error) {
 	})
 }
 
-func genJsonl(s *prng.Stream, start time.Time) ([]byte, error) {
+func genJSONL(s *prng.Stream, start time.Time) ([]byte, error) {
 	var b strings.Builder
 	t := start
 	for i := 0; i < 50; i++ {

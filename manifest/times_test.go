@@ -436,9 +436,7 @@ func TestEmailTimesFromDate(t *testing.T) {
 // output), the tree is settled again; when they keep moving, the error says
 // why. Any other time that moved fails at once.
 func TestSettleRetriesOnlyForAccessTimes(t *testing.T) {
-	saved, savedHook := settleRetries, afterSettle
-	defer func() { settleRetries, afterSettle = saved, savedHook }()
-	settleRetries = []time.Duration{0, 0}
+	retries := []time.Duration{0, 0}
 
 	run := func(move func(fsys *sandbox.FS, round int)) (error, int) {
 		dir := t.TempDir()
@@ -452,12 +450,12 @@ func TestSettleRetriesOnlyForAccessTimes(t *testing.T) {
 		defer prog.Close()
 		fsys, _ := sandbox.Open(root)
 		defer fsys.Close()
-		ctx := ExecContext{FS: fsys, Sources: prog.Sources, Caps: Caps(fsys)}
+		ctx := ExecContext{FS: fsys, Sources: prog.Sources, Caps: Caps(fsys), SettleRetries: retries}
 		if _, err := Execute(ctx, prog.Ops); err != nil {
 			t.Fatal(err)
 		}
 		rounds := 0
-		afterSettle = func(round int) { rounds++; move(fsys, round) }
+		ctx.AfterSettle = func(round int) { rounds++; move(fsys, round) }
 		return SettleAndVerify(ctx, prog.Model), rounds
 	}
 	later := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)

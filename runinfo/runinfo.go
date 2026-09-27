@@ -42,7 +42,7 @@ const (
 
 // Status values.
 const (
-	StatusRunning  = "running"
+	statusRunning  = "running"
 	StatusComplete = "complete"
 	StatusFailed   = "failed"
 )
@@ -136,7 +136,7 @@ func New(mode string, seed int64) *Manifest {
 		Generator:        "fsagen",
 		GeneratorVersion: constant.GeneratorVersion,
 		GoVersion:        runtime.Version(),
-		Status:           StatusRunning,
+		Status:           statusRunning,
 		Mode:             mode,
 		Seed:             seed,
 		Reproducible:     true,
@@ -204,98 +204,165 @@ func writeJSON(dir, name string, v any) error {
 }
 
 func writeAtomic(dir, name string, data []byte) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, sandbox.DirMode); err != nil {
 		return err
 	}
-	tmp := filepath.Join(dir, name+".tmp")
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	// The temporary name carries the process id, so two runs sharing one --meta
+	// directory cannot overwrite each other's half-written file.
+	tmp := filepath.Join(dir, fmt.Sprintf("%s.%d.tmp", name, os.Getpid()))
+	if err := writeAndSync(tmp, data); err != nil {
+		os.Remove(tmp)
 		return err
 	}
-	return os.Rename(tmp, filepath.Join(dir, name))
+	if err := os.Rename(tmp, filepath.Join(dir, name)); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+// writeAndSync writes the file and flushes it to the disk, so the rename that
+// follows cannot publish a name whose contents have not landed yet.
+func writeAndSync(name string, data []byte) error {
+	f, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, sandbox.FileMode)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // WriteLedger writes ledger.jsonl into dir and returns its SHA-256.
 func WriteLedger(dir string, entries []ledger.Entry) (string, error) {
 	data := ledger.Bytes(entries)
-	return digest(data), writeAtomic(dir, ledger.FileName, data)
+	return Digest(data), writeAtomic(dir, ledger.FileName, data)
 }
 
 // WriteAnswerKey writes answer-key.jsonl into dir and returns its SHA-256.
 func WriteAnswerKey(dir string, facts []ledger.Fact) (string, error) {
 	data := ledger.FactBytes(facts)
-	return digest(data), writeAtomic(dir, ledger.AnswerKeyFileName, data)
+	return Digest(data), writeAtomic(dir, ledger.AnswerKeyFileName, data)
 }
 
-// Digest is the SHA-256 of data in hex.
-func Digest(data []byte) string { return digest(data) }
-
-// Sums lists the SHA-256 of every file and named stream under fsys in
+// buildSums lists the SHA-256 of every file and named stream under fsys in
 // sha256sum's format ("<hex>  <path>"), with slash paths, a stream written
 // as path:stream, sorted by path.
-func Sums(fsys *sandbox.FS) (data []byte, out Outputs, err error) {
-	type line struct{ path, sum string }
-	var lines []line
-	addStreams := func(name string) error {
-		streams, err := fsys.Streams(name)
-		if err != nil {
-			return err
-		}
-		for _, s := range streams {
-			b, err := fsys.ReadStream(name, s.Name)
-			if err != nil {
-				return err
-			}
-			lines = append(lines, line{name + ":" + s.Name, digest(b)})
-			out.Streams++
-		}
+func buildSums(fsys *sandbox.FS) ([]byte, Outputs, error) {
+	s := &sums{fsys: fsys}
+	if err := fsys.WalkDir(s.visit); err != nil {
+		return nil, s.out, err
+	}
+	return s.render()
+}
+
+// sumLine is one line of SHA256SUMS: a path, or a path and stream name, and the
+// digest of its bytes.
+type sumLine struct{ path, sum string }
+
+// sums collects a digest for everything in the output: every file, and every
+// named stream of a file or directory.
+type sums struct {
+	fsys  *sandbox.FS
+	lines []sumLine
+	out   Outputs
+}
+
+// visit digests one entry of the tree. A directory has no content of its own,
+// but it can still carry named streams.
+func (s *sums) visit(name string, d fs.DirEntry, err error) error {
+	if err != nil {
+		return err
+	}
+	if name == "." {
 		return nil
 	}
-	err = fsys.WalkDir(func(name string, d fs.DirEntry, err error) error {
-		if err != nil {
+	if !d.IsDir() {
+		if err := s.addFile(name); err != nil {
 			return err
 		}
-		if name == "." {
-			return nil
-		}
-		if !d.IsDir() {
-			f, err := fsys.OpenFile(name, os.O_RDONLY, 0)
-			if err != nil {
-				return err
-			}
-			h := sha256.New()
-			_, err = io.Copy(h, f)
-			f.Close()
-			if err != nil {
-				return err
-			}
-			lines = append(lines, line{name, hex.EncodeToString(h.Sum(nil))})
-			out.Files++
-		}
-		return addStreams(name)
-	})
-	if err != nil {
-		return nil, out, err
 	}
-	sort.Slice(lines, func(i, j int) bool { return lines[i].path < lines[j].path })
+	return s.addStreams(name)
+}
+
+func (s *sums) addFile(name string) error {
+	sum, err := fileDigest(s.fsys, name)
+	if err != nil {
+		return err
+	}
+	s.lines = append(s.lines, sumLine{name, sum})
+	s.out.Files++
+	return nil
+}
+
+func (s *sums) addStreams(name string) error {
+	streams, err := s.fsys.Streams(name)
+	if err != nil {
+		return err
+	}
+	for _, st := range streams {
+		if err := s.addStream(name, st.Name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *sums) addStream(name, stream string) error {
+	b, err := s.fsys.ReadStream(name, stream)
+	if err != nil {
+		return err
+	}
+	s.lines = append(s.lines, sumLine{name + ":" + stream, Digest(b)})
+	s.out.Streams++
+	return nil
+}
+
+// render writes the lines in path order, so the file is the same whatever order
+// the tree was walked in, and digests the result.
+func (s *sums) render() ([]byte, Outputs, error) {
+	sort.Slice(s.lines, func(i, j int) bool { return s.lines[i].path < s.lines[j].path })
 	var b strings.Builder
-	for _, l := range lines {
+	for _, l := range s.lines {
 		fmt.Fprintf(&b, "%s  %s\n", l.sum, l.path)
 	}
-	data = []byte(b.String())
-	out.SHA256SUMS = digest(data)
-	return data, out, nil
+	data := []byte(b.String())
+	s.out.SHA256SUMS = Digest(data)
+	return data, s.out, nil
 }
 
 // WriteSums writes SHA256SUMS for fsys into dir and returns its summary.
 func WriteSums(dir string, fsys *sandbox.FS) (Outputs, error) {
-	data, out, err := Sums(fsys)
+	data, out, err := buildSums(fsys)
 	if err != nil {
 		return out, err
 	}
 	return out, writeAtomic(dir, SumsFileName, data)
 }
 
-func digest(b []byte) string {
+// Digest is the SHA-256 of data, in hex.
+func Digest(b []byte) string {
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:])
+}
+
+// fileDigest is the SHA-256 of a file in the output, read as a stream so a
+// large artefact is never held in memory.
+func fileDigest(fsys *sandbox.FS, name string) (string, error) {
+	f, err := fsys.OpenFile(name, os.O_RDONLY, 0)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }

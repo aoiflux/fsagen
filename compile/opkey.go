@@ -81,21 +81,27 @@ func canon(h hash.Hash, n *yaml.Node) {
 			canon(h, c)
 		}
 	case yaml.MappingNode:
-		type pair struct{ k, v string }
-		var pairs []pair
-		for i := 0; i+1 < len(n.Content); i += 2 {
-			kh, vh := sha256.New(), sha256.New()
-			canon(kh, n.Content[i])
-			canon(vh, n.Content[i+1])
-			pairs = append(pairs, pair{string(kh.Sum(nil)), string(vh.Sum(nil))})
-		}
-		sort.Slice(pairs, func(i, j int) bool { return pairs[i].k < pairs[j].k })
-		writeLP(h, "m")
-		writeLP(h, strconv.Itoa(len(pairs)))
-		for _, p := range pairs {
-			writeLP(h, p.k)
-			writeLP(h, p.v)
-		}
+		canonMapping(h, n)
+	}
+}
+
+// canonMapping hashes a mapping by the sorted hashes of its pairs, so two
+// mappings with the same content hash alike however they were written.
+func canonMapping(h hash.Hash, n *yaml.Node) {
+	type pair struct{ k, v string }
+	var hashed []pair
+	for k, v := range pairs(n) {
+		kh, vh := sha256.New(), sha256.New()
+		canon(kh, k)
+		canon(vh, v)
+		hashed = append(hashed, pair{string(kh.Sum(nil)), string(vh.Sum(nil))})
+	}
+	sort.Slice(hashed, func(i, j int) bool { return hashed[i].k < hashed[j].k })
+	writeLP(h, "m")
+	writeLP(h, strconv.Itoa(len(hashed)))
+	for _, p := range hashed {
+		writeLP(h, p.k)
+		writeLP(h, p.v)
 	}
 }
 

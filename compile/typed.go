@@ -68,11 +68,7 @@ func checkTyped(op *Op, at func(field, format string, args ...any)) {
 		}
 	}
 	if Structured(op.Format) && !DocumentText(op.Format) {
-		for _, f := range []string{"content", "content_file", "template", "render"} {
-			if k.has(f) {
-				at(f, "does not apply to format: %s, which builds the file itself; content_len says how much filler it carries, and its own block says what is in it", op.Format)
-			}
-		}
+		rejectBodyKeys(op, at)
 	}
 	if k.has("content_len") && (op.Format == "chrome_history" || op.Format == "firefox_places") {
 		at("content_len", "a history database is as big as its contents make it; give history.visits instead")
@@ -82,17 +78,13 @@ func checkTyped(op *Op, at func(field, format string, args ...any)) {
 		at("format", "%s needs a history block saying what was browsed", op.Format)
 	}
 	if op.Pe != nil {
-		checkPe(op, at)
+		checkPE(op, at)
 	}
 	if op.History != nil {
 		checkHistory(op, at)
 	}
 	if op.Docx != nil {
-		for _, f := range []struct{ key, val string }{{"created", op.Docx.Created}, {"modified", op.Docx.Modified}} {
-			if err := checkTime(f.val); err != nil {
-				at("docx", "%s: %v", f.key, err)
-			}
-		}
+		checkBlockTimes(at, "docx", field{"created", op.Docx.Created}, field{"modified", op.Docx.Modified})
 	}
 	if op.Archive != nil {
 		checkArchive(op, at)
@@ -112,7 +104,7 @@ func checkTime(v string) error {
 	return nil
 }
 
-func checkPe(op *Op, at func(string, string, ...any)) {
+func checkPE(op *Op, at func(string, string, ...any)) {
 	p := op.Pe
 	if p.Machine != "" && !contains(libgen.PEMachines, p.Machine) {
 		at("pe", "machine %q (want one of: %s)", p.Machine, strings.Join(libgen.PEMachines, ", "))
@@ -129,23 +121,7 @@ func checkPe(op *Op, at func(string, string, ...any)) {
 	}
 	seen := map[string]bool{}
 	for i, sec := range p.Sections {
-		switch {
-		case strings.TrimSpace(sec.Name) == "":
-			at("pe", "sections[%d] has no name", i)
-		case len(sec.Name) > 8:
-			at("pe", "sections[%d]: %q is longer than the eight bytes a section name holds", i, sec.Name)
-		case seen[sec.Name]:
-			at("pe", "sections[%d]: %q appears twice", i, sec.Name)
-		}
-		seen[sec.Name] = true
-		if sec.Size < 0 {
-			at("pe", "sections[%d]: size %d is negative", i, sec.Size)
-		}
-		for _, f := range sec.Flags {
-			if !contains(libgen.PESectionFlags, f) {
-				at("pe", "sections[%d]: unknown flag %q (want one of: %s)", i, f, strings.Join(libgen.PESectionFlags, ", "))
-			}
-		}
+		checkPeSection(sec, i, seen, at)
 	}
 	if _, err := libgen.ParseImports(p.Imports); err != nil {
 		at("pe", "%v", err)
@@ -181,11 +157,7 @@ func checkHistory(op *Op, at func(string, string, ...any)) {
 		if strings.TrimSpace(d.TargetPath) == "" {
 			at("history", "downloads[%d] has no target_path", i)
 		}
-		for _, f := range []struct{ key, val string }{{"start", d.Start}, {"end", d.End}} {
-			if err := checkTime(f.val); err != nil {
-				at("history", "downloads[%d].%s: %v", i, f.key, err)
-			}
-		}
+		checkDownloadTimes(d, i, at)
 		if d.ReceivedBytes < 0 || d.TotalBytes < 0 {
 			at("history", "downloads[%d]: a byte count cannot be negative", i)
 		}
@@ -274,10 +246,18 @@ func ParseLineRange(s string) (from, to int, err error) {
 	if m == nil {
 		return 0, 0, fmt.Errorf("%q is not a line or a range of lines (for example 40 or 40-60)", s)
 	}
-	from, _ = strconv.Atoi(m[1])
+	// The pattern only admits digits, so the one error Atoi can return is a
+	// value too large for an int, which it reports along with a clamped result.
+	// Left unchecked, a 20-digit line number would pass as MaxInt.
+	from, err = strconv.Atoi(m[1])
+	if err != nil {
+		return 0, 0, fmt.Errorf("%q names a line beyond any file", m[1])
+	}
 	to = from
 	if m[2] != "" {
-		to, _ = strconv.Atoi(m[2])
+		if to, err = strconv.Atoi(m[2]); err != nil {
+			return 0, 0, fmt.Errorf("%q names a line beyond any file", m[2])
+		}
 	}
 	if from < 1 {
 		return 0, 0, fmt.Errorf("lines are numbered from 1")
@@ -333,5 +313,62 @@ func cloneTyped(op *spec.Operation) {
 	}
 	if op.Email != nil {
 		op.Email = cloneEmail(op.Email)
+	}
+}
+
+// rejectBodyKeys reports the content keys that a self-building format ignores.
+// Such a format takes its filler from content_len and its shape from its own
+// block, so a body given beside it would be silently dropped.
+func rejectBodyKeys(op *Op, at func(string, string, ...any)) {
+	for _, f := range []string{"content", "content_file", "template", "render"} {
+		if op.keys.has(f) {
+			at(f, "does not apply to format: %s, which builds the file itself; content_len says how much filler it carries, and its own block says what is in it", op.Format)
+		}
+	}
+}
+
+// checkBlockTimes rejects any date in a typed block that is given but is not
+// RFC 3339. Leaving one out is allowed; it defaults to the operation time.
+func checkBlockTimes(at func(string, string, ...any), block string, fields ...field) {
+	for _, f := range fields {
+		if err := checkTime(f.val); err != nil {
+			at(block, "%s: %v", f.key, err)
+		}
+	}
+}
+
+// checkPeSection checks one section of an image: it needs a name that fits the
+// header and has not been used, a size that is not negative, and flags the
+// format knows. seen carries the names already used.
+func checkPeSection(sec spec.PeSection, i int, seen map[string]bool, at func(string, string, ...any)) {
+	switch {
+	case strings.TrimSpace(sec.Name) == "":
+		at("pe", "sections[%d] has no name", i)
+	case libgen.ReservedPESection(sec.Name):
+		at("pe", "sections[%d]: %q is the name fsagen gives the section it builds itself; its contents would be overwritten", i, sec.Name)
+	case len(sec.Name) > libgen.MaxPESectionName:
+		at("pe", "sections[%d]: %q is longer than the eight bytes a section name holds", i, sec.Name)
+	case seen[sec.Name]:
+		at("pe", "sections[%d]: %q appears twice", i, sec.Name)
+	}
+	seen[sec.Name] = true
+	if sec.Size < 0 {
+		at("pe", "sections[%d]: size %d is negative", i, sec.Size)
+	}
+	for _, f := range sec.Flags {
+		if contains(libgen.PESectionFlags, f) {
+			continue
+		}
+		at("pe", "sections[%d]: unknown flag %q (want one of: %s)", i, f, strings.Join(libgen.PESectionFlags, ", "))
+	}
+}
+
+// checkDownloadTimes rejects a download's start or end that is given but is not
+// RFC 3339.
+func checkDownloadTimes(d spec.HistoryDownload, i int, at func(string, string, ...any)) {
+	for _, f := range []field{{"start", d.Start}, {"end", d.End}} {
+		if err := checkTime(f.val); err != nil {
+			at("history", "downloads[%d].%s: %v", i, f.key, err)
+		}
 	}
 }

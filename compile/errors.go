@@ -76,40 +76,68 @@ const maxErrors = 50
 
 // ErrorList collects every problem found in one pass, so a file is fixed in
 // one edit rather than one error at a time.
-type ErrorList []error
+type ErrorList struct {
+	problems []error
+	// dropped counts the problems past maxErrors that were not recorded, so the
+	// message says the run stopped early only when it really did. A file with
+	// exactly maxErrors problems had none dropped.
+	dropped int
+}
 
 func (l ErrorList) Error() string {
-	parts := make([]string, 0, len(l)+1)
-	for _, e := range l {
+	parts := make([]string, 0, len(l.problems)+1)
+	for _, e := range l.problems {
 		parts = append(parts, e.Error())
 	}
-	if len(l) >= maxErrors {
+	if l.dropped > 0 {
 		parts = append(parts, fmt.Sprintf("(stopped after %d errors)", maxErrors))
 	}
 	return strings.Join(parts, "\n")
 }
 
 func (l *ErrorList) add(err error) {
-	if err == nil || len(*l) >= maxErrors {
+	if err == nil {
 		return
 	}
 	if nested, ok := err.(ErrorList); ok {
-		for _, e := range nested {
+		for _, e := range nested.problems {
 			l.add(e)
 		}
+		l.dropped += nested.dropped
 		return
 	}
 	// A repeated or batched action produces the same problem once per
 	// occurrence; report it once, at its position in the file.
-	if e, ok := err.(*Error); ok {
-		for _, prev := range *l {
-			if p, ok := prev.(*Error); ok && p.key() == e.key() {
-				return
-			}
+	if e, ok := err.(*Error); ok && l.holds(e) {
+		return
+	}
+	if len(l.problems) >= maxErrors {
+		l.dropped++
+		return
+	}
+	l.problems = append(l.problems, err)
+}
+
+// holds reports whether the list already has this problem, ignoring which
+// iteration or batch raised it.
+func (l ErrorList) holds(e *Error) bool {
+	for _, prev := range l.problems {
+		if p, ok := prev.(*Error); ok && p.key() == e.key() {
+			return true
 		}
 	}
-	*l = append(*l, err)
+	return false
 }
+
+func (l ErrorList) err() error {
+	if len(l.problems) == 0 && l.dropped == 0 {
+		return nil
+	}
+	return l
+}
+
+// any reports whether the list holds a problem.
+func (l ErrorList) any() bool { return len(l.problems) > 0 || l.dropped > 0 }
 
 // key identifies an error by its position in the file, field and message,
 // ignoring which iteration or batch raised it.
@@ -121,9 +149,36 @@ func (e *Error) key() string {
 	return fmt.Sprintf("%s:%d:%d:%s:%s", e.Src.File, line, col, e.Field, e.Msg)
 }
 
-func (l ErrorList) err() error {
-	if len(l) == 0 {
-		return nil
+// reporter files problems into a list, each positioned at the YAML key it
+// concerns, so a message points at the offending line rather than at the start
+// of the operation.
+type reporter struct {
+	errs *ErrorList
+	src  SourceRef
+	keys keys
+}
+
+// at reports a problem with one field, positioned at that field's own key.
+func (r reporter) at(field, format string, args ...any) {
+	r.errs.add(r.fieldError(field, format, args...))
+}
+
+// whole reports a problem with the operation rather than with any one field.
+func (r reporter) whole(format string, args ...any) {
+	r.errs.add(&Error{Src: r.src, Msg: fmt.Sprintf(format, args...)})
+}
+
+// fieldError builds a positioned error without filing it, for the callers that
+// return a problem instead of collecting it.
+func (r reporter) fieldError(field, format string, args ...any) *Error {
+	e := &Error{Src: r.src, Field: field, Msg: fmt.Sprintf(format, args...)}
+	if n := r.keys[field]; n != nil {
+		e.Line, e.Col = n.Line, n.Column
 	}
-	return l
+	return e
+}
+
+// report makes a reporter for problems with this operation.
+func (op *Op) report(errs *ErrorList) reporter {
+	return reporter{errs: errs, src: op.Src, keys: op.keys}
 }

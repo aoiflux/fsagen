@@ -80,73 +80,117 @@ type Final struct {
 // are not listed as created.
 func AnswerKey(entries []Entry, finals []Final) []Fact {
 	var facts []Fact
+	// seen marks an object an earlier operation already created, so a later
+	// write to it is a modification rather than a second creation.
 	seen := map[int]bool{}
 	for _, e := range entries {
 		if e.Outcome != Done || e.Object == 0 {
 			continue
 		}
-		base := Fact{N: e.N, At: e.At, Object: e.Object, Kind: e.Kind, Path: e.Path}
-		if e.Action == "copy" {
-			base.Path = e.NewPath
-		}
-		switch e.Action {
-		case "delete":
-			f := base
-			f.Event, f.SHA256 = Deleted, e.SHA256Before
-			facts = append(facts, f)
-		case "rename":
-			f := base
-			f.Event, f.Path, f.From = Renamed, e.NewPath, e.Path
-			facts = append(facts, f)
-		case "rotate":
-			f := base
-			f.Event, f.Object, f.Path, f.From, f.Kind = Renamed, e.Moved, e.NewPath, e.Path, "file"
-			facts = append(facts, f)
-		case "mace":
-			f := base
-			f.Event, f.Times, f.Fields = Stomped, e.Times, slices.Clone(e.Explicit)
-			facts = append(facts, f)
-		case "ads", "motw":
-			for _, s := range e.Streams {
-				if s.Name == e.Stream {
-					facts = append(facts, streamFact(base, s))
-				}
-			}
-		}
-		switch e.Action {
-		case "create", "append", "update", "truncate", "copy", "rotate", "email", "ansible-vault":
-			// update and truncate never make a file; one they are the first
-			// to touch was there before the run (--into-existing).
-			if !seen[e.Object] && e.Action != "update" && e.Action != "truncate" {
-				f := base
-				f.Event, f.Size, f.SHA256 = Created, e.Size, e.SHA256After
-				facts = append(facts, f)
-			} else if e.SHA256After != e.SHA256Before {
-				f := base
-				f.Event, f.Size, f.SHA256Before, f.SHA256 = Modified, e.Size, e.SHA256Before, e.SHA256After
-				facts = append(facts, f)
-			}
-			if e.Action == "copy" {
-				for _, s := range e.Streams {
-					facts = append(facts, streamFact(base, s))
-				}
-			}
-		}
+		facts = append(facts, actionFacts(e, seen)...)
 		seen[e.Object] = true
 	}
+	return append(facts, impossibleTimeFacts(finals)...)
+}
 
+// actionFacts is what one finished operation left for a tool to find: what the
+// action itself did, and what became of the content it touched.
+func actionFacts(e Entry, seen map[int]bool) []Fact {
+	base := Fact{N: e.N, At: e.At, Object: e.Object, Kind: e.Kind, Path: e.Path}
+	if e.Action == "copy" {
+		// A copy is answerable for the file it wrote, not the one it read.
+		base.Path = e.NewPath
+	}
+	return append(effectFact(e, base), contentFacts(e, base, seen)...)
+}
+
+// effectFact is the mark the action itself leaves: an object gone, a path
+// changed, times stomped, a stream written. Actions that only write content
+// leave none, and are answered for by contentFacts.
+func effectFact(e Entry, base Fact) []Fact {
+	f := base
+	switch e.Action {
+	case "delete":
+		f.Event, f.SHA256 = Deleted, e.SHA256Before
+	case "rename":
+		f.Event, f.Path, f.From = Renamed, e.NewPath, e.Path
+	case "rotate":
+		f.Event, f.Object, f.Path, f.From, f.Kind = Renamed, e.Moved, e.NewPath, e.Path, "file"
+	case "mace":
+		f.Event, f.Times, f.Fields = Stomped, e.Times, slices.Clone(e.Explicit)
+	case "ads", "motw":
+		return writtenStreamFacts(e, base)
+	default:
+		return nil
+	}
+	return []Fact{f}
+}
+
+// writtenStreamFacts is the one stream an ads or motw wrote. The entry lists
+// every stream the file carries, so the others were already there.
+func writtenStreamFacts(e Entry, base Fact) []Fact {
+	var out []Fact
+	for _, s := range e.Streams {
+		if s.Name == e.Stream {
+			out = append(out, streamFact(base, s))
+		}
+	}
+	return out
+}
+
+// contentWriters are the actions that put bytes in a file.
+var contentWriters = []string{"create", "append", "update", "truncate", "copy", "rotate", "email", "ansible-vault"}
+
+// contentFacts says what became of the file's content: created when this is the
+// first operation to make it, modified when the bytes changed. update and
+// truncate never make a file, so one they are the first to touch was there
+// before the run (--into-existing).
+func contentFacts(e Entry, base Fact, seen map[int]bool) []Fact {
+	if !slices.Contains(contentWriters, e.Action) {
+		return nil
+	}
+	var out []Fact
+	f := base
+	switch {
+	case !seen[e.Object] && e.Action != "update" && e.Action != "truncate":
+		f.Event, f.Size, f.SHA256 = Created, e.Size, e.SHA256After
+		out = append(out, f)
+	case e.SHA256After != e.SHA256Before:
+		f.Event, f.Size, f.SHA256Before, f.SHA256 = Modified, e.Size, e.SHA256Before, e.SHA256After
+		out = append(out, f)
+	}
+	if e.Action == "copy" {
+		// Streams travel with a copy, so the copy is answerable for each one.
+		out = append(out, allStreamFacts(base, e.Streams)...)
+	}
+	return out
+}
+
+// allStreamFacts is one fact per stream the file carries.
+func allStreamFacts(base Fact, streams []Stream) []Fact {
+	out := make([]Fact, 0, len(streams))
+	for _, s := range streams {
+		out = append(out, streamFact(base, s))
+	}
+	return out
+}
+
+// impossibleTimeFacts names every object left with a modification time before
+// its creation time, which cannot happen without the times being set.
+func impossibleTimeFacts(finals []Final) []Fact {
 	finals = slices.Clone(finals)
 	sort.SliceStable(finals, func(i, j int) bool { return finals[i].Object < finals[j].Object })
+	var out []Fact
 	for _, o := range finals {
 		if o.Mtime.IsZero() || o.Crtime.IsZero() || !o.Mtime.Before(o.Crtime) {
 			continue
 		}
-		facts = append(facts, Fact{
+		out = append(out, Fact{
 			Event: MtimeBeforeCrtime, Object: o.Object, Kind: o.Kind, Path: o.Path, Deleted: o.Deleted,
 			Mtime: o.Mtime.UTC().Format(time.RFC3339Nano), Crtime: o.Crtime.UTC().Format(time.RFC3339Nano),
 		})
 	}
-	return facts
+	return out
 }
 
 func streamFact(base Fact, s Stream) Fact {

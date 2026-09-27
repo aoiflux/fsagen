@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
-	"path/filepath"
 	"strings"
 	"unicode/utf16"
 
@@ -18,14 +17,14 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
-// MaxComponent is the longest name NTFS, ext4 and APFS all accept, in UTF-16
+// maxComponent is the longest name NTFS, ext4 and APFS all accept, in UTF-16
 // code units (NTFS) or bytes (ext4); we apply the stricter reading of both.
-const MaxComponent = 255
+const maxComponent = 255
 
-// PortableBudget is the longest relative path accepted without
+// portableBudget is the longest relative path accepted without
 // --allow-nonportable. It leaves room for the output root inside Windows'
 // 260-character MAX_PATH, which many forensic tools still enforce.
-const PortableBudget = 200
+const portableBudget = 200
 
 // Output resolves a path from YAML, optionally beneath an actor base, into a
 // clean slash-separated path relative to the output root. dir reports a
@@ -90,8 +89,8 @@ func checkComponent(c string) error {
 	if strings.HasSuffix(c, ".") || strings.HasSuffix(c, " ") {
 		return fmt.Errorf("component %q ends in a dot or space, which Windows silently strips", c)
 	}
-	if n := len(utf16.Encode([]rune(c))); n > MaxComponent || len(c) > MaxComponent {
-		return fmt.Errorf("component %q is longer than %d characters", c, MaxComponent)
+	if n := len(utf16.Encode([]rune(c))); n > maxComponent || len(c) > maxComponent {
+		return fmt.Errorf("component %q is longer than %d characters", c, maxComponent)
 	}
 	return nil
 }
@@ -100,8 +99,8 @@ func checkComponent(c string) error {
 // different platforms. --allow-nonportable waives them; the hard rules in
 // Output cannot be waived.
 func Portable(clean string) error {
-	if n := len(utf16.Encode([]rune(clean))); n > PortableBudget {
-		return fmt.Errorf("path %q is %d characters, over the %d-character portable budget", clean, n, PortableBudget)
+	if n := len(utf16.Encode([]rune(clean))); n > portableBudget {
+		return fmt.Errorf("path %q is %d characters, over the %d-character portable budget", clean, n, portableBudget)
 	}
 	for c := range strings.SplitSeq(clean, "/") {
 		if reservedName(c) {
@@ -149,8 +148,8 @@ func Stream(name string) error {
 		return errors.New("stream name is empty")
 	case strings.ContainsAny(name, "\\/:\x00"):
 		return fmt.Errorf("stream name %q contains one of \\ / : or NUL", name)
-	case len(utf16.Encode([]rune(name))) > MaxComponent:
-		return fmt.Errorf("stream name %q is longer than %d characters", name, MaxComponent)
+	case len(utf16.Encode([]rune(name))) > maxComponent:
+		return fmt.Errorf("stream name %q is longer than %d characters", name, maxComponent)
 	}
 	return nil
 }
@@ -168,7 +167,12 @@ func Source(p string) (clean string, external bool, err error) {
 	case strings.Contains(p, `\`):
 		return "", false, fmt.Errorf("source path %q contains '\\'; YAML paths use '/' on every platform", p)
 	}
-	if filepath.IsAbs(filepath.FromSlash(p)) || strings.HasPrefix(p, "/") {
+	// A path rooted anywhere but the YAML file's directory is external, and only
+	// --allow-external-sources honours one. What counts as rooted is decided
+	// here rather than by the host's filepath rules: "C:/x" names a drive
+	// wherever the scenario runs, so it is external on Linux too, and this
+	// package's promise that a scenario is valid everywhere or nowhere holds.
+	if strings.HasPrefix(p, "/") || hasDriveLetter(p) {
 		return p, true, nil
 	}
 	if strings.Contains(p, ":") {
@@ -179,4 +183,15 @@ func Source(p string) (clean string, external bool, err error) {
 		return p, true, nil
 	}
 	return clean, false, nil
+}
+
+// hasDriveLetter reports whether p is rooted at a Windows drive, as "C:/x" is.
+// A bare "C:" is drive-relative rather than rooted, and is not one.
+func hasDriveLetter(p string) bool {
+	return len(p) > 2 && p[1] == ':' && p[2] == '/' && isASCIILetter(p[0])
+}
+
+func isASCIILetter(c byte) bool {
+	lower := c | 0x20
+	return 'a' <= lower && lower <= 'z'
 }

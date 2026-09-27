@@ -14,10 +14,10 @@ import (
 	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -45,6 +45,28 @@ type ExecContext struct {
 	// could set them, so a run with an injected capability set behaves as
 	// it would on that platform.
 	Caps compile.Caps
+	// SettleRetries are the pauses before settling again when only access
+	// times moved. Nil takes defaultSettleRetries.
+	SettleRetries []time.Duration
+	// AfterSettle is called with the pass number after each settle pass. It
+	// lets a test play the part of another process reading the output between
+	// settling and verifying. Nil does nothing.
+	AfterSettle func(round int)
+}
+
+// settleRetries are the pauses this run waits before settling again.
+func (c ExecContext) settleRetries() []time.Duration {
+	if c.SettleRetries != nil {
+		return c.SettleRetries
+	}
+	return defaultSettleRetries
+}
+
+// afterSettle runs the hook, if this run has one.
+func (c ExecContext) afterSettle(round int) {
+	if c.AfterSettle != nil {
+		c.AfterSettle(round)
+	}
 }
 
 // ExecuteManifest compiles a manifest and applies it under root with default
@@ -126,32 +148,54 @@ func Execute(ctx ExecContext, ops []compile.Op) ([]ledger.Entry, error) {
 	entries := make([]ledger.Entry, 0, len(ops))
 	for i, op := range ops {
 		e := newEntry(i, op, ctx.Caps)
-		switch {
-		case op.NoOp != "":
-			e.Outcome, e.Reason = ledger.NoOp, op.NoOp
-		case op.Skip != "":
-			e.Outcome, e.Reason = ledger.Skipped, op.Skip
-		default:
-			fail := func(err error) error { return fmt.Errorf("%s: %s %s: %w", op.Src, op.Action, op.Path, err) }
-			if err := stampAll(ctx, op.Pre); err != nil {
-				return entries, fail(err)
-			}
-			if err := executeOp(ctx, op); err != nil {
-				return entries, fail(err)
-			}
-			// Digests are read before stamping: a read may move the access
-			// time, which the stamps then put back.
-			if err := describe(ctx.FS, op, &e, digests); err != nil {
-				return entries, fail(err)
-			}
-			if err := stampAll(ctx, op.Stamps); err != nil {
-				return entries, fail(err)
-			}
-			e.Outcome = ledger.Done
+		if err := recordOutcome(ctx, op, &e, digests); err != nil {
+			// The entry for a failed operation is left out: the ledger says how
+			// far the run got, and a half-finished operation did not get there.
+			return entries, err
 		}
 		entries = append(entries, e)
 	}
 	return entries, nil
+}
+
+// recordOutcome performs the operation, unless compile already settled that it
+// does nothing here, and records on the entry what became of it.
+func recordOutcome(ctx ExecContext, op compile.Op, e *ledger.Entry, digests map[int]string) error {
+	switch {
+	case op.NoOp != "":
+		e.Outcome, e.Reason = ledger.NoOp, op.NoOp
+	case op.Skip != "":
+		e.Outcome, e.Reason = ledger.Skipped, op.Skip
+	default:
+		if err := runOp(ctx, op, e, digests); err != nil {
+			return err
+		}
+		e.Outcome = ledger.Done
+	}
+	return nil
+}
+
+// runOp performs one operation and records what it did. Every failure names the
+// operation, so a run that stops says which line of the input it stopped on.
+func runOp(ctx ExecContext, op compile.Op, e *ledger.Entry, digests map[int]string) error {
+	fail := func(err error) error {
+		return fmt.Errorf("%s: %s %s: %w", op.Src, op.Action, op.Path, err)
+	}
+	if err := stampAll(ctx, op.Pre); err != nil {
+		return fail(err)
+	}
+	if err := executeOp(ctx, op); err != nil {
+		return fail(err)
+	}
+	// Digests are read before stamping: a read may move the access time, which
+	// the stamps then put back.
+	if err := describe(ctx.FS, op, e, digests); err != nil {
+		return fail(err)
+	}
+	if err := stampAll(ctx, op.Stamps); err != nil {
+		return fail(err)
+	}
+	return nil
 }
 
 func stampAll(ctx ExecContext, stamps []compile.Stamp) error {
@@ -188,11 +232,8 @@ func newEntry(i int, op compile.Op, caps compile.Caps) ledger.Entry {
 		Moved:   op.Moved,
 		Kind:    kindName(op.Kind),
 	}
-	switch op.Action {
-	case "ads":
-		e.Stream = op.Stream
-	case "motw":
-		e.Stream = "Zone.Identifier"
+	if op.Action == "ads" || op.Action == "motw" {
+		e.Stream = compile.StreamOf(op.Operation)
 	}
 	e.Explicit = explicit(op)
 	if !op.At.IsZero() {
@@ -326,15 +367,11 @@ func Settle(ctx ExecContext, tree *model.Tree) error {
 	return nil
 }
 
-// settleRetries are the pauses before settling again when only access times
-// moved after a settle pass. With last-access updates on, anything that
+// defaultSettleRetries are the pauses before settling again when only access
+// times moved after a settle pass. With last-access updates on, anything that
 // reads the new files (an antivirus scanning a fresh .bat, a search indexer)
 // moves their access times; such readers usually finish within a second.
-var settleRetries = []time.Duration{200 * time.Millisecond, 500 * time.Millisecond, time.Second, 2 * time.Second}
-
-// afterSettle lets a test play the part of another process reading the
-// output between settling and verifying.
-var afterSettle = func(round int) {}
+var defaultSettleRetries = []time.Duration{200 * time.Millisecond, 500 * time.Millisecond, time.Second, 2 * time.Second}
 
 // SettleAndVerify settles the tree and verifies it. When the only
 // differences are access times, which another process can move by reading,
@@ -343,24 +380,33 @@ func SettleAndVerify(ctx ExecContext, tree *model.Tree) error {
 	if err := Settle(ctx, tree); err != nil {
 		return err
 	}
-	afterSettle(0)
+	ctx.afterSettle(0)
 	err := Verify(ctx, tree)
-	for i, pause := range settleRetries {
-		ve, ok := err.(*VerifyError)
-		if !ok || !ve.accessOnly() {
+	retries := ctx.settleRetries()
+	for i, pause := range retries {
+		if !movedAccessOnly(err) {
 			break
 		}
 		time.Sleep(pause)
 		if err := Settle(ctx, tree); err != nil {
 			return err
 		}
-		afterSettle(i + 1)
+		ctx.afterSettle(i + 1)
 		err = Verify(ctx, tree)
 	}
-	if ve, ok := err.(*VerifyError); ok && ve.accessOnly() {
-		ve.Hint = "only access times moved, again after settling " + fmt.Sprint(len(settleRetries)+1) + " times: another process (an antivirus scanner, a search indexer) keeps reading the output while this volume updates access times on read; exclude the output directory from scanning, or turn last-access updates off (fsutil behavior set disablelastaccess 1)"
+	if movedAccessOnly(err) {
+		var ve *VerifyError
+		errors.As(err, &ve)
+		ve.Hint = "only access times moved, again after settling " + fmt.Sprint(len(retries)+1) + " times: another process (an antivirus scanner, a search indexer) keeps reading the output while this volume updates access times on read; exclude the output directory from scanning, or turn last-access updates off (fsutil behavior set disablelastaccess 1)"
 	}
 	return err
+}
+
+// movedAccessOnly reports whether the only times that failed to verify were
+// access times, which another process can move just by reading the output.
+func movedAccessOnly(err error) bool {
+	var ve *VerifyError
+	return errors.As(err, &ve) && ve.accessOnly()
 }
 
 // Mismatch is one time that did not read back as intended.
@@ -405,29 +451,13 @@ func (e *VerifyError) Error() string {
 // set, and reports each one that differs by the volume's resolution or more.
 // It reads metadata only, so it moves no access time.
 func Verify(ctx ExecContext, tree *model.Tree) error {
-	caps, g := ctx.Caps, ctx.FS.Granularity()
 	var bad []Mismatch
 	for _, o := range tree.Settle() {
 		got, err := ctx.FS.Times(o.Path)
 		if err != nil {
 			return err
 		}
-		check := func(field string, want, have time.Time, res time.Duration, settable bool) {
-			if !settable || want.IsZero() {
-				return
-			}
-			d := want.Sub(have)
-			if d < 0 {
-				d = -d
-			}
-			if d >= res {
-				bad = append(bad, Mismatch{o.Path, field, want, have})
-			}
-		}
-		check("atime", o.Times.Atime, got.Atime, g.Atime, true)
-		check("mtime", o.Times.Mtime, got.Mtime, g.Mtime, true)
-		check("ctime", o.Times.Ctime, got.Ctime, g.Ctime, caps.ChangeTime)
-		check("crtime", o.Times.Btime, got.Btime, g.Btime, caps.BirthTime)
+		bad = append(bad, mismatches(ctx, o.Path, o.Times, got)...)
 	}
 	if len(bad) > 0 {
 		return &VerifyError{Mismatches: bad}
@@ -435,135 +465,217 @@ func Verify(ctx ExecContext, tree *model.Tree) error {
 	return nil
 }
 
-func executeOp(ctx ExecContext, c compile.Op) error {
-	op := c.Operation
-	fs := ctx.FS
-	target := op.Path
-
-	switch op.Action {
-	case "create":
-		if c.Dir {
-			// Missing parents get the default mode; an explicit mode is for
-			// the directory the operation names.
-			if err := fs.MkdirAll(target, sandbox.DirMode); err != nil {
-				return err
-			}
-			return applyMode(fs, op, target)
-		}
-		content, err := buildContent(c)
-		if err != nil {
-			return err
-		}
-		return writeArtifact(fs, op, target, content)
-
-	case "update":
-		content, err := buildContent(c)
-		if err != nil {
-			return err
-		}
-		return writeArtifact(fs, op, target, content)
-
-	case "edit":
-		return editFile(fs, c)
-
-	case "archive":
-		return writeArchive(ctx, c)
-
-	case "append":
-		if err := fs.MkdirParent(target); err != nil {
-			return err
-		}
-		f, err := fs.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_APPEND, fileModeFor(op))
-		if err != nil {
-			return err
-		}
-		if _, err := f.Write(contentOf(c)); err != nil {
-			_ = f.Close()
-			return err
-		}
-		if err := f.Close(); err != nil {
-			return err
-		}
-		return applyMode(fs, op, target)
-
-	case "delete":
-		return fs.Remove(target)
-
-	case "mace":
-		return applyMode(fs, op, target)
-
-	case "rename":
-		if err := fs.MkdirParent(op.NewPath); err != nil {
-			return err
-		}
-		return fs.Rename(target, op.NewPath)
-
-	case "copy":
-		if err := copyFile(fs, target, op.NewPath, fileModeFor(op)); err != nil {
-			return err
-		}
-		// Streams travel with the copy, as they do with the Windows CopyFile.
-		if err := fs.CopyStreams(target, op.NewPath); err != nil {
-			return err
-		}
-		return applyMode(fs, op, op.NewPath)
-
-	case "truncate":
-		f, err := fs.OpenFile(target, os.O_WRONLY|os.O_TRUNC, fileModeFor(op))
-		if err != nil {
-			return err
-		}
-		if err := f.Close(); err != nil {
-			return err
-		}
-		return applyMode(fs, op, target)
-
-	case "rotate":
-		if err := fs.MkdirParent(op.NewPath); err != nil {
-			return err
-		}
-		if err := fs.Rename(target, op.NewPath); err != nil {
-			return err
-		}
-		f, err := fs.OpenFile(target, os.O_CREATE|os.O_WRONLY, fileModeFor(op))
-		if err != nil {
-			return err
-		}
-		if err := f.Close(); err != nil {
-			return err
-		}
-		return applyMode(fs, op, target)
-
-	case "email":
-		return writeEmail(ctx, c, target)
-
-	case "ansible-vault":
-		salt := op.Vault.Salt
-		if strings.TrimSpace(salt) == "" {
-			salt = hex.EncodeToString(c.Rand.Derive("vault.salt").Stream().Bytes(32))
-		}
-		encrypted, err := util.AnsibleVaultEncrypt([]byte(op.Content), op.Vault.Password, op.Vault.VaultID, salt)
-		if err != nil {
-			return err
-		}
-		return writeArtifact(fs, op, target, encrypted)
-
-	case "ads":
-		// Writing a stream moves the base file's times on disk; the stamps
-		// after the operation put back the ones the scenario intends.
-		return fs.WriteStream(target, op.Stream, contentOf(c))
-
-	case "motw":
-		content := "[ZoneTransfer]\r\n" + fmt.Sprintf("ZoneId=%d\r\n", op.ZoneID)
-		if op.ReferrerURL != "" {
-			content += fmt.Sprintf("ReferrerUrl=%s\r\n", op.ReferrerURL)
-		}
-		if op.HostURL != "" {
-			content += fmt.Sprintf("HostUrl=%s\r\n", op.HostURL)
-		}
-		return fs.WriteStream(target, "Zone.Identifier", []byte(content))
+// mismatches lists the times of one object that read back differently from what
+// the scenario intends, by the volume's resolution or more. A time this platform
+// cannot set is not compared, and neither is one the scenario does not pin.
+func mismatches(ctx ExecContext, p string, want model.Times, have sandbox.Times) []Mismatch {
+	caps, g := ctx.Caps, ctx.FS.Granularity()
+	checks := []struct {
+		field     string
+		want, got time.Time
+		res       time.Duration
+		settable  bool
+	}{
+		{"atime", want.Atime, have.Atime, g.Atime, true},
+		{"mtime", want.Mtime, have.Mtime, g.Mtime, true},
+		{"ctime", want.Ctime, have.Ctime, g.Ctime, caps.ChangeTime},
+		{"crtime", want.Btime, have.Btime, g.Btime, caps.BirthTime},
 	}
-	return fmt.Errorf("unknown action %q", op.Action)
+	var bad []Mismatch
+	for _, c := range checks {
+		if !c.settable || c.want.IsZero() || within(c.want, c.got, c.res) {
+			continue
+		}
+		bad = append(bad, Mismatch{p, c.field, c.want, c.got})
+	}
+	return bad
+}
+
+// within reports whether two times are closer together than the volume can
+// tell apart.
+func within(a, b time.Time, res time.Duration) bool {
+	d := a.Sub(b)
+	if d < 0 {
+		d = -d
+	}
+	return d < res
+}
+
+// executors say how each action writes itself into the output. Every name in
+// compile.Actions has an entry, which TestEveryActionExecutes proves.
+var executors = map[string]func(ExecContext, compile.Op) error{
+	"create":        execCreate,
+	"update":        execWrite,
+	"append":        execAppend,
+	"edit":          execEdit,
+	"delete":        execDelete,
+	"mace":          execMace,
+	"rename":        execRename,
+	"copy":          execCopy,
+	"truncate":      execTruncate,
+	"rotate":        execRotate,
+	"archive":       writeArchive,
+	"email":         execEmail,
+	"ansible-vault": execVault,
+	"ads":           execStream,
+	"motw":          execStream,
+}
+
+func executeOp(ctx ExecContext, c compile.Op) error {
+	run, ok := executors[c.Action]
+	if !ok {
+		return fmt.Errorf("unknown action %q", c.Action)
+	}
+	return run(ctx, c)
+}
+
+// execCreate makes the directory or the file a create names.
+func execCreate(ctx ExecContext, c compile.Op) error {
+	if !c.Dir {
+		return execWrite(ctx, c)
+	}
+	// Missing parents get the default mode; an explicit mode is for the
+	// directory the operation names.
+	if err := ctx.FS.MkdirAll(c.Path, sandbox.DirMode); err != nil {
+		return err
+	}
+	return applyMode(ctx.FS, c.Operation, c.Path)
+}
+
+// execWrite builds the file's bytes and writes them whole. It serves create and
+// update alike, which differ only in whether the file was already there.
+func execWrite(ctx ExecContext, c compile.Op) error {
+	content, err := buildContent(c)
+	if err != nil {
+		return err
+	}
+	return writeArtifact(ctx.FS, c.Operation, c.Path, content)
+}
+
+func execEdit(ctx ExecContext, c compile.Op) error { return editFile(ctx.FS, c) }
+
+func execAppend(ctx ExecContext, c compile.Op) error {
+	return appendTo(ctx.FS, c.Operation, c.Path, contentOf(c))
+}
+
+func execDelete(ctx ExecContext, c compile.Op) error { return ctx.FS.Remove(c.Path) }
+
+// execMace changes no content: the times are stamped from the model after every
+// operation, so a mace has only an explicit mode left to apply.
+func execMace(ctx ExecContext, c compile.Op) error {
+	return applyMode(ctx.FS, c.Operation, c.Path)
+}
+
+func execRename(ctx ExecContext, c compile.Op) error {
+	if err := ctx.FS.MkdirParent(c.NewPath); err != nil {
+		return err
+	}
+	return ctx.FS.Rename(c.Path, c.NewPath)
+}
+
+func execCopy(ctx ExecContext, c compile.Op) error {
+	fs := ctx.FS
+	if err := copyFile(fs, c.Path, c.NewPath, fileModeFor(c.Operation)); err != nil {
+		return err
+	}
+	// Streams travel with the copy, as they do with the Windows CopyFile.
+	if err := fs.CopyStreams(c.Path, c.NewPath); err != nil {
+		return err
+	}
+	return applyMode(fs, c.Operation, c.NewPath)
+}
+
+func execTruncate(ctx ExecContext, c compile.Op) error {
+	return openForEffect(ctx.FS, c.Operation, c.Path, os.O_WRONLY|os.O_TRUNC)
+}
+
+func execRotate(ctx ExecContext, c compile.Op) error {
+	fs := ctx.FS
+	if err := fs.MkdirParent(c.NewPath); err != nil {
+		return err
+	}
+	if err := fs.Rename(c.Path, c.NewPath); err != nil {
+		return err
+	}
+	// An empty file takes the rotated one's place.
+	return openForEffect(fs, c.Operation, c.Path, os.O_CREATE|os.O_WRONLY)
+}
+
+func execEmail(ctx ExecContext, c compile.Op) error { return writeEmail(ctx, c, c.Path) }
+
+// vaultSaltBytes is the salt length AES-256 takes, drawn from the operation's
+// own stream when the scenario does not pin one.
+const vaultSaltBytes = 32
+
+func execVault(ctx ExecContext, c compile.Op) error {
+	op := c.Operation
+	salt := op.Vault.Salt
+	if strings.TrimSpace(salt) == "" {
+		salt = hex.EncodeToString(c.Rand.Derive("vault.salt").Stream().Bytes(vaultSaltBytes))
+	}
+	encrypted, err := util.AnsibleVaultEncrypt([]byte(op.Content), op.Vault.Password, op.Vault.VaultID, salt)
+	if err != nil {
+		return err
+	}
+	return writeArtifact(ctx.FS, op, c.Path, encrypted)
+}
+
+// execStream writes the named stream an ads or motw carries. Writing a stream
+// moves the base file's times on disk; the stamps after the operation put back
+// the ones the scenario intends.
+func execStream(ctx ExecContext, c compile.Op) error {
+	return ctx.FS.WriteStream(c.Path, compile.StreamOf(c.Operation), streamContent(c))
+}
+
+// streamContent is what the stream holds: a mark of the web is built from its
+// own fields, and an ads carries the operation's content.
+func streamContent(c compile.Op) []byte {
+	if c.Action != "motw" {
+		return contentOf(c)
+	}
+	var b strings.Builder
+	b.WriteString("[ZoneTransfer]\r\n")
+	fmt.Fprintf(&b, "ZoneId=%d\r\n", c.ZoneID)
+	if c.ReferrerURL != "" {
+		fmt.Fprintf(&b, "ReferrerUrl=%s\r\n", c.ReferrerURL)
+	}
+	if c.HostURL != "" {
+		fmt.Fprintf(&b, "HostUrl=%s\r\n", c.HostURL)
+	}
+	return []byte(b.String())
+}
+
+// appendTo adds data to the end of a file, bringing it into being if it is not
+// there yet.
+func appendTo(fs *sandbox.FS, op spec.Operation, target string, data []byte) error {
+	if err := fs.MkdirParent(target); err != nil {
+		return err
+	}
+	f, err := fs.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_APPEND, fileModeFor(op))
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return applyMode(fs, op, target)
+}
+
+// openForEffect opens a file for what the opening itself does: truncating it,
+// or bringing it into being. It writes nothing and applies an explicit mode.
+func openForEffect(fs *sandbox.FS, op spec.Operation, target string, flag int) error {
+	f, err := fs.OpenFile(target, flag, fileModeFor(op))
+	if err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return applyMode(fs, op, target)
 }
 
 // editFile rewrites a file through the edit block. The whole result is built
@@ -611,31 +723,6 @@ func writeArchive(ctx ExecContext, c compile.Op) error {
 	return writeArtifact(ctx.FS, c.Operation, c.Path, data)
 }
 
-func pdfMeta(op spec.Operation) (libgen.PDFMeta, error) {
-	if op.Pdf == nil {
-		return libgen.PDFMeta{}, nil
-	}
-	created, err := optionalTime(op.Pdf.Created, "pdf.created")
-	if err != nil {
-		return libgen.PDFMeta{}, err
-	}
-	modified, err := optionalTime(op.Pdf.Modified, "pdf.modified")
-	if err != nil {
-		return libgen.PDFMeta{}, err
-	}
-	return libgen.PDFMeta{
-		Title:    op.Pdf.Title,
-		Author:   op.Pdf.Author,
-		Subject:  op.Pdf.Subject,
-		Keywords: op.Pdf.Keywords,
-		Creator:  op.Pdf.Creator,
-		Producer: op.Pdf.Producer,
-		Created:  created,
-		Modified: modified,
-		PageSize: op.Pdf.PageSize,
-	}, nil
-}
-
 // writeEmail builds the message and either writes it as a standalone .eml or
 // appends it to an mbox. The format defaults from the path extension.
 func writeEmail(ctx ExecContext, c compile.Op, target string) error {
@@ -655,40 +742,18 @@ func writeEmail(ctx ExecContext, c compile.Op, target string) error {
 		return err
 	}
 
-	format := op.Format
-	if format == "" {
-		if strings.EqualFold(path.Ext(target), ".mbox") {
-			format = "mbox"
-		} else {
-			format = "eml"
-		}
-	}
-
-	switch format {
+	switch format := compile.EmailFormat(op); format {
 	case "eml":
 		if err := ctx.FS.WriteFile(target, msg, fileModeFor(op)); err != nil {
 			return err
 		}
+		return applyMode(ctx.FS, op, target)
 	case "mbox":
 		// Append, so a whole thread accumulates across steps.
-		if err := ctx.FS.MkdirParent(target); err != nil {
-			return err
-		}
-		f, err := ctx.FS.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_APPEND, fileModeFor(op))
-		if err != nil {
-			return err
-		}
-		if _, err := f.Write(email.ToMbox(msg, email.EnvelopeSender(*op.Email), date)); err != nil {
-			_ = f.Close()
-			return err
-		}
-		if err := f.Close(); err != nil {
-			return err
-		}
+		return appendTo(ctx.FS, op, target, email.ToMbox(msg, email.EnvelopeSender(*op.Email), date))
 	default:
-		return fmt.Errorf("unknown email format %q (want eml or mbox)", op.Format)
+		return fmt.Errorf("unknown email format %q (want eml or mbox)", format)
 	}
-	return applyMode(ctx.FS, op, target)
 }
 
 // writeArtifact writes the file with the right permissions, creating its

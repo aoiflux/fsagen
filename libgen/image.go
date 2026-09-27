@@ -40,11 +40,7 @@ func PNG(w, h int, s *prng.Stream, pad []byte) ([]byte, error) {
 	for y := 0; y < h; y++ {
 		raw = append(raw, 0) // filter type 0: none
 		for x := 0; x < w; x++ {
-			if (x+y)/8%2 == 0 {
-				raw = append(raw, fg...)
-			} else {
-				raw = append(raw, bg...)
-			}
+			raw = append(raw, checker(x, y, fg, bg)...)
 		}
 	}
 
@@ -92,11 +88,8 @@ func JPEG(w, h int, s *prng.Stream, pad []byte) ([]byte, error) {
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
-			c := color.RGBA{fg[0], fg[1], fg[2], 0xff}
-			if (x+y)/8%2 != 0 {
-				c = color.RGBA{bg[0], bg[1], bg[2], 0xff}
-			}
-			img.SetRGBA(x, y, c)
+			rgb := checker(x, y, fg, bg)
+			img.SetRGBA(x, y, color.RGBA{rgb[0], rgb[1], rgb[2], 0xff})
 		}
 	}
 	var body bytes.Buffer
@@ -120,4 +113,17 @@ func JPEG(w, h int, s *prng.Stream, pad []byte) ([]byte, error) {
 	}
 	out.Write(data[2:])
 	return out.Bytes(), nil
+}
+
+// checkerTile is the side of one square of the checkerboard, in pixels. A
+// pattern rather than noise keeps the image small once deflated and makes it
+// obvious to the eye that nothing was photographed.
+const checkerTile = 8
+
+// checker is the colour of one pixel of the checkerboard.
+func checker(x, y int, fg, bg []byte) []byte {
+	if (x+y)/checkerTile%2 == 0 {
+		return fg
+	}
+	return bg
 }

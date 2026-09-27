@@ -1,19 +1,30 @@
+// Package constant holds the values that define what this build produces: the
+// file types it can write, the sizes it defaults to, and the version number
+// that says which bytes those add up to.
+//
+// The types a bulk run or a manifest can create:
+//   - Text and documents: .txt, .md, .docx, .pdf
+//   - Images and media: .png, .jpg, .mp4
+//   - Data and markup: .csv, .json, .jsonl, .xml, .html
+//   - Logs: .log, .syslog
+//   - Archives: .zip
+//   - Email: .eml, .mbox
+//   - Browser history: .db (Chrome urls and visits), .sqlite (Firefox places)
+//   - Windows artifacts: .reg, .exe (a real PE image with headers, sections of
+//     filler, an import table and a version resource, holding no code)
+//
+// Every one is built to be read by a forensic tool rather than used by the
+// application that owns it: the structure a parser walks is there, and the
+// payload inside it is invented.
 package constant
 
-// Supported file types and behaviors are documented via these extension constants.
-// Bulk generator and manifest/playbook modes can create files of these types:
-// - Text and docs: .txt, .md, .docx, .pdf
-// - Images/media: .png, .mp4, .jpg (via content),
-// - Data/markup: .csv, .json, .jsonl, .xml, .html
-// - Logs: .log, .syslog (also JSONL logs)
-// - Archives: .zip
-// - Email: .eml, .mbox
-// - Browser history: .db (Chrome urls/visits), .sqlite (Firefox places)
-// - Windows artifacts: .reg, .exe (EXE is a 256-byte DOS MZ stub, not a loadable PE)
-// Note: Some formats are simplistic or synthetic, focused on filesystem artifact generation.
 const (
+	// FileNameLen is how many characters long an invented file or directory
+	// name is, before its extension.
 	FileNameLen = 10
-	ContentLen  = 200000
+	// ContentLen is how many bytes of invented content a bulk file carries
+	// when nothing says otherwise.
+	ContentLen = 200000
 )
 
 // GeneratorVersion identifies the byte output of this build. It is bumped by
@@ -29,7 +40,10 @@ const (
 // streams with a copy, writes a ledger, and lists intended times in the
 // dry-run listing. Version 4 adds MD5s, the kind of a deleted object, the
 // stream an ads or motw wrote, the object a rotate moves and the explicit
-// time fields to the ledger, and writes the answer key.
+// time fields to the ledger, and writes the answer key. Version 5 makes the
+// tool answerable for what it claims: it verifies every time it set by reading
+// it back, records what it could not do, and writes a modelled timeline beside
+// the observed one.
 const GeneratorVersion = 5
 
 const (
@@ -37,21 +51,21 @@ const (
 	DocxExtension   = ".docx"
 	PngExtension    = ".png"
 	PdfExtension    = ".pdf"
-	Mp4Extension    = ".mp4"
+	MP4Extension    = ".mp4"
 	CsvExtension    = ".csv"
-	JsonExtension   = ".json"
-	XmlExtension    = ".xml"
-	HtmlExtension   = ".html"
+	JSONExtension   = ".json"
+	XMLExtension    = ".xml"
+	HTMLExtension   = ".html"
 	LogExtension    = ".log"
 	RegExtension    = ".reg"
 	ZipExtension    = ".zip"
-	JsonlExtension  = ".jsonl"
+	JSONLExtension  = ".jsonl"
 	EmlExtension    = ".eml"
 	MboxExtension   = ".mbox"
 	MdExtension     = ".md"
 	SyslogExtension = ".syslog"
 	ExeExtension    = ".exe"
 	JpgExtension    = ".jpg"
-	DbExtension     = ".db"
-	SqLiteExtension = ".sqlite"
+	DBExtension     = ".db"
+	SQLiteExtension = ".sqlite"
 )

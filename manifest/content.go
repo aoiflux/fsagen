@@ -78,28 +78,37 @@ func buildContent(c compile.Op) ([]byte, error) {
 }
 
 func docxMeta(op spec.Operation, when time.Time) (libgen.DocxMeta, error) {
-	meta := libgen.DocxMeta{Created: when, Modified: when}
 	if op.Docx == nil {
-		return meta, nil
+		return libgen.DocxMeta{Created: when, Modified: when}, nil
 	}
-	created, err := optionalTime(op.Docx.Created, "docx.created")
+	created, err := timeOr(op.Docx.Created, "docx.created", when)
 	if err != nil {
-		return meta, err
+		return libgen.DocxMeta{}, err
 	}
-	modified, err := optionalTime(op.Docx.Modified, "docx.modified")
+	modified, err := timeOr(op.Docx.Modified, "docx.modified", created)
 	if err != nil {
-		return meta, err
+		return libgen.DocxMeta{}, err
 	}
-	if !created.IsZero() {
-		meta.Created = created
+	return libgen.DocxMeta{
+		Title:    op.Docx.Title,
+		Author:   op.Docx.Author,
+		Created:  created,
+		Modified: modified,
+	}, nil
+}
+
+// timeOr reads an optional RFC 3339 time, falling back when the scenario does
+// not give one. The fallback is always another scenario time, never the wall
+// clock, which is what keeps a metadata date reproducible.
+func timeOr(value, field string, fallback time.Time) (time.Time, error) {
+	t, err := optionalTime(value, field)
+	if err != nil {
+		return time.Time{}, err
 	}
-	if !modified.IsZero() {
-		meta.Modified = modified
-	} else {
-		meta.Modified = meta.Created
+	if t.IsZero() {
+		return fallback, nil
 	}
-	meta.Title, meta.Author = op.Docx.Title, op.Docx.Author
-	return meta, nil
+	return t, nil
 }
 
 // buildPE fills each section with the operation's filler and puts the
@@ -170,16 +179,7 @@ func historyOf(c compile.Op) (libgen.HistorySpec, error) {
 	if in == nil {
 		return out, fmt.Errorf("format: %s needs a history block", c.Format)
 	}
-	at := func(value, field string) (time.Time, error) {
-		t, err := optionalTime(value, field)
-		if err != nil {
-			return time.Time{}, err
-		}
-		if t.IsZero() {
-			return c.When, nil
-		}
-		return t, nil
-	}
+	at := func(value, field string) (time.Time, error) { return timeOr(value, field, c.When) }
 	for i, v := range in.Visits {
 		when, err := at(v.Time, fmt.Sprintf("history.visits[%d].time", i))
 		if err != nil {
@@ -207,4 +207,29 @@ func historyOf(c compile.Op) (libgen.HistorySpec, error) {
 		})
 	}
 	return out, nil
+}
+
+func pdfMeta(op spec.Operation) (libgen.PDFMeta, error) {
+	if op.Pdf == nil {
+		return libgen.PDFMeta{}, nil
+	}
+	created, err := optionalTime(op.Pdf.Created, "pdf.created")
+	if err != nil {
+		return libgen.PDFMeta{}, err
+	}
+	modified, err := optionalTime(op.Pdf.Modified, "pdf.modified")
+	if err != nil {
+		return libgen.PDFMeta{}, err
+	}
+	return libgen.PDFMeta{
+		Title:    op.Pdf.Title,
+		Author:   op.Pdf.Author,
+		Subject:  op.Pdf.Subject,
+		Keywords: op.Pdf.Keywords,
+		Creator:  op.Pdf.Creator,
+		Producer: op.Pdf.Producer,
+		Created:  created,
+		Modified: modified,
+		PageSize: op.Pdf.PageSize,
+	}, nil
 }

@@ -109,3 +109,26 @@ func TestSource(t *testing.T) {
 		}
 	}
 }
+
+// TestSourceIsPlatformIndependent: the rules here are the same on every
+// operating system, so a scenario is either valid everywhere or rejected
+// everywhere with the same message. A drive-letter path is the case that used
+// to depend on the host, because filepath.IsAbs does.
+func TestSourceIsPlatformIndependent(t *testing.T) {
+	for _, external := range []string{"C:/secret.txt", "c:/secret.txt", "/etc/passwd"} {
+		clean, ext, err := Source(external)
+		if err != nil || !ext {
+			t.Errorf("Source(%q) = (%q, %v, %v), want it reported as external", external, clean, ext, err)
+		}
+	}
+	for _, refused := range []string{"a:b", "notes:stream", "C:relative"} {
+		if _, _, err := Source(refused); err == nil {
+			t.Errorf("Source(%q) was accepted; a ':' that is not a drive root is not a path", refused)
+		}
+	}
+	for _, inside := range []string{"notes.txt", "sub/notes.txt", "./sub/../notes.txt"} {
+		if _, ext, err := Source(inside); err != nil || ext {
+			t.Errorf("Source(%q) = external %v, err %v; want it kept inside", inside, ext, err)
+		}
+	}
+}

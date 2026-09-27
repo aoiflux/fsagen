@@ -8,7 +8,7 @@ import (
 
 func TestRenameMovesSubtreeAndIDsFollow(t *testing.T) {
 	tr := New()
-	if _, err := tr.CreateFile("stage/a.txt"); err != nil {
+	if err := tr.CreateFile("stage/a.txt"); err != nil {
 		t.Fatal(err)
 	}
 	tr.Tag("stage/a.txt", "doc")
@@ -26,7 +26,7 @@ func TestRenameMovesSubtreeAndIDsFollow(t *testing.T) {
 func TestRemoveRetiresIDs(t *testing.T) {
 	tr := New()
 	for _, p := range []string{"s/1", "s/2"} {
-		if _, err := tr.CreateFile(p); err != nil {
+		if err := tr.CreateFile(p); err != nil {
 			t.Fatal(err)
 		}
 		tr.Tag(p, "staging")
@@ -56,7 +56,7 @@ func TestPreconditions(t *testing.T) {
 	if err := tr.Rename("g", "d/f"); !errors.Is(err, ErrExist) {
 		t.Errorf("rename onto existing: %v", err)
 	}
-	if _, err := tr.CreateFile("d/f/x"); err == nil {
+	if err := tr.CreateFile("d/f/x"); err == nil {
 		t.Error("a file cannot be a parent directory")
 	}
 	if err := tr.AddStream("missing", "s"); !errors.Is(err, ErrNotExist) {
@@ -68,13 +68,13 @@ func TestFoldCollision(t *testing.T) {
 	tr := New()
 	tr.SetFold(strings.ToLower)
 	tr.CreateFile("Docs/Report.txt")
-	if _, err := tr.CreateFile("docs/other.txt"); err == nil || !strings.Contains(err.Error(), "collides") {
+	if err := tr.CreateFile("docs/other.txt"); err == nil || !strings.Contains(err.Error(), "collides") {
 		t.Errorf("case-variant directory should collide: %v", err)
 	}
-	if _, err := tr.CreateFile("Docs/REPORT.txt"); err == nil {
+	if err := tr.CreateFile("Docs/REPORT.txt"); err == nil {
 		t.Error("case-variant file should collide")
 	}
-	if _, err := tr.CreateFile("Docs/Report.txt"); err != nil {
+	if err := tr.CreateFile("Docs/Report.txt"); err != nil {
 		t.Errorf("recreating the same path is not a collision: %v", err)
 	}
 }

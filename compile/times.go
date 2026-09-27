@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/aoiflux/fsagen/model"
+	"github.com/aoiflux/fsagen/util"
 )
 
 // The time rules. T is the operation's time (Op.When; an email's Date).
@@ -102,13 +103,15 @@ func stampsAfter(t *model.Tree, paths ...string) []Stamp {
 			return
 		}
 		seen[q] = true
-		if o := t.Get(q); o != nil {
-			if o.Kind == model.Dir {
-				dirs = append(dirs, Stamp{Path: q, Times: o.Times})
-			} else {
-				files = append(files, Stamp{Path: q, Times: o.Times})
-			}
+		o := t.Get(q)
+		if o == nil {
+			return
 		}
+		if o.Kind == model.Dir {
+			dirs = append(dirs, Stamp{Path: q, Times: o.Times})
+			return
+		}
+		files = append(files, Stamp{Path: q, Times: o.Times})
 	}
 	for _, q := range paths {
 		add(q)
@@ -119,4 +122,32 @@ func stampsAfter(t *model.Tree, paths ...string) []Stamp {
 		}
 	}
 	return append(files, dirs...)
+}
+
+// settleTimes records what the operation intends for the object it leaves
+// behind: the times and mode that object should end up with, and the stamps to
+// apply once the operation has run.
+func settleTimes(s *simulation) {
+	if o := s.tree.Get(s.primary); o != nil {
+		overlay(&o.Times, explicitTimes(s.op))
+	}
+	// A delete leaves nothing behind to describe; it recorded the removed
+	// object's identity and times before removing it.
+	if s.op.Action != "delete" {
+		s.recordPrimary()
+	}
+	s.op.Stamps = stampsAfter(s.tree, s.op.Path, s.op.NewPath, s.primary)
+}
+
+// recordPrimary copies the primary object's identity, kind and settled times
+// onto the operation, and applies an explicit mode to exactly that object.
+func (s *simulation) recordPrimary() {
+	o := s.tree.Get(s.primary)
+	if o == nil {
+		return
+	}
+	if mode, ok, _ := util.ParseFileMode(s.op.Mode); ok {
+		o.Mode = mode
+	}
+	s.op.Object, s.op.Kind, s.op.Times = o.Serial, o.Kind, o.Times
 }

@@ -303,8 +303,8 @@ func TestCrossCapabilityContentEquality(t *testing.T) {
 	dir := t.TempDir()
 	full := genRun(t, dir, "full", "--seed", "42", "--playbook", example)
 
-	capsOverride = &compile.Caps{NamedStreams: false}
-	defer func() { capsOverride = nil }()
+	testCaps = &compile.Caps{NamedStreams: false}
+	defer func() { testCaps = nil }()
 	bare := genRun(t, dir, "bare", "--seed", "42", "--playbook", example, "--on-unsupported=skip")
 
 	var fileLines []string

@@ -34,17 +34,23 @@ func Fingerprint(dir string) (string, error) {
 	defer fsys.Close()
 
 	var lines []string
+	addStream := func(name, stream string) error {
+		data, err := fsys.ReadStream(name, stream)
+		if err != nil {
+			return err
+		}
+		lines = append(lines, fmt.Sprintf("s %s %d %s:%s", sum(data), len(data), name, stream))
+		return nil
+	}
 	addStreams := func(name string) error {
 		streams, err := fsys.Streams(name)
 		if err != nil {
 			return err
 		}
 		for _, s := range streams {
-			data, err := fsys.ReadStream(name, s.Name)
-			if err != nil {
+			if err := addStream(name, s.Name); err != nil {
 				return err
 			}
-			lines = append(lines, fmt.Sprintf("s %s %d %s:%s", sum(data), len(data), name, s.Name))
 		}
 		return nil
 	}
@@ -74,8 +80,19 @@ func Fingerprint(dir string) (string, error) {
 	return strings.Join(lines, "\n") + "\n", nil
 }
 
+// pathOf is the sort key of a fingerprint line.
+//
+// KNOWN FLAW: it returns the last space-delimited token rather than the path, so
+// a path containing a space sorts under its last segment only, and two such
+// paths whose last segments match compare equal under an unstable sort. Fixing
+// it means carrying the path beside the line, as runinfo.Sums already does, and
+// re-recording the examples goldens on every platform, so it is left for the
+// owner to decide rather than changed here.
 func pathOf(line string) string {
 	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return ""
+	}
 	return fields[len(fields)-1]
 }
 
@@ -120,13 +137,7 @@ func CheckGolden(t testing.TB, path, inputHash, got string, update bool) {
 		}
 		sameInput := strings.HasPrefix(wantStr, inputHeader+inputHash+"\n")
 		if !update || sameInput {
-			msg := "output differs from golden %s"
-			if sameInput {
-				msg += " for an unchanged input: bump constant.GeneratorVersion rather than editing these goldens"
-			} else {
-				msg += " (input changed; rerun with -update)"
-			}
-			t.Fatalf(msg+"\n%s", path, diff(wantStr, content))
+			t.Fatalf(goldenMismatch(sameInput)+"\n%s", path, diff(wantStr, content))
 		}
 	} else if !update {
 		t.Skipf("no golden %s yet; run with -update on this platform to record it", path)
@@ -167,4 +178,14 @@ func diff(a, b string) string {
 		out = append(out[:40], fmt.Sprintf("... and %d more", len(out)-40))
 	}
 	return strings.Join(out, "\n")
+}
+
+// goldenMismatch says what a difference from the golden means. Output that
+// changed for an input that did not means the generator's bytes changed, which
+// calls for a new GeneratorVersion rather than an edit of the recorded goldens.
+func goldenMismatch(sameInput bool) string {
+	if sameInput {
+		return "output differs from golden %s for an unchanged input: bump constant.GeneratorVersion rather than editing these goldens"
+	}
+	return "output differs from golden %s (input changed; rerun with -update)"
 }

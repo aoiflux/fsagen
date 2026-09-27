@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -499,4 +500,20 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// TestEveryActionExecutes: the executor dispatches on the action name, so an
+// action in the closed set with no entry would compile and then fail at runtime
+// with "unknown action". The table and compile.Actions have to agree both ways.
+func TestEveryActionExecutes(t *testing.T) {
+	for _, action := range compile.Actions {
+		if _, ok := executors[action]; !ok {
+			t.Errorf("action %q is in compile.Actions but has no executor", action)
+		}
+	}
+	for action := range executors {
+		if !slices.Contains(compile.Actions, action) {
+			t.Errorf("executors has %q, which is not in compile.Actions", action)
+		}
+	}
 }

@@ -2,6 +2,7 @@ package compile
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -118,7 +119,15 @@ func parseDuration(s string) (time.Duration, error) {
 		if m[2] == "w" {
 			unit = 7 * 24 * time.Hour
 		}
+		// A duration is nanoseconds in an int64, so "15000w" would wrap round
+		// to a negative one and schedule an action before the playbook starts.
+		if n > int(maxDurationUnits(unit)) {
+			return 0, fmt.Errorf("invalid duration %q: %s%s is longer than a duration can hold", s, m[1], m[2])
+		}
 		total += time.Duration(n) * unit
+		if total < 0 {
+			return 0, fmt.Errorf("invalid duration %q: longer than a duration can hold", s)
+		}
 		sawUnit = true
 		s = s[len(m[0]):]
 	}
@@ -134,5 +143,16 @@ func parseDuration(s string) (time.Duration, error) {
 	if err != nil {
 		return 0, err
 	}
-	return total + rest, nil
+	// A negative rest is legitimate input, which the caller rejects on its own
+	// terms; what is checked here is that adding it did not wrap round.
+	sum := total + rest
+	if (rest > 0 && sum < total) || (rest < 0 && sum > total) {
+		return 0, fmt.Errorf("invalid duration %q: longer than a duration can hold", s)
+	}
+	return sum, nil
+}
+
+// maxDurationUnits is how many of a unit fit in a duration before it overflows.
+func maxDurationUnits(unit time.Duration) time.Duration {
+	return math.MaxInt64 / unit
 }

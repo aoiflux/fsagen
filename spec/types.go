@@ -10,9 +10,9 @@ type Manifest struct {
 	Operations []Operation       `yaml:"operations" json:"operations"`
 }
 
-// Operation represents a single action.
-// Actions: create, update, append, delete, mace, rename, copy, truncate,
-// rotate, ads, motw, email, ansible-vault
+// Operation represents a single action. The closed set of action names, and
+// which keys each one takes, is compile.Actions and compile.Fields; this struct
+// is the union of every key any action takes.
 type Operation struct {
 	Action     string `yaml:"action" json:"action"`
 	Path       string `yaml:"path" json:"path"`               // required for most actions
@@ -37,7 +37,10 @@ type Operation struct {
 	ContentFile string `yaml:"content_file" json:"content_file"` // load content from a file relative to the manifest/playbook
 	Render      *bool  `yaml:"render" json:"render"`             // run ${...} substitution over the content; defaults to false for content_file, true for inline content
 	Mode        string `yaml:"mode" json:"mode"`                 // octal file permissions, e.g. "0600"
-	Format      string `yaml:"format" json:"format"`             // raw|pdf|eml|mbox - how to interpret the content when creating
+	// Format says what kind of file to build rather than how to write the
+	// bytes through: compile.TypedFormats for a create or an update, eml or
+	// mbox for an email. Empty, raw and text write the content unchanged.
+	Format string `yaml:"format" json:"format"`
 
 	// Typed generators
 	Pdf     *PdfSpec     `yaml:"pdf" json:"pdf"`         // metadata for format: pdf
@@ -253,48 +256,14 @@ type Step struct {
 	Actions    []Action `yaml:"actions" json:"actions"`
 }
 
-// Action mirrors Operation but supports a relative time offset and template selection.
+// Action is one operation in a playbook step, with the scheduling a playbook
+// adds around it: when it fires relative to its step, and which occurrences it
+// applies to. Everything else it carries is the operation itself, embedded, so
+// a key an operation takes is a key an action takes and the two cannot drift.
 type Action struct {
-	Action      string `yaml:"action" json:"action"`
-	Path        string `yaml:"path" json:"path"`
-	ID          string `yaml:"id" json:"id" render:"-"`
-	Ref         string `yaml:"ref" json:"ref" render:"-"`
-	Refs        string `yaml:"refs" json:"refs" render:"-"`
-	MissingOK   bool   `yaml:"missing_ok" json:"missing_ok"`
-	NewPath     string `yaml:"new_path" json:"new_path"`
-	Type        string `yaml:"type" json:"type"`
-	Ext         string `yaml:"ext" json:"ext"`
-	Content     string `yaml:"content" json:"content"`
-	ContentLen  int    `yaml:"content_len" json:"content_len"`
-	ContentKind string `yaml:"content_kind" json:"content_kind"`
-	Template    string `yaml:"template" json:"template"`   // Predefined template: "email", "log", "script", "doc"
-	Offset      string `yaml:"offset" json:"offset"`       // relative to step occurrence time
-	Condition   string `yaml:"condition" json:"condition"` // Action-level condition; tested against the batch index
-	// Optional explicit times override the scheduled time when provided
-	Atime  string `yaml:"atime" json:"atime"`
-	Mtime  string `yaml:"mtime" json:"mtime"`
-	Ctime  string `yaml:"ctime" json:"ctime"`
-	Crtime string `yaml:"crtime" json:"crtime"`
+	Operation `yaml:",inline"`
 
-	// Authoring extras
-	ContentFile string `yaml:"content_file" json:"content_file"`
-	Render      *bool  `yaml:"render" json:"render"`
-	Mode        string `yaml:"mode" json:"mode"`
-	Format      string `yaml:"format" json:"format"`
-
-	// Typed generators
-	Pdf     *PdfSpec     `yaml:"pdf" json:"pdf"`
-	Docx    *DocxSpec    `yaml:"docx" json:"docx"`
-	Pe      *PeSpec      `yaml:"pe" json:"pe"`
-	History *HistorySpec `yaml:"history" json:"history"`
-	Email   *EmailSpec   `yaml:"email" json:"email"`
-	Vault   *VaultSpec   `yaml:"vault" json:"vault"`
-	Archive *ArchiveSpec `yaml:"archive" json:"archive"`
-	Edit    *EditSpec    `yaml:"edit" json:"edit"`
-
-	// Windows-only extras
-	Stream      string `yaml:"stream" json:"stream"`
-	ZoneID      int    `yaml:"zone_id" json:"zone_id"`
-	HostURL     string `yaml:"host_url" json:"host_url"`
-	ReferrerURL string `yaml:"referrer_url" json:"referrer_url"`
+	Template  string `yaml:"template" json:"template"`   // Predefined template: "email", "log", "script", "doc"
+	Offset    string `yaml:"offset" json:"offset"`       // relative to step occurrence time
+	Condition string `yaml:"condition" json:"condition"` // Action-level condition; tested against the batch index
 }
