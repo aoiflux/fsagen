@@ -4,3 +4,6 @@
 
 # Run sidecars (run-manifest.json and friends) written beside an output root.
 *.fsagen/
+
+# Release binaries and checksums from build.sh / build.ps1.
+/dist/
