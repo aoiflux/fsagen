@@ -1,7 +1,7 @@
 # Timelines: design notes
 
 How fsagen's `--timeline` works, and why. The user-facing description is in
-README.md (*Forensic Timeline Generation*); examples are in
+README.md (*Forensic timelines*); examples are in
 `examples/TIMELINE_EXAMPLES.md`.
 
 ## Two sources

@@ -1,6 +1,59 @@
-# File System Artifacts Generator (fsagen)
+<div align="center">
 
-Deterministic generator for creating diverse file-system artifacts to test forensic tools (Autopsy, EnCase, FTK, etc.). Use YAML manifests for simple operations, playbooks for complex modus operandi simulation, or the bulk generator for a quick synthetic corpus with no YAML required.
+# fsagen
+
+**File System Artifacts Generator**
+
+Deterministic file-system artifacts for testing forensic tools.
+
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Go](https://img.shields.io/badge/go-1.26%2B-00ADD8.svg?logo=go&logoColor=white)](go.mod)
+[![Generator version](https://img.shields.io/badge/generator%20version-5-6f42c1.svg)](#determinism-contract)
+[![Platforms](https://img.shields.io/badge/platforms-windows%20%7C%20linux%20%7C%20macos%20%7C%20freebsd-lightgrey.svg)](#platform-support)
+[![Paper](https://img.shields.io/badge/paper-Springer%202026-orange.svg)](https://link.springer.com/chapter/10.1007/978-981-96-9443-3_17)
+
+</div>
+
+Describe a scenario in YAML; fsagen writes the corpus, records every operation,
+and tells you what a tool examining that corpus should find. The same seed and
+the same inputs give byte-identical output on every run and every machine — so
+two tools disagreeing about a corpus is a finding about the tools, not the data.
+
+Built for exercising forensic suites (Autopsy, EnCase, FTK and the rest): a
+**manifest** for a flat list of operations, a **playbook** for a full modus
+operandi with actors and a schedule, or the **bulk generator** for a quick
+synthetic corpus with no YAML at all.
+
+## Contents
+
+**Start here** · [Features](#features) · [Install](#install) · [Quick start](#quick-start) · [Usage](#usage) · [Bulk generation](#bulk-generation)
+
+**Writing scenarios** · [Manifest schema](#manifest-schema) · [Playbook schema](#playbook-schema) · [Email, PDF and Ansible vault](#email-pdf-and-ansible-vault) · [Sharing values](#sharing-values-across-scenarios) · [File formats](#file-formats)
+
+**What it guarantees** · [Timestamps](#timestamps) · [Determinism contract](#determinism-contract) · [Forensic timelines](#forensic-timelines) · [Platform support](#platform-support) · [Limits](#limits)
+
+**Project** · [Development](#development) · [Dependencies](#dependencies) · [Citation](#citation)
+
+## How a run works
+
+```text
+ INPUT                 PLAN — nothing on disk yet            OUTPUT
+ ─────                 ──────────────────────────            ──────
+ manifest.yaml ┐       load       strict YAML + positions    corpus/
+ playbook.yaml ├─────▶ compile    operations, times, paths ─▶  files
+ --bulk N      ┘       check      closed sets, formats          streams
+                       simulate   in-memory tree               all 4 times
+                       pre-flight platform capabilities
+                                │                            corpus.fsagen/
+                                ▼                               run records
+                       a problem stops the run here,            timeline
+                       with nothing written at all
+```
+
+Nothing reaches the disk until the whole scenario is known to be possible. An
+input that asks for something the platform cannot do fails **before** the first
+byte, unless `--on-unsupported=skip` is given — and then every skipped
+operation is recorded rather than silently dropped.
 
 ## Features
 
@@ -22,17 +75,73 @@ Deterministic generator for creating diverse file-system artifacts to test foren
 
 ## Install
 
-```pwsh
+**Download a release.** Pick your platform from the
+[latest release](https://github.com/aoiflux/fsagen/releases/latest), then verify
+it before use:
+
+```sh
+sha256sum -c SHA256SUMS
+```
+
+| Platform | Asset |
+|---|---|
+| Windows | `fsagen_<version>_windows_amd64.exe`, `..._windows_arm64.exe` |
+| Linux | `fsagen_<version>_linux_amd64`, `..._linux_arm64` |
+| macOS | `fsagen_<version>_darwin_amd64`, `..._darwin_arm64` |
+
+**Or install with Go** (1.26 or newer):
+
+```sh
 go install github.com/aoiflux/fsagen@latest
 ```
 
-or build from source (pure Go; `CGO_ENABLED=0` works on Windows, Linux, macOS and FreeBSD):
+**Or build from source.** Pure Go — `CGO_ENABLED=0` works on Windows, Linux,
+macOS and FreeBSD:
 
-```pwsh
-go build -v -o fsagen.exe
+```sh
+go build -o fsagen .
+```
+
+To build every released binary at once, with checksums, run the release script
+for your shell. Both take no arguments, write to `dist/`, and produce the same
+`SHA256SUMS` for the same commit:
+
+```sh
+./build.sh          # POSIX
+.\build.ps1         # Windows
+```
+
+```text
+dist/
+├── fsagen_v0.1.0_windows_amd64.exe
+├── fsagen_v0.1.0_windows_arm64.exe
+├── fsagen_v0.1.0_linux_amd64
+├── fsagen_v0.1.0_linux_arm64
+├── fsagen_v0.1.0_darwin_amd64
+├── fsagen_v0.1.0_darwin_arm64
+└── SHA256SUMS
 ```
 
 Released under the MIT License (see `LICENSE`).
+
+## Quick start
+
+```sh
+# 1. Check a scenario, and see exactly what it would do — nothing is written
+fsagen --playbook examples/playbook-basic.yaml --validate
+fsagen --playbook examples/playbook-basic.yaml --dry-run
+
+# 2. Generate it, with a Sleuth Kit bodyfile timeline
+fsagen --seed 42 --playbook examples/playbook-basic.yaml \
+       --timeline case.body ./crime-scene
+
+# 3. Confirm the corpus is intact, and see what a tool should find
+cd crime-scene && sha256sum -c ../crime-scene.fsagen/SHA256SUMS
+cat ../crime-scene.fsagen/answer-key.jsonl
+```
+
+Fifteen worked examples ship in `examples/`, from a two-file scenario up to
+ransomware, insider exfiltration and malware lifecycle playbooks.
 
 ## Usage
 
@@ -61,7 +170,7 @@ fsagen [OPTIONS] <output-path>
 - `--meta DIR` - Where to write `run-manifest.json`, `SHA256SUMS`, `ledger.jsonl`, `answer-key.jsonl` and `run-info.json` (default: `<output-path>.fsagen`, beside the output)
 - `--timeline FILE` - Write a timeline of the output after generating; `FILE` must be outside the output directory
 - `--timeline-format csv|txt|bodyfile|macb|jsonl` - Timeline format (default: from the extension: `.csv`, `.txt`, `.bodyfile`, `.body`, `.macb`, `.jsonl`; any other extension is an error)
-- `--timeline-source observed|modelled` - `observed` (default) reads the output back from disk; `modelled` writes what the scenario intends, including the objects it deleted, and is the same bytes on every run (needs `--manifest` or `--playbook`). See *Forensic Timeline Generation*
+- `--timeline-source observed|modelled` - `observed` (default) reads the output back from disk; `modelled` writes what the scenario intends, including the objects it deleted, and is the same bytes on every run (needs `--manifest` or `--playbook`). See *Forensic timelines*
 - `--hash-limit N` - Observed timeline: leave out the MD5 of files and streams larger than N bytes (default: hash everything)
 - `--generate-schema` - Write JSON schemas for manifests and playbooks and exit (`--schema-out DIR`, default `schemas`)
 - `--version` - Print the module version, generator version and build
@@ -70,7 +179,20 @@ fsagen [OPTIONS] <output-path>
 
 **Output directory:** must be a directory or not exist. A non-empty one is refused unless `--clean` or `--into-existing` is given.
 
-**Run records:** every generation writes three files beside the output (never inside it):
+**Run records:** every generation writes its records *beside* the output, never
+inside it, so the corpus is only ever what the scenario asked for:
+
+```text
+corpus/                    the artefacts, and nothing else
+corpus.fsagen/             (or wherever --meta points)
+├── run-manifest.json      seed, SHA-256 of every input, options, platform
+│                          capabilities, skipped ops, dropped time fields
+├── SHA256SUMS             every file and NTFS stream, as path:stream
+├── ledger.jsonl           one line per operation, before/after hashes
+├── answer-key.jsonl       what a tool should find, one fact per line
+└── run-info.json          the part that cannot be reproducible
+```
+
 
 - `run-manifest.json`: generator version, Go version, seed, SHA-256 of every input read, options, capabilities (including which times can be set), skipped operations and dropped time fields, the digests of `SHA256SUMS`, `ledger.jsonl` and `answer-key.jsonl`, the timeline written after the run (its source and format, and for a modelled one its digest), and a status that reads `running` until the run ends and then `complete` or `failed`. A tree whose run manifest does not say `complete` is not a finished corpus. It holds no absolute path, host name or wall-clock time, so it is itself reproducible.
 - `SHA256SUMS`: the SHA-256 of every file and NTFS stream in the output (`path:stream`), in `sha256sum` format, sorted by path. Check a corpus with `sha256sum -c` from inside the output directory.
@@ -117,34 +239,51 @@ YAML with an optional `start` and a sequence of operations:
 
 - start (top level, optional): RFC 3339, or `now` for a run that cannot be reproduced. It is the reference time for operations without an `mtime` or `atime`: when they happen (see *Timestamps*), what `${DATE}` formats and what an unpinned pdf's dates and an email's `Date` default to. With neither, those are errors; fsagen never reads the wall clock for them.
 
-- action: `create|update|append|edit|truncate|rotate|delete|mace|rename|copy|archive|ads|motw|email|ansible-vault`
-- path: target path relative to output root (see *Paths* below)
-- id: name for what this action creates or renames, so a later action can refer to it
-- ref / refs: instead of `path`, act on the one path (`ref`) or every path (`refs`) created under an `id` that still exists; ids follow renames
-- missing_ok: for `delete`, a path that does not exist is a recorded no-op instead of an error
-- type: `file|dir` (for create)
-- ext: file extension to append if `path` has no extension
-- content: literal content (optional); `content: ''` writes an empty file
-- content_file: load content from a file inside the manifest's directory (optional)
-- content_len: how much deterministic filler the file carries, at least 1. With no content of any kind the default is 1024 characters (256 for `append`, 128 for `ads`). For a structured format it is the size of the *filler region*, not of the file: the PE overlay, the zip member, the PNG chunk, the JPEG comments, the MP4 `mdat`, the PDF or docx text (see *File formats*). A structured format with no `content_len` gets the smallest valid file
-- content_kind: what invented bytes look like — `text` (the default: base32), `bytes` (uniform random), `zeros`, `pattern` (a counting ramp) or `lorem` (words). It only applies to bytes fsagen invents, so giving it beside `content`, `content_file` or `template` is an error
-- render: run `${...}` substitution over the content. Defaults to `true` for inline
-  `content` and `false` for `content_file`, because scripts and PEM keys contain
-  `${...}` sequences of their own that must survive verbatim
-- mode: octal file permissions, e.g. `"0600"` (default 0644 files, 0755 directories)
-- format: what to build — `raw` (default) or `text` writes the content through; `pdf`, `docx`, `pe`, `zip`, `png`, `jpeg`, `mp4`, `chrome_history` and `firefox_places` build a file of that type. With no `format` and no content of its own, the extension picks one (see *File formats*). For the `email` action, `eml` or `mbox`
-- pdf: document metadata for `format: pdf` — see below
-- docx: `title`, `author`, `created`, `modified` for `format: docx`
-- pe: machine, subsystem, dll, timestamp, sections, imports and version resource for `format: pe` — see *File formats*
-- history: `visits` and (Chrome) `downloads` for `format: chrome_history` or `firefox_places` — see *File formats*
-- archive: what goes into the `archive` action's zip — see *File formats*
-- edit: the changes the `edit` action makes — see *File formats*
-- email: message definition for the `email` action — see below
-- vault: password, vault_id and salt for the `ansible-vault` action
-- atime/mtime/ctime/crtime: RFC 3339 access, modification, change and creation (birth) times, fractions of a second kept. They override what the action would otherwise set (see *Timestamps*). `ctime` needs Windows on NTFS or ReFS and `crtime` Windows; elsewhere either is a pre-flight error unless `--on-unsupported=skip`, which drops the field and records that
-- new_path: new location for `rename`, `rotate` or `copy`
-- stream: ADS stream name (for `ads` action, Windows-only)
-- zone_id, host_url, referrer_url: for `motw` action (Windows-only)
+**What to do, and where**
+
+| Field | Meaning |
+|---|---|
+| `action` | `create` `update` `append` `edit` `truncate` `rotate` `delete` `mace` `rename` `copy` `archive` `ads` `motw` `email` `ansible-vault` |
+| `path` | target path relative to the output root (see *Paths* below) |
+| `id` | name for what this action creates or renames, so a later action can refer to it |
+| `ref` / `refs` | instead of `path`, act on the one path (`ref`) or every path (`refs`) created under an `id` that still exists; ids follow renames |
+| `new_path` | new location for `rename`, `rotate` or `copy` |
+| `type` | `file` or `dir` (for `create`) |
+| `ext` | file extension to append if `path` has no extension |
+| `missing_ok` | for `delete`, a path that does not exist is a recorded no-op instead of an error |
+
+**Content**
+
+| Field | Meaning |
+|---|---|
+| `content` | literal content (optional); `content: ''` writes an empty file |
+| `content_file` | load content from a file inside the manifest's directory (optional) |
+| `content_len` | how much deterministic filler the file carries, at least 1. With no content of any kind the default is 1024 characters (256 for `append`, 128 for `ads`). For a structured format it is the size of the *filler region*, not of the file: the PE overlay, the zip member, the PNG chunk, the JPEG comments, the MP4 `mdat`, the PDF or docx text (see *File formats*). A structured format with no `content_len` gets the smallest valid file |
+| `content_kind` | what invented bytes look like — `text` (the default: base32), `bytes` (uniform random), `zeros`, `pattern` (a counting ramp) or `lorem` (words). It only applies to bytes fsagen invents, so giving it beside `content`, `content_file` or `template` is an error |
+| `render` | run `${...}` substitution over the content. Defaults to `true` for inline `content` and `false` for `content_file`, because scripts and PEM keys contain `${...}` sequences of their own that must survive verbatim |
+| `mode` | octal file permissions, e.g. `"0600"` (default 0644 files, 0755 directories) |
+| `format` | what to build — `raw` (default) or `text` writes the content through; `pdf`, `docx`, `pe`, `zip`, `png`, `jpeg`, `mp4`, `chrome_history` and `firefox_places` build a file of that type. With no `format` and no content of its own, the extension picks one (see *File formats*). For the `email` action, `eml` or `mbox` |
+
+**Typed blocks** — each belongs to one `format` or action, and is an error beside any other
+
+| Field | Meaning |
+|---|---|
+| `pdf` | document metadata for `format: pdf` — see *`format: pdf`* |
+| `docx` | `title`, `author`, `created`, `modified` for `format: docx` |
+| `pe` | machine, subsystem, dll, timestamp, sections, imports and version resource for `format: pe` — see *File formats* |
+| `history` | `visits` and (Chrome) `downloads` for `format: chrome_history` or `firefox_places` — see *File formats* |
+| `archive` | what goes into the `archive` action's zip — see *File formats* |
+| `edit` | the changes the `edit` action makes — see *File formats* |
+| `email` | message definition for the `email` action — see *`email` action* |
+| `vault` | password, vault_id and salt for the `ansible-vault` action |
+
+**Times and Windows-only fields**
+
+| Field | Meaning |
+|---|---|
+| `atime` `mtime` `ctime` `crtime` | RFC 3339 access, modification, change and creation (birth) times, fractions of a second kept. They override what the action would otherwise set (see *Timestamps*). `ctime` needs Windows on NTFS or ReFS and `crtime` Windows; elsewhere either is a pre-flight error unless `--on-unsupported=skip`, which drops the field and records that |
+| `stream` | ADS stream name (for the `ads` action, Windows-only) |
+| `zone_id`, `host_url`, `referrer_url` | for the `motw` action (Windows-only) |
 
 A manifest may also carry a top-level `variables:` map.
 
@@ -571,8 +710,9 @@ key and modelled bodyfile, and `TestDryRunGoldens`), `TestBulkDeterministic`,
 `TestNoWallClockInContent`, `TestInsertingUnrelatedActionLeavesOtherFilesUnchanged`,
 `TestModelledTimelineIdenticalAcrossRuns` and
 `TestCrossCapabilityContentEquality`. The whole suite has been run on Windows
-11, Windows 10 and Fedora 40 (Linux goldens recorded there: every file is
-byte-identical to Windows, less the NTFS streams). macOS and FreeBSD are
+11, Windows Server 2025 and 2016, Windows 10, Ubuntu 24.04 and Fedora 40 (Linux
+goldens recorded there: every file is byte-identical to Windows, less the NTFS
+streams). macOS and FreeBSD are
 built by the gate but have never been run.
 
 ## Platform support
@@ -603,10 +743,12 @@ A "no" for something the input asks for outright is a pre-flight error; a
 "no" for a default the scenario only implies is recorded as `uncontrolled` in
 the run manifest and in the ledger, never guessed.
 
-Where the suite has actually run: Windows 11 (build 26200) and Windows 10
-(build 19045) on NTFS; Ubuntu 24.04 under WSL2 on ext4; and Fedora 40 on
-tmpfs, btrfs and an ext4 volume made with 128-byte inodes, which keeps
-whole seconds and no birth time. macOS and FreeBSD are compiled on every
+Where the suite has actually run: Windows 11 (build 26200), Windows Server 2025
+(26100), Windows Server 2016 (14393) and Windows 10 (19045) on NTFS; Ubuntu
+24.04 on ext4, under WSL2 and on its own; and Fedora 40 on tmpfs, btrfs and an
+ext4 volume made with 128-byte inodes, which keeps whole seconds and no birth
+time. Every test that is skipped on one of those hosts runs and passes on
+another, so the set between them leaves nothing unexercised. macOS and FreeBSD are compiled on every
 change and have **never been run**: their column is what the code paths
 intend, not a measurement.
 
@@ -856,7 +998,7 @@ directory it makes, all structurally valid:
   under the names a tool looks for
 - **Windows**: .reg; .exe (a real PE with imports and a version resource)
 
-## Forensic Timeline Generation
+## Forensic timelines
 
 After generating, fsagen can write a timeline of the output, from one of two
 sources:
@@ -945,7 +1087,7 @@ mactime -b evidence.body -d > detailed-timeline.txt
 
 See `examples/TIMELINE_EXAMPLES.md` for more.
 
-## Bulk Generation (no YAML)
+## Bulk generation
 
 Use the bulk generator when you need a fast, synthetic corpus without describing a scenario:
 
@@ -984,6 +1126,18 @@ it. `TestConsumerAcceptance` runs
 things fsagen's first consumer asked for, from a parseable phishing message
 to a real gap in a beacon log.
 
+### Cutting a release
+
+1. `go run ./tools/gate`, and run the suite on the platforms whose goldens the
+   change touches (see *Platform support*).
+2. Tag the commit, so the binaries carry the version: fsagen reads its version
+   from Go's own VCS stamping, not from a linker flag.
+3. `./build.sh` or `.\build.ps1` — six binaries and a `SHA256SUMS` into
+   `dist/`. Both scripts produce the same checksums for the same commit, so it
+   does not matter which one runs.
+4. Publish `dist/` as the release assets, with `RELEASE_NOTES_<version>.md` as
+   the body.
+
 ### Dependencies
 
 Five direct ones, each here for a reason the standard library does not cover.
@@ -997,10 +1151,20 @@ Five direct ones, each here for a reason the standard library does not cover.
 | `golang.org/x/sys` | `NtCreateFile` and `FILE_BASIC_INFO` on Windows, `statx` on Linux, `Birthtimespec` on the BSDs, and the last-access registry value |
 | `golang.org/x/text` | Unicode case folding and NFC normalisation, so the portability check catches names that collide on a case-insensitive or normalising volume |
 
-### Related Research Paper
-https://link.springer.com/chapter/10.1007/978-981-96-9443-3_17
+## Citation
 
-### Recommended Citation
+If fsagen is useful in your work, please cite the paper:
+
+> Gogia, G. and Rughani, P., **File System Artefacts Generator (FSAGen):
+> Towards Faster Forensic Tool Testing**, in *Information Security, Privacy
+> and Digital Forensics*, Springer Nature Singapore, 2026, pp. 239-248.
+>
+> <https://link.springer.com/chapter/10.1007/978-981-96-9443-3_17>
+
+<details>
+<summary>BibTeX</summary>
+
+```bibtex
 @InProceedings{10.1007/978-981-96-9443-3_17,
 author="Gogia, Gaurav
 and Rughani, Parag",
@@ -1019,3 +1183,6 @@ pages="239--248",
 abstract="Software testing is one of the most fundamental steps in any software development lifecycle. The larger the scale, the more testing is required to ensure the correctness and reliability of the software. In the case of digital forensics, one of the main problems that researchers face is the availability of datasets for testing the reliability of the product they are evaluating. Different forensic tools with similar features may present different results even with similar inputs. This makes it extremely important to have standardised and reproducible datasets. This research explores synthetic dataset generators and introduces a novel command-line interface (CLI) tool for generating file system artefacts. The tool aims to facilitate the quick and convenient creation of synthetic datasets to aid in the validation of file system forensic tools. By offering a simplified and cross-platform solution, this tool addresses the need for standardised datasets in digital forensics research and enhances the reliability and accuracy of forensic tool evaluations.",
 isbn="978-981-96-9443-3"
 }
+```
+
+</details>
