@@ -70,6 +70,12 @@ command -v go >/dev/null 2>&1 || die "go is not on PATH"
 
 VERSION=$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo dev)
 readonly VERSION
+# A release is built from a tagged commit, because the version in every file
+# name is git describe's. Building two commits later silently names the assets
+# v0.1.0-2-gda99bb6, which is how a release ends up carrying a bare hash.
+TAGGED=yes
+git -C "$ROOT" describe --tags --exact-match >/dev/null 2>&1 || TAGGED=no
+readonly TAGGED
 HOST_OS=$(go env GOOS)
 HOST_ARCH=$(go env GOARCH)
 readonly HOST_OS HOST_ARCH
@@ -77,6 +83,10 @@ readonly HOST_OS HOST_ARCH
 printf '\n  %s%s release build%s\n' "$BOLD$CYAN" "$APP" "$RESET"
 rule
 field version "$VERSION"
+if [ "$TAGGED" = no ]; then
+	printf '  %s%-10s%s %s! no tag on this commit: fine for a test build, not for a release%s\n' \
+		"$DIM" '' "$RESET" "$YELLOW" "$RESET"
+fi
 field toolchain "$(go env GOVERSION)"
 field output "$DIST"
 field targets "${#TARGETS[@]}  ${DIM}(windows, linux, darwin x amd64, arm64)${RESET}"
@@ -98,7 +108,7 @@ for target in "${TARGETS[@]}"; do
 	# dirty flag that --version reports come from Go's own VCS stamping.
 	if log=$(CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch \
 		go build -trimpath -o "$DIST/$name" . 2>&1); then
-		printf '    %s  %-14s %-40s %9s  %5ss\n' "$(ok)" "$target" "$name" \
+		printf '    %s  %-14s %-52s %9s  %5ss\n' "$(ok)" "$target" "$name" \
 			"$(human "$(size_of "$DIST/$name")")" "$(secs $(( $(now_ms) - t0 )) )"
 		built+=("$name")
 	else

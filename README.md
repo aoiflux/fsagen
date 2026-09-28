@@ -138,14 +138,18 @@ for your shell. Both take no arguments, write to `dist/`, and produce the same
 
 ```text
 dist/
-├── fsagen_v0.1.0_windows_amd64.exe
-├── fsagen_v0.1.0_windows_arm64.exe
-├── fsagen_v0.1.0_linux_amd64
-├── fsagen_v0.1.0_linux_arm64
-├── fsagen_v0.1.0_darwin_amd64
-├── fsagen_v0.1.0_darwin_arm64
+├── fsagen_<version>_windows_amd64.exe
+├── fsagen_<version>_windows_arm64.exe
+├── fsagen_<version>_linux_amd64
+├── fsagen_<version>_linux_arm64
+├── fsagen_<version>_darwin_amd64
+├── fsagen_<version>_darwin_arm64
 └── SHA256SUMS
 ```
+
+`<version>` is whatever `git describe` reports: `v0.1.0` on a tagged commit,
+`v0.1.0-2-gda99bb6` two commits later. Tag before building a release, or the
+asset names will not match the version you publish.
 
 Released under the MIT License (see `LICENSE`).
 
@@ -1268,8 +1272,9 @@ phishing message to a real gap in a beacon log.
 3. `./build.sh` or `.\build.ps1` — six binaries and a `SHA256SUMS` into `dist/`.
    Both scripts produce the same checksums for the same commit, so it does not
    matter which one runs.
-4. Publish `dist/` as the release assets, with `RELEASE_NOTES_<version>.md` as
-   the body.
+4. Publish `dist/` as the release assets and write the release notes as the
+   body. Check that the asset names carry the version and not a bare commit
+   hash: if they do, step 2 was skipped and the binaries need rebuilding.
 
 ### Dependencies
 

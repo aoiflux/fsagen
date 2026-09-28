@@ -84,6 +84,11 @@ if (-not (Test-Path (Join-Path $Root 'go.mod'))) {
 $Version = & git -C $Root describe --tags --always --dirty 2>$null
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($Version)) { $Version = 'dev' }
 $Version = $Version.Trim()
+# A release is built from a tagged commit, because the version in every file
+# name is git describe's. Building two commits later silently names the assets
+# v0.1.0-2-gda99bb6, which is how a release ends up carrying a bare hash.
+& git -C $Root describe --tags --exact-match 2>$null | Out-Null
+$Tagged = $LASTEXITCODE -eq 0
 $HostOS = (& go env GOOS).Trim()
 $HostArch = (& go env GOARCH).Trim()
 
@@ -91,6 +96,10 @@ Write-Host ''
 Write-Part "  $App release build" Cyan
 Write-Rule
 Write-Field 'version'   $Version
+if (-not $Tagged) {
+    Write-Part ('  {0,-10} ' -f '') DarkGray -NoNewline
+    Write-Part '! no tag on this commit: fine for a test build, not for a release' Yellow
+}
 Write-Field 'toolchain' (& go env GOVERSION).Trim()
 Write-Field 'output'    $Dist
 Write-Field 'targets'   ("{0}  (windows, linux, darwin x amd64, arm64)" -f $Targets.Count)
@@ -116,7 +125,7 @@ foreach ($t in $Targets) {
     $sw.Stop()
     if ($r.Code -eq 0) {
         $size = (Get-Item (Join-Path $Dist $name)).Length
-        Write-Status 'OK' Green ('{0,-14} {1,-40} {2,9}  {3,5}s' -f `
+        Write-Status 'OK' Green ('{0,-14} {1,-52} {2,9}  {3,5}s' -f `
             $label, $name, (Format-Size $size), $sw.Elapsed.TotalSeconds.ToString('0.0'))
         $built.Add($name)
     } else {

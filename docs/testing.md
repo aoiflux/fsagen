@@ -199,15 +199,16 @@ narrower test of the mechanism behind it.
 | CR-9 | A real gap in the beacon log's sequence numbers after the anti-forensics step. | `TestConsumerAcceptance`, `TestEditDeleteLines40to60` |
 | CR-10 | An artefact every student can compare byte for byte: a deterministic content SHA256SUMS and/or modelled bodyfile, identical on every machine that runs the same fsagen version and seed. | `TestConsumerAcceptance`, `TestDeterminismHarness` |
 | CR-11 | On Linux/macOS: either a clear refusal before anything is written, or a completed corpus with the NTFS-only artefacts listed as skipped. | `TestConsumerAcceptance`, `TestUnsupportedOpsFailBeforeAnyWrite` |
-| CR-12 | go install github.com/aoiflux/fsagen@latest works. | no test, and it needs a tag: see the note below |
+| CR-12 | go install github.com/aoiflux/fsagen@latest works. | no test; verified by hand at v0.1.0 on 2026-09-28: see the note below |
 
-### CR-12 needs a tag on the renamed module
+### CR-12 is closed, and the tag that closes it had to be the right one
 
 `go install <module>@latest` resolves `latest` to the highest semver tag, then
-reads that version's `go.mod`. The two commits the owner is tagging for D-6,
-62d759c and 7accc8d, predate the module rename: both declare `module fsagen`.
-Tagged as v0.1.0 and v0.2.0 with nothing above them, `go install
-github.com/aoiflux/fsagen@latest` picks v0.2.0 and fails:
+reads that version's `go.mod`. That made the choice of which commit to tag a
+correctness question rather than a formality. The two commits originally lined
+up for a tag under D-6, 62d759c and 7accc8d, both predate the module rename in
+P0: each declares `module fsagen`. Tagged as v0.1.0 and v0.2.0 with nothing
+above them, the install picks v0.2.0 and fails:
 
 ```
 go: github.com/aoiflux/fsagen@latest: version constraints conflict:
@@ -216,11 +217,26 @@ go: github.com/aoiflux/fsagen@latest: version constraints conflict:
 	        but was required as: github.com/aoiflux/fsagen
 ```
 
-So the README's install line only works once a commit on the renamed module
-carries a semver tag above those two. Both halves were run on 2026-09-26
-against a file:// proxy built from the committed tree: without such a tag the
-install fails as above, and with 51444b2 tagged v0.3.0 it succeeds into an
-empty GOPATH and the binary reports `fsagen v0.3.0 (generator version 5)`.
-That is the whole of CR-12 except GitHub serving the tag, which is why the row
-still says "no test": nothing in the suite checks it, and the offline proxy
-cannot prove the push.
+Both halves of that were run on 2026-09-26 against a `file://` proxy built from
+the committed tree: without a tag on the renamed module the install fails as
+above, and with one it succeeds into an empty GOPATH.
+
+What happened instead avoids the problem entirely. 6b5b91a — on the renamed
+module — was tagged **v0.1.0** on 2026-09-27, and the two pre-rename commits
+were left untagged, so there is no higher tag carrying the old module path for
+`latest` to resolve to. Verified against the real proxy on 2026-09-28, into an
+empty GOPATH: `go install github.com/aoiflux/fsagen@latest` exits 0 and the
+installed binary reports
+
+```
+fsagen v0.1.0 (generator version 5) go1.27.0 windows/amd64
+```
+
+with no revision, because a module-mode install has no VCS metadata to stamp.
+The row still says "no test": nothing in the suite checks this, since it depends
+on GitHub serving the tag rather than on anything in the tree.
+
+If 62d759c and 7accc8d are ever tagged for the historical record, they must not
+get semver names above v0.1.0 — a non-semver name, or any name below the current
+release, keeps `latest` resolving to a commit whose `go.mod` declares the right
+path.

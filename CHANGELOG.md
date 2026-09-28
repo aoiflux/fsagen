@@ -1,6 +1,106 @@
 # Changelog
 
-## Unreleased: P5, packaging, platform and documentation
+## v0.1.0 — first tagged release (2026-09-27)
+
+The first tag on the renamed module, `github.com/aoiflux/fsagen`. Generator
+version stays **5** and nothing fsagen writes changes: all 135 golden files are
+byte-identical to P5's. What changed is the shape of the code, a set of bugs
+that reshaping exposed, and the fact that there is now something to install.
+
+`go install github.com/aoiflux/fsagen@latest` works, which closes CR-12 — the
+last requirement with no evidence behind it. Verified against the real proxy
+into an empty GOPATH: the binary reports `fsagen v0.1.0 (generator version 5)`.
+
+### A readability and correctness pass (bcd403d)
+
+Every function is now within two levels of nesting. The five largest bodies
+broke into named phases — `BuildPE` 222 lines to 9, `compilePlaybook` 264 to 26,
+`apply` 229 to 13, `generate` 220 to 75, `executeOp` 130 to 7 — and the three
+switches over `op.Action` became dispatch tables with tests proving they agree
+with `compile.Actions`, which nothing had checked before. `spec.Action` embeds
+`spec.Operation` instead of restating all 32 of its fields, so adding a field is
+one edit rather than five. One `reporter` type replaced eight copies of the same
+error-positioning closure. Two dead exported vars are gone, five more symbols no
+longer cross a package boundary, and the two package-level test hooks
+(`capsOverride`, `afterSettle`) are injected, so those tests can run in parallel.
+
+Reshaping the code surfaced real defects, each fixed here:
+
+- **The extension safety net was bypassed for `ref:` targets.** `path.Ext` read
+  `op.Path`, which is only populated when the operation states a `path:`, so
+  `update` with `ref:` and no path saw an empty extension, matched neither the
+  inferred nor the refused set, and wrote base32 filler over a `.exe`. That is
+  exactly the silent wrong output the check exists to prevent. Proven fixed by
+  dry-run before and after: `random_bytes:1024` became `format:pe`.
+- **Attachment `Content-Type` came from the host.** `mime.TypeByExtension` reads
+  `/etc/mime.types` on Unix and the registry on Windows, so `.txt`, `.zip`,
+  `.docx`, `.csv` and `.eml` attachments were typed differently on different
+  machines — against the reproducibility contract. Now a pinned table in the
+  product, with no change to any shipped golden.
+- **`model.Tree.Rename` could corrupt the tree.** It removed every moved object
+  from its indexes in one loop and reinserted in a second that could fail
+  part-way, leaving objects at neither path while `simulate` carried on against
+  the wreckage. It now validates every collision before mutating anything.
+- **`(stopped after 50 errors)` was printed when nothing had been dropped**, so
+  an input with exactly 50 problems was told errors had been suppressed.
+- **A PE section named `.idata` or `.rsrc` was silently overwritten** by the
+  sections `BuildPE` appends and back-patches by name. `checkPe` now rejects
+  the reserved names.
+- **`runJobs` did not deliver the determinism its doc claimed** — the error
+  returned was the lowest-numbered among the jobs that had *started*, which
+  depends on scheduling. The code was fixed rather than the comment.
+- **Two discarded parse errors.** `20000w` overflowed int64 nanoseconds to a
+  negative duration that flowed into `baseTime.Add`; a 20-digit `delete_lines`
+  passed validation as `MaxInt` because `strconv.Atoi`'s range error was
+  dropped and Go returns a clamped value.
+- **Archive problems were filed under the wrong YAML key**, so the line and
+  column pointed at whatever chose the target rather than at `archive.members`.
+- **A latent unsoundness in the Windows stream walk.** The buffer handed to
+  `GetFileInformationByHandleEx` was stack-allocated and worked only by luck of
+  escape analysis; adding any bounds check reproducibly broke the syscall with
+  `ERROR_NOACCESS`. Fixed with `runtime.Pinner`, after which the bounds checks
+  the walk was missing apply safely.
+- **`pathpolicy.Source` was platform-dependent** inside a package whose doc
+  promises the rules are identical everywhere: `filepath.IsAbs` made
+  `Source("C:/evil.txt")` external on Windows and an error on Linux. A drive
+  letter is now external on every OS, with a test for it.
+- **`runinfo.writeAtomic` was not atomic** — no `Sync` before the rename, a
+  fixed `.tmp` name two runs sharing a `--meta` directory would clobber, and the
+  temp file left behind on failure.
+- **`schema.typeToSchema` silently accepted anything it did not understand**,
+  returning an empty schema that constrains nothing. It now panics, so a new
+  `spec` type cannot quietly publish a broken schema.
+- **`tools/gate` leaked its temp directory on every failing run**, holding up to
+  eight cross-compiled binaries, because `os.Exit` skipped the deferred cleanup.
+
+Two known problems were left alone on purpose and are documented where they
+live: the sort key in `internal/testutil.pathOf` (correct only by luck for paths
+with spaces; fixing it re-records 30 golden fixtures on both platforms) and the
+silent capability downgrade in `sandbox.probeVolume` (failing the run instead
+could break real use on network shares, and cannot be tested here).
+
+### Release builds (6b5b91a)
+
+`build.sh` and `build.ps1` each take no arguments and write six binaries —
+Windows, Linux and macOS on amd64 and arm64 — plus a `sha256sum`-compatible
+`SHA256SUMS` into `dist/`. Both produce byte-identical checksums for the same
+commit and toolchain, because `-trimpath` and `CGO_ENABLED=0` make the builds
+reproducible; which script runs does not matter. The version in each filename
+comes from `git describe`, and the version `--version` reports comes from Go's
+own VCS stamping, so neither needs a linker flag.
+
+### Verified on
+
+At bcd403d, the full suite on Windows 11, Windows Server 2025 (26100), Windows
+Server 2016 (14393), Ubuntu 24.04 on ext4 and Fedora 40 on btrfs: 13 of 13
+packages pass on each, and the golden subtests are 30 pass, 0 skip, 0 fail
+everywhere. Every test that skips on one of those hosts runs and passes on
+another, so between them nothing in the suite is left unexercised. The race
+detector ran on Windows 11 only, since the VM binaries are cross-compiled with
+`CGO_ENABLED=0` and the detector needs cgo. macOS and FreeBSD are still compiled
+on every change and have never been run.
+
+## P5: packaging, platform and documentation (51444b2)
 
 Generator version: **5**, unchanged. Nothing fsagen writes changes in this
 phase. What changes is what it can be held to: an acceptance scenario for the
@@ -200,7 +300,7 @@ theoretical: on tmpfs and btrfs statx reports a birth time and the timeline
 has to match it, and there statx reports none and the timeline has to say
 unknown instead of putting another time in its place.
 
-## Unreleased: P4, artefacts forensic tools can actually parse
+## P4: artefacts forensic tools can actually parse (b44fe70)
 
 Generator version: **5**. Every file whose extension promises a format now
 holds one, so the bytes of those files change, and so do the examples that
@@ -460,7 +560,7 @@ not the only one.
 | F-IN-8 | a `ref` naming several files silently takes the first | TestAttachmentRefNamingSeveralFiles |
 | D-10 | a docx loses its `created` date | TestTypedFormatsParse |
 
-## Unreleased: P3, timelines and ground truth
+## P3: timelines and ground truth (03ce79a)
 
 Generator version: **4**. File and stream contents and the dry-run listing are
 unchanged for every example (the v4 goldens equal v3's). The ledger gains
