@@ -150,10 +150,17 @@ for target in "${TARGETS[@]}"; do
 	goos=${target%/*} goarch=${target#*/}
 	name=$(artifact "$goos" "$goarch")
 	t0=$(now_ms)
-	# -trimpath keeps the build host's paths out of the binary and -X puts the
-	# version in; the revision printed beside it is Go's own VCS stamping.
+	# A release build. -trimpath keeps the build host's paths out of the binary,
+	# -s -w drop the symbol table and DWARF (about a third of the size), and -X
+	# puts the version in; the revision printed beside it is Go's own VCS
+	# stamping. There is no optimisation level to raise -- Go always optimises
+	# unless -gcflags all=-N -l asks it not to -- so stripping is the whole of
+	# what a release build means here. A panic still names its functions, files
+	# and lines: those come from the pclntab, which -s -w leave alone. Only a
+	# debugger loses anything, so do not "restore" these thinking a crash
+	# report would otherwise be unreadable.
 	if log=$(CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch \
-		go build -trimpath -ldflags "-X $STAMP=$VERSION" -o "$DIST/$name" . 2>&1); then
+		go build -trimpath -ldflags "-s -w -X $STAMP=$VERSION" -o "$DIST/$name" . 2>&1); then
 		printf '    %s  %-14s %-52s %9s  %5ss\n' "$(ok)" "$target" "$name" \
 			"$(human "$(size_of "$DIST/$name")")" "$(secs $(( $(now_ms) - t0 )) )"
 		built+=("$name")

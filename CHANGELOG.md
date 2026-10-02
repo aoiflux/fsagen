@@ -93,7 +93,7 @@ the covering test it never had, which catches a refinement naming a field the
 struct does not have — the silent half of the mistake its type assertions used
 to make loudly.
 
-### The release scripts take the version (5e9dbb3, bd5e22c)
+### The release scripts take the version, and strip what they build (5e9dbb3, bd5e22c)
 
 `./build.sh v0.1.0` and `.\build.ps1 v0.1.0` build that version: it names every
 asset and is stamped into the binaries with `-ldflags -X`, so `fsagen --version`
@@ -112,6 +112,18 @@ changes. `runinfo.Build` prefers the stamped version and takes the revision from
 the toolchain regardless, so the commit behind a binary stays checkable against
 the tag whatever the version claims. Both scripts still write byte-identical
 checksums for the same version and toolchain, checked across the two.
+
+What they build is now a release build. `-s -w` drop the symbol table and the
+DWARF data, on top of the `-trimpath` that was already there, which takes the
+six assets from 85 MiB to 54. Nothing diagnostic goes with them: a panic still
+names its functions, files and lines, because those come from the pclntab rather
+than from either section stripped — so do not put the symbols back thinking a
+crash report would otherwise be unreadable. Nothing generated moves either; the
+same playbook run through a stripped and an unstripped binary writes the same
+287 digests. Go has no optimisation level to raise — it always optimises unless
+`-gcflags all=-N -l` asks it not to — so stripping is the whole of what a
+release build means here. The published checksums change with it, which is
+checked across both scripts as before.
 
 ### The bulk corpus is pinned by a golden (b5ecf68)
 

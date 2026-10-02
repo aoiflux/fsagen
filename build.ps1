@@ -152,9 +152,16 @@ foreach ($t in $Targets) {
     $label = "$($t.OS)/$($t.Arch)"
     $name = Get-ArtifactName $t.OS $t.Arch
     $sw = [Diagnostics.Stopwatch]::StartNew()
-    # -trimpath keeps the build host's paths out of the binary and -X puts the
-    # version in; the revision printed beside it is Go's own VCS stamping.
-    $r = Invoke-Go @('build', '-trimpath', '-ldflags', "-X $Stamp=$Version",
+    # A release build. -trimpath keeps the build host's paths out of the binary,
+    # -s -w drop the symbol table and DWARF (about a third of the size), and -X
+    # puts the version in; the revision printed beside it is Go's own VCS
+    # stamping. There is no optimisation level to raise -- Go always optimises
+    # unless -gcflags all=-N -l asks it not to -- so stripping is the whole of
+    # what a release build means here. A panic still names its functions, files
+    # and lines: those come from the pclntab, which -s -w leave alone. Only a
+    # debugger loses anything, so do not "restore" these thinking a crash
+    # report would otherwise be unreadable.
+    $r = Invoke-Go @('build', '-trimpath', '-ldflags', "-s -w -X $Stamp=$Version",
                      '-o', (Join-Path $Dist $name), '.') `
                    @{ CGO_ENABLED = '0'; GOOS = $t.OS; GOARCH = $t.Arch }
     $sw.Stop()

@@ -132,8 +132,8 @@ for your shell with the version to build. Both write to `dist/` and produce the
 same `SHA256SUMS` for the same version and toolchain:
 
 ```sh
-./build.sh v0.1.0       # POSIX
-.\build.ps1 v0.1.0      # Windows
+./build.sh v0.2.0       # POSIX
+.\build.ps1 v0.2.0      # Windows
 ```
 
 ```text
@@ -152,6 +152,13 @@ the binaries, so `fsagen --version` reports it too — the build fails if it doe
 not. Leave it out and both scripts fall back to `git describe`
 (`v0.1.0-2-gda99bb6` two commits after a tag), which is what a test build wants;
 a release should be built from its tag, and the scripts say so when it is not.
+
+Both scripts produce release builds: `-trimpath` keeps the build host's paths
+out, and `-s -w` drop the symbol table and DWARF, which is about a third of the
+size. A panic still names its functions, files and lines — those come from the
+pclntab, not from either section stripped — so only a debugger loses anything.
+Go has no optimisation level to raise; `go build` always optimises. For a
+debuggable binary use the plain `go build` above.
 
 Released under the MIT License (see `LICENSE`).
 
