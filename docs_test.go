@@ -13,6 +13,9 @@ import (
 // docFiles are the documents that name tests as evidence for a claim.
 // CHANGELOG.md is deliberately not among them: it is a record of what was
 // true when each phase landed, so it keeps the names those tests had then.
+// The release notes under docs/releases/ are excluded for the same reason —
+// each one describes a version that has shipped and does not change with the
+// tree.
 var docFiles = []string{"README.md", "TIMELINE_FEATURE.md", filepath.Join("docs", "testing.md")}
 
 var (

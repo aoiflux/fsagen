@@ -575,6 +575,9 @@ Available templates: `email`, `log`, `script`, `doc`
   beaconing, lateral-movement logs named from `${IP:10.10.0.0/16}`, and
   anti-forensics
 
+`examples/INVESTIGATION_WORKFLOW.md` walks that last one end to end — generate,
+timeline, `mactime`, and what the answer key says a tool should find.
+
 ## Email, PDF and Ansible vault
 
 ### `email` action
@@ -1278,15 +1281,23 @@ phishing message to a real gap in a beacon log.
 
 1. `go run ./tools/gate`, and run the suite on the platforms whose goldens the
    change touches (see _Platform support_).
-2. Tag the commit you are releasing, and pass that tag to the build script. The
+2. Close the changelog: the `## Unreleased:` sections become `###` subsections
+   of one `## v<version> — <summary> (<date>)`, with a `### Verified on` saying
+   which hosts ran what. Leaving them open is how five of them once piled up.
+3. Write `docs/releases/v<version>.md`, which is the release body: what changed
+   for someone upgrading, and whether a corpus they already generated still
+   reproduces. Release notes are not in `docs_test.go`'s `docFiles` — like the
+   changelog, each describes a version that has shipped and does not move with
+   the tree.
+4. Tag the commit you are releasing, and pass that tag to the build script. The
    version you pass names every asset and is stamped into the binaries, so
    `fsagen --version` reports the release rather than a pseudo-version.
-3. `./build.sh v0.1.0` or `.\build.ps1 v0.1.0` — six binaries and a
+5. `./build.sh v0.2.0` or `.\build.ps1 v0.2.0` — six binaries and a
    `SHA256SUMS` into `dist/`. Both produce the same checksums for the same
    version and toolchain, so it does not matter which one runs; each warns if
    the commit is not tagged, or is tagged as something else.
-4. Publish `dist/` as the release assets and write the release notes as the
-   body. The asset names carry the version the binaries themselves report,
+6. Publish `dist/` as the release assets, with `docs/releases/v<version>.md` as
+   the body. The asset names carry the version the binaries themselves report,
    because the build fails when the two disagree.
 
 ### Dependencies
