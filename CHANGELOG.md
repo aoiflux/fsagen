@@ -1,5 +1,78 @@
 # Changelog
 
+## Unreleased: the golden harness sorts by path
+
+`testutil.Fingerprint` describes a tree one line per entry and sorts them, and
+every golden claim in the suite rests on that order being a property of the tree
+rather than of the run. For a path containing a space it was neither. The sort
+key was recovered from the finished line as its last space-delimited token, so
+`Users/User1/AppData/Local/Google/Chrome/User Data/Default/History` sorted under
+`Data/Default/History` — above the `Users/` directory that contains it — and two
+paths whose last segments matched compared equal under a `sort.Slice` that is
+not stable, leaving their order to the sort.
+
+The key is now carried from the path the line was built from, the way
+`runinfo.Sums` has always carried it in a `sumLine` field rather than parsing it
+back out. It keeps the shape it had — a directory's trailing slash and a
+stream's `:<stream>` suffix are part of it — so the fix reorders only the lines
+it actually affected, and equal keys fall back to the whole line, which makes the
+order total rather than merely stable.
+
+Six fixtures moved: `playbook-browsing`, `playbook-comprehensive-ransomware` and
+`playbook-malware-lifecycle`, under both `windows/` and `linux/`, by 3, 4 and 4
+lines each — exactly the number of space-containing paths in each. Every
+re-record was checked to be a permutation, the sorted set of lines hashing
+identically before and after, so no digest, size or name changed anywhere and
+`constant.GeneratorVersion` stays **6**. This is the harness's recording order,
+not anything fsagen writes.
+
+Re-recording meant deleting those six first, because `CheckGolden` refuses to
+rewrite a golden whose input hash is unchanged even with `-update` — the guard
+that makes a moved byte a hard failure rather than a fixture edit. That cost is
+why this was left alone at v0.1.0, listed there as one of two known problems kept
+on purpose. The other, the silent capability downgrade in `sandbox.probeVolume`,
+still stands: failing the run instead could break real use on a network share,
+and it cannot be tested here.
+
+`internal/testutil` had no test of its own and now has one.
+`TestFingerprintSortsByPath` builds a tree holding both halves of the flaw —
+`a b/c`, which sorted after `a/b`, and `p q/same` beside `r q/same`, which
+compared equal — and pins the whole order. Reverting the key to the old
+last-token form fails it on both counts.
+
+## Unreleased: the bulk corpus is pinned by a golden
+
+Generator version 6 changed the bytes of the bulk `.eml`, `.mbox` and `.pdf` and
+moved not one of the 135 golden files, because every shipped example is a
+manifest or a playbook. Nothing recorded covered `--bulk` at all, so a change to
+any of the twenty-one generators behind it could alter the largest output fsagen
+writes while the whole suite stayed green. That is the one gap this pass found
+that was not in the original plan, and `TestBulkGoldens` closes it.
+
+Two corpora are pinned by fingerprint: `one-of-each` (seed 7, one directory, one
+file of every kind — short enough to read, and it lists all twenty-one) and
+`two-levels` (seed 7, limit 2, depth 2 — repeats a kind within a directory and
+nests, which is what exercises the deterministic name-retry in `Plan`). Both are
+platform-independent and live beside the dry-run goldens rather than under an OS
+directory: a fingerprint records names, sizes and digests but never times, and a
+bulk file's bytes come from the seed and the start time alone. Recorded on
+Windows, they pass unchanged on Ubuntu 24.04/ext4.
+
+The guard was checked rather than assumed. Changing `genMarkdown`'s heading from
+`#` to `##` — one character in one of the twenty-one — fails both subtests,
+names the `.md` file in each corpus, and says to bump `constant.GeneratorVersion`
+rather than edit the fixture. The input hash for a corpus is the seed and shape
+rather than a file, through a new `testutil.SpecHash`, so changing what is
+generated re-records the golden while the same request producing different bytes
+stays a hard failure.
+
+The documented golden invariant is unchanged at **30 subtests, 0 skips** for
+`TestExampleContentGoldens|TestDryRunGoldens`; the bulk goldens are 2 more
+subtests on top, and the tree holds 137 files. README now says which golden
+directories are platform-independent and which are not, and `docs/testing.md`
+records that F-DET-1 is covered twice over: `TestBulkDeterministic` for a corpus
+stable within a run, `TestBulkGoldens` for it being the recorded one.
+
 ## Unreleased: the bulk eml, mbox and pdf come from the real builders (generator version 6)
 
 The bulk corpus wrote its own email and its own PDF. `genEml` and `genMbox`

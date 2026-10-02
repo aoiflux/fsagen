@@ -53,7 +53,7 @@ file and in the README is a test that still exists.
 
 | Finding | What it was | Verified by |
 |---|---|---|
-| F-DET-1 | Bulk mode is not deterministic | `TestBulkDeterministic` |
+| F-DET-1 | Bulk mode is not deterministic | `TestBulkDeterministic` (the same seed gives the same corpus however the workers are scheduled) and `TestBulkGoldens` (the corpus is the one recorded for this generator version, not merely stable within a run) |
 | F-DET-2 | Bulk mode exits while generators are still writing (19 waited for, 20 launched) | `TestBulkNoJournalExactCounts`, `TestBulkErrorReturnedNoLeak` |
 | F-DET-3 | Wall-clock time leaks into generated content | `TestNoWallClockInContent`, `TestStartNowFlagged` |
 | F-DET-4 | Timeline files are never reproducible | `TestModelledTimelineIdenticalAcrossRuns`, `TestTimelineZoneIndependent`, `TestNoWallClockInTimeline` |
@@ -153,6 +153,16 @@ file and in the README is a test that still exists.
 | Finding | What it was | Verified by |
 |---|---|---|
 | F-PLAT-6 | Almost no tests | this document, and the suite it indexes |
+
+The harness the golden tests are built on is itself tested, by
+`TestFingerprintSortsByPath`. Every golden claim above rests on a fingerprint
+being a stable description of a tree, and that held only by luck for a path
+containing a space: the sort key was recovered from the finished line as its
+last space-delimited token, so `.../Chrome/User Data/Default/History` sorted
+under `Data/Default/History`, and two paths whose last segments matched
+compared equal under a sort that is not stable. Six recorded fixtures were
+affected. The key is now carried from the path, and the test fails if it is
+recovered from the line again.
 
 ## Documentation
 

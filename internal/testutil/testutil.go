@@ -33,13 +33,16 @@ func Fingerprint(dir string) (string, error) {
 	}
 	defer fsys.Close()
 
-	var lines []string
+	var entries []entry
 	addStream := func(name, stream string) error {
 		data, err := fsys.ReadStream(name, stream)
 		if err != nil {
 			return err
 		}
-		lines = append(lines, fmt.Sprintf("s %s %d %s:%s", sum(data), len(data), name, stream))
+		entries = append(entries, entry{
+			key:  name + ":" + stream,
+			line: fmt.Sprintf("s %s %d %s:%s", sum(data), len(data), name, stream),
+		})
 		return nil
 	}
 	addStreams := func(name string) error {
@@ -63,37 +66,50 @@ func Fingerprint(dir string) (string, error) {
 			return nil
 		}
 		if d.IsDir() {
-			lines = append(lines, "d "+name+"/")
+			entries = append(entries, entry{key: name + "/", line: "d " + name + "/"})
 			return addStreams(name)
 		}
 		data, err := fsys.ReadFile(name)
 		if err != nil {
 			return err
 		}
-		lines = append(lines, fmt.Sprintf("f %s %d %s", sum(data), len(data), name))
+		entries = append(entries, entry{
+			key:  name,
+			line: fmt.Sprintf("f %s %d %s", sum(data), len(data), name),
+		})
 		return addStreams(name)
 	})
 	if err != nil {
 		return "", err
 	}
-	sort.Slice(lines, func(i, j int) bool { return pathOf(lines[i]) < pathOf(lines[j]) })
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].key != entries[j].key {
+			return entries[i].key < entries[j].key
+		}
+		return entries[i].line < entries[j].line
+	})
+	lines := make([]string, len(entries))
+	for i, e := range entries {
+		lines[i] = e.line
+	}
 	return strings.Join(lines, "\n") + "\n", nil
 }
 
-// pathOf is the sort key of a fingerprint line.
+// entry is one fingerprint line and the key it sorts under. The key is carried
+// from the path the line was built from, the way runinfo.Sums already does it.
+// Recovering it from the finished line instead meant taking the last
+// space-delimited token, so a path containing a space sorted under its last
+// segment alone — "…/Chrome/User Data/Default/History" under
+// "Data/Default/History" — and two such paths with matching last segments
+// compared equal, leaving their order up to an unstable sort.
 //
-// KNOWN FLAW: it returns the last space-delimited token rather than the path, so
-// a path containing a space sorts under its last segment only, and two such
-// paths whose last segments match compare equal under an unstable sort. Fixing
-// it means carrying the path beside the line, as runinfo.Sums already does, and
-// re-recording the examples goldens on every platform, so it is left for the
-// owner to decide rather than changed here.
-func pathOf(line string) string {
-	fields := strings.Fields(line)
-	if len(fields) == 0 {
-		return ""
-	}
-	return fields[len(fields)-1]
+// The key keeps the shape it had: a directory's trailing slash and a stream's
+// ":<stream>" suffix are part of it, so fixing the flaw reorders only the lines
+// it actually affected. Equal keys fall back to the whole line, which makes the
+// order total rather than merely stable.
+type entry struct {
+	key  string
+	line string
 }
 
 func sum(b []byte) string {
@@ -111,6 +127,13 @@ func InputHash(t testing.TB, path string) string {
 	}
 	return sum(bytes.ReplaceAll(data, []byte("\r"), nil))
 }
+
+// SpecHash is the input hash for a golden whose input is not a file but a
+// description of what to generate — a seed and the shape of the corpus. It
+// plays exactly the part InputHash plays for a YAML example: changing the
+// description re-records the golden, while the same description producing
+// different bytes is a hard failure that calls for a new GeneratorVersion.
+func SpecHash(spec string) string { return sum([]byte(spec)) }
 
 const inputHeader = "# input-sha256 "
 

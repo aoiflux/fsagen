@@ -37,6 +37,10 @@ f 320860c2edc8ca8b01560d76908549688fb56e44fe9fd3284e452fcd13f436a9 8192 C/Users/
 d C/Users/victim/AppData/Roaming/
 d C/Users/victim/AppData/Roaming/Microsoft/
 d C/Users/victim/AppData/Roaming/Microsoft/Windows/
+d C/Users/victim/AppData/Roaming/Microsoft/Windows/Start Menu/
+d C/Users/victim/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/
+d C/Users/victim/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/
+f 42ecd54caf060feb25c56ff11f59e305c3dbbe97a020796968a7daf2267e4665 147 C/Users/victim/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/updater.bat
 d C/Users/victim/Desktop/
 f 32c79a217f2416982b9704e158ad08d4b7c5923d78b1902c3bcabe8f2a1752b0 1024 C/Users/victim/Desktop/2BEQC4R3RXHH.encrypted
 f 1d40e2e5d5b3c841e0ba40e85b876edde033fb6c28f21b36a57353efa46bcd3c 1024 C/Users/victim/Desktop/2QMNPFG4FICS.encrypted
@@ -121,7 +125,3 @@ d C/Windows/System32/
 d C/Windows/System32/winevt/
 d C/Windows/System32/winevt/Logs/
 f c51ca2875bd562d3faba947c172234f378a7fc43e383ce49aed9cd8135674811 512 C/Windows/System32/winevt/Logs/Security.evtx
-d C/Users/victim/AppData/Roaming/Microsoft/Windows/Start Menu/
-d C/Users/victim/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/
-d C/Users/victim/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/
-f 42ecd54caf060feb25c56ff11f59e305c3dbbe97a020796968a7daf2267e4665 147 C/Users/victim/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/updater.bat
