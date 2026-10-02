@@ -2,6 +2,7 @@ package libgen
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"hash/crc32"
 	"image"
@@ -47,8 +48,8 @@ func PNG(w, h int, s *prng.Stream, pad []byte) ([]byte, error) {
 	var out bytes.Buffer
 	out.Write(pngMagic)
 	var ihdr bytes.Buffer
-	putBE32(&ihdr, uint32(w))
-	putBE32(&ihdr, uint32(h))
+	ihdr.Write(binary.BigEndian.AppendUint32(nil, uint32(w)))
+	ihdr.Write(binary.BigEndian.AppendUint32(nil, uint32(h)))
 	ihdr.Write([]byte{8, 2, 0, 0, 0}) // depth 8, truecolour, deflate, adaptive filtering, no interlace
 	pngChunk(&out, "IHDR", ihdr.Bytes())
 	pngChunk(&out, "IDAT", zlibStored(raw))
@@ -60,17 +61,13 @@ func PNG(w, h int, s *prng.Stream, pad []byte) ([]byte, error) {
 }
 
 func pngChunk(w *bytes.Buffer, kind string, data []byte) {
-	putBE32(w, uint32(len(data)))
+	w.Write(binary.BigEndian.AppendUint32(nil, uint32(len(data))))
 	w.WriteString(kind)
 	w.Write(data)
 	h := crc32.NewIEEE()
 	h.Write([]byte(kind))
 	h.Write(data)
-	putBE32(w, h.Sum32())
-}
-
-func putBE32(w *bytes.Buffer, v uint32) {
-	w.Write([]byte{byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)})
+	w.Write(binary.BigEndian.AppendUint32(nil, h.Sum32()))
 }
 
 // jpegQuality is fixed so the bytes depend on nothing but the pixels.

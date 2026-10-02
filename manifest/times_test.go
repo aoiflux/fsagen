@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -436,9 +437,12 @@ func TestEmailTimesFromDate(t *testing.T) {
 // output), the tree is settled again; when they keep moving, the error says
 // why. Any other time that moved fails at once.
 func TestSettleRetriesOnlyForAccessTimes(t *testing.T) {
-	retries := []time.Duration{0, 0}
+	// Real pauses, taken through an injected clock: the test asserts which of
+	// them were waited out without waiting any of them, which it could not do
+	// while the only way to keep it quick was to declare them all zero.
+	retries := []time.Duration{time.Hour, 2 * time.Hour}
 
-	run := func(move func(fsys *sandbox.FS, round int)) (error, int) {
+	run := func(move func(fsys *sandbox.FS, round int)) (error, int, []time.Duration) {
 		dir := t.TempDir()
 		root := filepath.Join(dir, "out")
 		os.Mkdir(root, 0o755)
@@ -455,8 +459,10 @@ func TestSettleRetriesOnlyForAccessTimes(t *testing.T) {
 			t.Fatal(err)
 		}
 		rounds := 0
+		var waited []time.Duration
 		ctx.AfterSettle = func(round int) { rounds++; move(fsys, round) }
-		return SettleAndVerify(ctx, prog.Model), rounds
+		ctx.Sleep = func(d time.Duration) { waited = append(waited, d) }
+		return SettleAndVerify(ctx, prog.Model), rounds, waited
 	}
 	later := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 	touch := func(fsys *sandbox.FS, field string) {
@@ -471,7 +477,7 @@ func TestSettleRetriesOnlyForAccessTimes(t *testing.T) {
 		}
 	}
 
-	err, rounds := run(func(fsys *sandbox.FS, round int) {
+	err, rounds, waited := run(func(fsys *sandbox.FS, round int) {
 		if round == 0 {
 			touch(fsys, "atime")
 		}
@@ -479,14 +485,23 @@ func TestSettleRetriesOnlyForAccessTimes(t *testing.T) {
 	if err != nil || rounds != 2 {
 		t.Errorf("one read after settling: err %v after %d settles, want success after 2", err, rounds)
 	}
+	if !slices.Equal(waited, retries[:1]) {
+		t.Errorf("one read after settling: waited %v, want only the first pause %v", waited, retries[:1])
+	}
 
-	err, rounds = run(func(fsys *sandbox.FS, round int) { touch(fsys, "atime") })
+	err, rounds, waited = run(func(fsys *sandbox.FS, round int) { touch(fsys, "atime") })
 	if err == nil || rounds != 3 || !strings.Contains(err.Error(), "another process") {
 		t.Errorf("reads that never stop: err %v after %d settles", err, rounds)
 	}
+	if !slices.Equal(waited, retries) {
+		t.Errorf("reads that never stop: waited %v, want every pause %v", waited, retries)
+	}
 
-	err, rounds = run(func(fsys *sandbox.FS, round int) { touch(fsys, "mtime") })
+	err, rounds, waited = run(func(fsys *sandbox.FS, round int) { touch(fsys, "mtime") })
 	if err == nil || rounds != 1 || strings.Contains(err.Error(), "another process") {
 		t.Errorf("a moved mtime: err %v after %d settles, want a plain failure after 1", err, rounds)
+	}
+	if len(waited) != 0 {
+		t.Errorf("a moved mtime: waited %v, want no pause at all: only access times are worth retrying", waited)
 	}
 }

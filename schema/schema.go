@@ -150,7 +150,7 @@ func baseDefs() map[string]any {
 		},
 		"OperationAction": map[string]any{
 			"type": "string",
-			"enum": compile.Actions,
+			"enum": spec.ActionNames(),
 		},
 	}
 }
@@ -425,7 +425,7 @@ func commonOperationProps(props map[string]any) {
 
 func operationConditionals(playbook bool) []any {
 	var out []any
-	for _, action := range compile.Actions {
+	for _, action := range spec.Actions {
 		then := map[string]any{
 			"propertyNames": map[string]any{"enum": compile.AllowedFields(action, playbook)},
 		}
@@ -470,13 +470,13 @@ func operationConditionals(playbook bool) []any {
 // allFormats is every format value any action accepts, for the property
 // schema; the per-action allOf narrows it to the ones that action takes.
 func allFormats() []string {
-	seen := map[string]bool{}
+	seen := map[spec.Format]bool{}
 	var out []string
-	for _, action := range compile.Actions {
+	for _, action := range spec.Actions {
 		for _, f := range compile.Formats[action] {
 			if !seen[f] {
 				seen[f] = true
-				out = append(out, f)
+				out = append(out, string(f))
 			}
 		}
 	}
@@ -485,7 +485,7 @@ func allFormats() []string {
 
 // targetChoices is the schema for "exactly one of path, ref and refs", listing
 // only the ones this action takes.
-func targetChoices(action string) []any {
+func targetChoices(action spec.ActionName) []any {
 	var out []any
 	for _, t := range []string{"path", "ref", "refs"} {
 		if slices.Contains(compile.Fields[action], t) {

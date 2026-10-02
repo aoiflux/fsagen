@@ -31,50 +31,50 @@ func buildContent(c compile.Op) ([]byte, error) {
 	body := contentOf(c)
 
 	switch op.Format {
-	case "", "raw", "text":
+	case "", spec.FormatRaw, spec.FormatText:
 		return body, nil
 
-	case "pdf":
+	case spec.FormatPDF:
 		meta, err := pdfMeta(op)
 		if err != nil {
 			return nil, err
 		}
 		return libgen.RenderPDF(string(body), meta)
 
-	case "docx":
+	case spec.FormatDOCX:
 		meta, err := docxMeta(op, c.When)
 		if err != nil {
 			return nil, err
 		}
 		return libgen.Docx(string(body), meta)
 
-	case "pe":
+	case spec.FormatPE:
 		return buildPE(c, body)
 
-	case "zip":
+	case spec.FormatZip:
 		return libgen.ZipFiller("data.bin", body, c.When)
 
-	case "png":
+	case spec.FormatPNG:
 		return libgen.PNG(libgen.DefaultImageSize, libgen.DefaultImageSize, c.Rand.Derive("image").Stream(), body)
 
-	case "jpeg":
+	case spec.FormatJPEG:
 		return libgen.JPEG(libgen.DefaultImageSize, libgen.DefaultImageSize, c.Rand.Derive("image").Stream(), body)
 
-	case "mp4":
+	case spec.FormatMP4:
 		return libgen.MP4(c.When, mp4Duration, 320, 240, body), nil
 
-	case "chrome_history", "firefox_places":
+	case spec.FormatChromeHistory, spec.FormatFirefoxPlaces:
 		hist, err := historyOf(c)
 		if err != nil {
 			return nil, err
 		}
 		s := c.Rand.Derive("history").Stream()
-		if op.Format == "chrome_history" {
+		if op.Format == spec.FormatChromeHistory {
 			return libgen.ChromeHistory(hist, s)
 		}
 		return libgen.FirefoxPlaces(hist, s)
 	}
-	return nil, fmt.Errorf("unknown format %q (want one of: %s)", op.Format, strings.Join(compile.TypedFormats, ", "))
+	return nil, fmt.Errorf("unknown format %q (want one of: %s)", op.Format, strings.Join(spec.FormatNames(compile.TypedFormats), ", "))
 }
 
 func docxMeta(op spec.Operation, when time.Time) (libgen.DocxMeta, error) {

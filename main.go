@@ -830,7 +830,7 @@ func (r *timelineRequest) write(stdout io.Writer, root string, modelled *timelin
 	if err := tl.Write(&buf, r.format); err != nil {
 		return nil, fmt.Errorf("write timeline: %w", err)
 	}
-	if err := os.WriteFile(r.file, buf.Bytes(), 0o644); err != nil {
+	if err := os.WriteFile(r.file, buf.Bytes(), sandbox.FileMode); err != nil {
 		return nil, fmt.Errorf("write timeline: %w", err)
 	}
 	fmt.Fprintf(stdout, "Timeline written to: %s\n", r.file)
@@ -921,7 +921,7 @@ func writeInputSchemas(outputDir string) (string, string, error) {
 	if strings.EqualFold(filepath.Ext(outputDir), ".json") {
 		outputDir = filepath.Dir(outputDir)
 	}
-	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+	if err := os.MkdirAll(outputDir, sandbox.DirMode); err != nil {
 		return "", "", fmt.Errorf("prepare schema output directory: %w", err)
 	}
 
@@ -937,10 +937,10 @@ func writeInputSchemas(outputDir string) (string, string, error) {
 		return "", "", fmt.Errorf("build playbook schema: %w", err)
 	}
 
-	if err := os.WriteFile(manifestPath, manifestSchema, 0o644); err != nil {
+	if err := os.WriteFile(manifestPath, manifestSchema, sandbox.FileMode); err != nil {
 		return "", "", fmt.Errorf("write manifest schema: %w", err)
 	}
-	if err := os.WriteFile(playbookPath, playbookSchema, 0o644); err != nil {
+	if err := os.WriteFile(playbookPath, playbookSchema, sandbox.FileMode); err != nil {
 		return "", "", fmt.Errorf("write playbook schema: %w", err)
 	}
 	return manifestPath, playbookPath, nil

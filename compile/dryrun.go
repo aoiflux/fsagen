@@ -9,34 +9,35 @@ import (
 	"time"
 
 	"github.com/aoiflux/fsagen/model"
+	"github.com/aoiflux/fsagen/spec"
 )
 
 // dryRunOp is one line of --dry-run output. Field order and omission rules
 // are fixed so the listing is byte-stable for a given input and seed.
 type dryRunOp struct {
-	N             int        `json:"n"`
-	Src           string     `json:"src"`
-	At            string     `json:"at,omitempty"`
-	Action        string     `json:"action"`
-	Path          string     `json:"path,omitempty"`
-	NewPath       string     `json:"new_path,omitempty"`
-	Dir           bool       `json:"dir,omitempty"`
-	ID            string     `json:"id,omitempty"`
-	ContentBytes  *int       `json:"content_bytes,omitempty"`
-	ContentSHA256 string     `json:"content_sha256,omitempty"`
-	RandomBytes   int        `json:"random_bytes,omitempty"`
-	Format        string     `json:"format,omitempty"`
-	Mode          string     `json:"mode,omitempty"`
-	Times         *TimesJSON `json:"times,omitempty"`
-	Members       []string   `json:"members,omitempty"`
-	ContentKind   string     `json:"content_kind,omitempty"`
-	Stream        string     `json:"stream,omitempty"`
-	ZoneID        *int       `json:"zone_id,omitempty"`
-	HostURL       string     `json:"host_url,omitempty"`
-	ReferrerURL   string     `json:"referrer_url,omitempty"`
-	EmailSubject  string     `json:"email_subject,omitempty"`
-	NoOp          string     `json:"noop,omitempty"`
-	Skip          string     `json:"skip,omitempty"`
+	N             int             `json:"n"`
+	Src           string          `json:"src"`
+	At            string          `json:"at,omitempty"`
+	Action        spec.ActionName `json:"action"`
+	Path          string          `json:"path,omitempty"`
+	NewPath       string          `json:"new_path,omitempty"`
+	Dir           bool            `json:"dir,omitempty"`
+	ID            string          `json:"id,omitempty"`
+	ContentBytes  *int            `json:"content_bytes,omitempty"`
+	ContentSHA256 string          `json:"content_sha256,omitempty"`
+	RandomBytes   int             `json:"random_bytes,omitempty"`
+	Format        spec.Format     `json:"format,omitempty"`
+	Mode          string          `json:"mode,omitempty"`
+	Times         *TimesJSON      `json:"times,omitempty"`
+	Members       []string        `json:"members,omitempty"`
+	ContentKind   string          `json:"content_kind,omitempty"`
+	Stream        string          `json:"stream,omitempty"`
+	ZoneID        *int            `json:"zone_id,omitempty"`
+	HostURL       string          `json:"host_url,omitempty"`
+	ReferrerURL   string          `json:"referrer_url,omitempty"`
+	EmailSubject  string          `json:"email_subject,omitempty"`
+	NoOp          string          `json:"noop,omitempty"`
+	Skip          string          `json:"skip,omitempty"`
 }
 
 // TimesJSON is a set of intended times as RFC 3339 strings with nanoseconds;
@@ -101,7 +102,7 @@ func WriteDryRun(w io.Writer, p *Program) error {
 		case op.Random > 0:
 			line.RandomBytes = op.Random
 		}
-		if op.Action == "motw" {
+		if op.Action == spec.ActionMOTW {
 			z := op.ZoneID
 			line.ZoneID = &z
 		}

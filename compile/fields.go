@@ -6,34 +6,29 @@ import (
 	"strings"
 
 	"github.com/aoiflux/fsagen/libgen"
+	"github.com/aoiflux/fsagen/spec"
 )
-
-// Actions is the closed set of action names, in documentation order.
-var Actions = []string{
-	"create", "update", "append", "edit", "delete", "mace", "rename", "copy",
-	"truncate", "rotate", "archive", "email", "ansible-vault", "ads", "motw",
-}
 
 // Fields lists, per action, every YAML key a manifest operation or playbook
 // action may carry besides "action" itself. It is the single source for both
 // validation and the JSON Schema, so the two cannot drift. A key an action
 // does not use is an error rather than a silently ignored no-op.
-var Fields = map[string][]string{
-	"create":        {"path", "id", "type", "ext", "content", "content_len", "content_kind", "content_file", "render", "template", "mode", "format", "pdf", "docx", "pe", "history", "atime", "mtime", "ctime", "crtime"},
-	"update":        {"path", "ref", "content", "content_len", "content_kind", "content_file", "render", "template", "mode", "format", "pdf", "docx", "pe", "history", "atime", "mtime", "ctime", "crtime"},
-	"append":        {"path", "ref", "id", "content", "content_len", "content_kind", "content_file", "render", "template", "mode", "atime", "mtime", "ctime", "crtime"},
-	"edit":          {"path", "ref", "refs", "edit", "mode", "atime", "mtime", "ctime", "crtime"},
-	"delete":        {"path", "ref", "refs", "missing_ok", "atime", "mtime"},
-	"mace":          {"path", "ref", "refs", "mode", "atime", "mtime", "ctime", "crtime"},
-	"rename":        {"path", "ref", "new_path", "id"},
-	"copy":          {"path", "ref", "new_path", "id", "mode", "atime", "mtime", "ctime", "crtime"},
-	"truncate":      {"path", "ref", "refs", "mode", "atime", "mtime", "ctime", "crtime"},
-	"rotate":        {"path", "ref", "new_path", "mode", "atime", "mtime"},
-	"archive":       {"path", "id", "archive", "mode", "atime", "mtime", "ctime", "crtime"},
-	"email":         {"path", "id", "email", "format", "mode", "atime", "mtime", "ctime", "crtime"},
-	"ansible-vault": {"path", "id", "vault", "content", "content_file", "render", "mode", "atime", "mtime", "ctime", "crtime"},
-	"ads":           {"path", "ref", "refs", "stream", "content", "content_len", "content_kind", "content_file", "render", "atime", "mtime"},
-	"motw":          {"path", "ref", "refs", "zone_id", "host_url", "referrer_url", "atime", "mtime"},
+var Fields = map[spec.ActionName][]string{
+	spec.ActionCreate:   {"path", "id", "type", "ext", "content", "content_len", "content_kind", "content_file", "render", "template", "mode", "format", "pdf", "docx", "pe", "history", "atime", "mtime", "ctime", "crtime"},
+	spec.ActionUpdate:   {"path", "ref", "content", "content_len", "content_kind", "content_file", "render", "template", "mode", "format", "pdf", "docx", "pe", "history", "atime", "mtime", "ctime", "crtime"},
+	spec.ActionAppend:   {"path", "ref", "id", "content", "content_len", "content_kind", "content_file", "render", "template", "mode", "atime", "mtime", "ctime", "crtime"},
+	spec.ActionEdit:     {"path", "ref", "refs", "edit", "mode", "atime", "mtime", "ctime", "crtime"},
+	spec.ActionDelete:   {"path", "ref", "refs", "missing_ok", "atime", "mtime"},
+	spec.ActionMACE:     {"path", "ref", "refs", "mode", "atime", "mtime", "ctime", "crtime"},
+	spec.ActionRename:   {"path", "ref", "new_path", "id"},
+	spec.ActionCopy:     {"path", "ref", "new_path", "id", "mode", "atime", "mtime", "ctime", "crtime"},
+	spec.ActionTruncate: {"path", "ref", "refs", "mode", "atime", "mtime", "ctime", "crtime"},
+	spec.ActionRotate:   {"path", "ref", "new_path", "mode", "atime", "mtime"},
+	spec.ActionArchive:  {"path", "id", "archive", "mode", "atime", "mtime", "ctime", "crtime"},
+	spec.ActionEmail:    {"path", "id", "email", "format", "mode", "atime", "mtime", "ctime", "crtime"},
+	spec.ActionVault:    {"path", "id", "vault", "content", "content_file", "render", "mode", "atime", "mtime", "ctime", "crtime"},
+	spec.ActionADS:      {"path", "ref", "refs", "stream", "content", "content_len", "content_kind", "content_file", "render", "atime", "mtime"},
+	spec.ActionMOTW:     {"path", "ref", "refs", "zone_id", "host_url", "referrer_url", "atime", "mtime"},
 }
 
 // field is a YAML key together with the value given for it, for the checks
@@ -58,15 +53,15 @@ const ZoneIdentifierStream = "Zone.Identifier"
 var TimeFields = []string{"atime", "mtime", "ctime", "crtime"}
 
 // Required lists the keys an action cannot do without (beyond a target).
-var Required = map[string][]string{
-	"archive":       {"archive"},
-	"edit":          {"edit"},
-	"rename":        {"new_path"},
-	"copy":          {"new_path"},
-	"rotate":        {"new_path"},
-	"email":         {"email"},
-	"ansible-vault": {"vault"},
-	"ads":           {"stream"},
+var Required = map[spec.ActionName][]string{
+	spec.ActionArchive: {"archive"},
+	spec.ActionEdit:    {"edit"},
+	spec.ActionRename:  {"new_path"},
+	spec.ActionCopy:    {"new_path"},
+	spec.ActionRotate:  {"new_path"},
+	spec.ActionEmail:   {"email"},
+	spec.ActionVault:   {"vault"},
+	spec.ActionADS:     {"stream"},
 }
 
 // Closed value sets.
@@ -82,43 +77,35 @@ var (
 	ArchiveMethods = []string{"store", "deflate"}
 	// Formats lists the format values each action accepts. raw and text write
 	// the bytes through unchanged; the rest build a file of that type.
-	Formats = map[string][]string{
-		"create": TypedFormats,
-		"update": TypedFormats,
-		"email":  {"eml", "mbox"},
+	Formats = map[spec.ActionName][]spec.Format{
+		spec.ActionCreate: TypedFormats,
+		spec.ActionUpdate: TypedFormats,
+		spec.ActionEmail:  {spec.FormatEML, spec.FormatMbox},
 	}
 	// TypedFormats are the file types a create or an update can build.
-	TypedFormats = []string{
-		"raw", "text", "pdf", "docx", "pe", "zip", "png", "jpeg", "mp4",
-		"chrome_history", "firefox_places",
+	TypedFormats = []spec.Format{
+		spec.FormatRaw, spec.FormatText, spec.FormatPDF, spec.FormatDOCX,
+		spec.FormatPE, spec.FormatZip, spec.FormatPNG, spec.FormatJPEG,
+		spec.FormatMP4, spec.FormatChromeHistory, spec.FormatFirefoxPlaces,
 	}
 )
 
 // Structured reports whether a format builds a file rather than writing the
 // content through. A structured format takes its shape from its own block and
 // its filler from content_len, so it cannot also be given content.
-func Structured(format string) bool {
+func Structured(format spec.Format) bool {
 	switch format {
-	case "", "raw", "text":
+	case "", spec.FormatRaw, spec.FormatText:
 		return false
 	}
 	return true
 }
 
-func contains(set []string, v string) bool {
-	for _, s := range set {
-		if s == v {
-			return true
-		}
-	}
-	return false
-}
-
 // AllowedFields lists every key an action may carry in a manifest (playbook
 // false) or a playbook (true), sorted.
-func AllowedFields(action string, playbook bool) []string { return allowed(action, playbook) }
+func AllowedFields(action spec.ActionName, playbook bool) []string { return allowed(action, playbook) }
 
-func allowed(action string, playbook bool) []string {
+func allowed(action spec.ActionName, playbook bool) []string {
 	out := []string{"action"}
 	for _, f := range Fields[action] {
 		if f == "template" && !playbook {
@@ -136,7 +123,7 @@ func allowed(action string, playbook bool) []string {
 // checkFields applies the field matrix and the rules that depend only on
 // which keys are present. It runs before rendering, so nothing it rejects
 // consumes a random draw.
-func checkFields(src SourceRef, k keys, action string, playbook bool) ErrorList {
+func checkFields(src SourceRef, k keys, action spec.ActionName, playbook bool) ErrorList {
 	var errs ErrorList
 	r := reporter{errs: &errs, src: src, keys: k}
 
@@ -145,7 +132,7 @@ func checkFields(src SourceRef, k keys, action string, playbook bool) ErrorList 
 		return errs
 	}
 	if _, ok := Fields[action]; !ok {
-		r.at("action", "unknown action %q (want one of: %s)", action, strings.Join(Actions, ", "))
+		r.at("action", "unknown action %q (want one of: %s)", action, strings.Join(spec.ActionNames(), ", "))
 		return errs
 	}
 
@@ -178,7 +165,7 @@ func sortedKeyNames(k keys) []string {
 }
 
 // checkTargets requires exactly one of path, ref and refs.
-func checkTargets(r reporter, k keys, action string) {
+func checkTargets(r reporter, k keys, action spec.ActionName) {
 	targets := 0
 	for _, t := range []string{"path", "ref", "refs"} {
 		if k.has(t) {
@@ -198,8 +185,8 @@ func checkTargets(r reporter, k keys, action string) {
 // checkKeyCombinations rejects keys that contradict or silently override each
 // other. Each rule names the key that would be ignored, so the message points
 // at what to delete.
-func checkKeyCombinations(r reporter, k keys, action string) {
-	if action == "mace" && !slices.ContainsFunc(TimeFields, k.has) {
+func checkKeyCombinations(r reporter, k keys, action spec.ActionName) {
+	if action == spec.ActionMACE && !slices.ContainsFunc(TimeFields, k.has) {
 		r.whole("mace needs at least one of atime, mtime, ctime and crtime")
 	}
 	if k.has("template") && (k.has("content") || k.has("content_file")) {

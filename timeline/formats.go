@@ -13,35 +13,49 @@ import (
 	"time"
 )
 
-// writers is every format a timeline can be written in, and the extensions
-// that imply it. Formats is derived from this, so the set a caller may ask for
-// and the set Write can produce cannot drift apart.
-var writers = map[string]struct {
+// writers is every format a timeline can be written in, each with the
+// extensions that imply it. Write, FormatForExtension and Formats all read it,
+// so what a caller may ask for and what can actually be written cannot drift
+// apart. It is a slice, not a map, because Formats is this order and that
+// order is published.
+var writers = []struct {
+	name       string
 	write      func(*Timeline, io.Writer) error
 	extensions []string
 }{
-	"csv":      {(*Timeline).WriteCSV, []string{".csv"}},
-	"txt":      {(*Timeline).WriteTXT, []string{".txt"}},
-	"bodyfile": {(*Timeline).WriteBodyfile, []string{".bodyfile", ".body"}},
-	"macb":     {(*Timeline).WriteMACB, []string{".macb"}},
-	"jsonl":    {(*Timeline).WriteJSONL, []string{".jsonl"}},
+	{"csv", (*Timeline).WriteCSV, []string{".csv"}},
+	{"txt", (*Timeline).WriteTXT, []string{".txt"}},
+	{"bodyfile", (*Timeline).WriteBodyfile, []string{".bodyfile", ".body"}},
+	{"macb", (*Timeline).WriteMACB, []string{".macb"}},
+	{"jsonl", (*Timeline).WriteJSONL, []string{".jsonl"}},
+}
+
+// formatNames is the name of every writer, in the table's order. It is what
+// Formats is built from.
+func formatNames() []string {
+	out := make([]string, len(writers))
+	for i, w := range writers {
+		out[i] = w.name
+	}
+	return out
 }
 
 // Write writes the timeline in format, one of Formats.
 func (tl *Timeline) Write(w io.Writer, format string) error {
-	f, ok := writers[format]
-	if !ok {
-		return fmt.Errorf("unknown timeline format %q (want %s)", format, strings.Join(Formats, ", "))
+	for _, f := range writers {
+		if f.name == format {
+			return f.write(tl, w)
+		}
 	}
-	return f.write(tl, w)
+	return fmt.Errorf("unknown timeline format %q (want %s)", format, strings.Join(Formats, ", "))
 }
 
 // FormatForExtension is the format a file extension implies, if any. It is how
 // --timeline picks a format when none is given.
 func FormatForExtension(ext string) (string, bool) {
-	for _, name := range Formats {
-		if slices.Contains(writers[name].extensions, ext) {
-			return name, true
+	for _, f := range writers {
+		if slices.Contains(f.extensions, ext) {
+			return f.name, true
 		}
 	}
 	return "", false

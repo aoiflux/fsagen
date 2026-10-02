@@ -37,6 +37,12 @@ type TimeCaps struct {
 // TimeCaps reports which times can be set on this root's volume.
 func (f *FS) TimeCaps() TimeCaps { return timeCaps(f.fsName) }
 
+// tick is the unit a Windows FILETIME counts, and so the resolution of the
+// file systems that store one per time. It is spelled out because the
+// Granularity fields below are durations, where a bare 100 reads as 100
+// nanoseconds only if you already know that.
+const tick = 100 * time.Nanosecond
+
 // Granularity is how finely the volume stores each time, which is how far a
 // time read back may differ from the one that was set.
 type Granularity struct {
@@ -51,7 +57,7 @@ func (f *FS) Granularity() Granularity { return f.gran }
 func namedGranularity(fsName string) (Granularity, bool) {
 	switch strings.ToUpper(fsName) {
 	case "NTFS", "REFS":
-		return Granularity{100, 100, 100, 100}, true
+		return Granularity{tick, tick, tick, tick}, true
 	case "FAT", "FAT12", "FAT16", "FAT32", "VFAT":
 		return Granularity{Atime: 24 * time.Hour, Mtime: 2 * time.Second, Ctime: 2 * time.Second, Btime: 10 * time.Millisecond}, true
 	case "EXFAT":

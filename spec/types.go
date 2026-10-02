@@ -10,21 +10,101 @@ type Manifest struct {
 	Operations []Operation       `yaml:"operations" json:"operations"`
 }
 
-// Operation represents a single action. The closed set of action names, and
-// which keys each one takes, is compile.Actions and compile.Fields; this struct
-// is the union of every key any action takes.
+// ActionName is what an operation does. It is a named type rather than a bare
+// string so that an action and one of the many other vocabularies spelled as
+// strings here — a format, a content kind, a template name — cannot be passed
+// for one another; and the constants below mean a renamed action is a compile
+// error at every mention rather than a value nothing matches at run time.
+type ActionName string
+
+// The closed set of actions. Actions is the published order, so adding one
+// means adding it here, and compile.Fields says which keys it takes.
+const (
+	ActionCreate   ActionName = "create"
+	ActionUpdate   ActionName = "update"
+	ActionAppend   ActionName = "append"
+	ActionEdit     ActionName = "edit"
+	ActionDelete   ActionName = "delete"
+	ActionMACE     ActionName = "mace"
+	ActionRename   ActionName = "rename"
+	ActionCopy     ActionName = "copy"
+	ActionTruncate ActionName = "truncate"
+	ActionRotate   ActionName = "rotate"
+	ActionArchive  ActionName = "archive"
+	ActionEmail    ActionName = "email"
+	ActionVault    ActionName = "ansible-vault"
+	ActionADS      ActionName = "ads"
+	ActionMOTW     ActionName = "motw"
+)
+
+// Actions is the closed set of action names, in documentation order. It sits
+// beside the constants rather than in compile, so the set and the values it
+// holds cannot drift apart.
+var Actions = []ActionName{
+	ActionCreate, ActionUpdate, ActionAppend, ActionEdit, ActionDelete,
+	ActionMACE, ActionRename, ActionCopy, ActionTruncate, ActionRotate,
+	ActionArchive, ActionEmail, ActionVault, ActionADS, ActionMOTW,
+}
+
+// ActionNames is Actions as plain strings, for the messages and schemas that
+// list them, so every such list is in the one published order.
+func ActionNames() []string {
+	out := make([]string, len(Actions))
+	for i, a := range Actions {
+		out[i] = string(a)
+	}
+	return out
+}
+
+// Format is what kind of file an operation builds. Like ActionName it is a
+// named type, so a format cannot be passed where an action is wanted; which
+// formats each action accepts is compile.Formats, and the empty Format means
+// the content is written through unchanged.
+type Format string
+
+// The formats an operation may ask for. Empty, FormatRaw and FormatText write
+// the content through; the rest build a file of that type.
+const (
+	FormatRaw           Format = "raw"
+	FormatText          Format = "text"
+	FormatPDF           Format = "pdf"
+	FormatDOCX          Format = "docx"
+	FormatPE            Format = "pe"
+	FormatZip           Format = "zip"
+	FormatPNG           Format = "png"
+	FormatJPEG          Format = "jpeg"
+	FormatMP4           Format = "mp4"
+	FormatChromeHistory Format = "chrome_history"
+	FormatFirefoxPlaces Format = "firefox_places"
+	FormatEML           Format = "eml"
+	FormatMbox          Format = "mbox"
+)
+
+// FormatNames is a list of formats as plain strings, for a message or a schema
+// that lists them.
+func FormatNames(formats []Format) []string {
+	out := make([]string, len(formats))
+	for i, f := range formats {
+		out[i] = string(f)
+	}
+	return out
+}
+
+// Operation represents a single action. The closed set of action names is
+// Actions; which keys each one takes is compile.Fields. This struct is the
+// union of every key any action takes.
 type Operation struct {
-	Action     string `yaml:"action" json:"action"`
-	Path       string `yaml:"path" json:"path"`               // required for most actions
-	ID         string `yaml:"id" json:"id" render:"-"`        // names what this action creates or renames, for later ref/refs
-	Ref        string `yaml:"ref" json:"ref" render:"-"`      // instead of path: the one live path created under this id
-	Refs       string `yaml:"refs" json:"refs" render:"-"`    // instead of path: every live path created under this id
-	MissingOK  bool   `yaml:"missing_ok" json:"missing_ok"`   // delete: a missing path is a recorded no-op, not an error
-	NewPath    string `yaml:"new_path" json:"new_path"`       // for rename/rotate/copy
-	Type       string `yaml:"type" json:"type"`               // for create: file|dir
-	Ext        string `yaml:"ext" json:"ext"`                 // for create file when path is a directory
-	Content    string `yaml:"content" json:"content"`         // optional literal content
-	ContentLen int    `yaml:"content_len" json:"content_len"` // if Content empty, generate deterministic random of this length
+	Action     ActionName `yaml:"action" json:"action"`
+	Path       string     `yaml:"path" json:"path"`               // required for most actions
+	ID         string     `yaml:"id" json:"id" render:"-"`        // names what this action creates or renames, for later ref/refs
+	Ref        string     `yaml:"ref" json:"ref" render:"-"`      // instead of path: the one live path created under this id
+	Refs       string     `yaml:"refs" json:"refs" render:"-"`    // instead of path: every live path created under this id
+	MissingOK  bool       `yaml:"missing_ok" json:"missing_ok"`   // delete: a missing path is a recorded no-op, not an error
+	NewPath    string     `yaml:"new_path" json:"new_path"`       // for rename/rotate/copy
+	Type       string     `yaml:"type" json:"type"`               // for create: file|dir
+	Ext        string     `yaml:"ext" json:"ext"`                 // for create file when path is a directory
+	Content    string     `yaml:"content" json:"content"`         // optional literal content
+	ContentLen int        `yaml:"content_len" json:"content_len"` // if Content empty, generate deterministic random of this length
 	// ContentKind is what the invented bytes look like: text (the default,
 	// base32), bytes, zeros, pattern or lorem.
 	ContentKind string `yaml:"content_kind" json:"content_kind"`
@@ -40,7 +120,7 @@ type Operation struct {
 	// Format says what kind of file to build rather than how to write the
 	// bytes through: compile.TypedFormats for a create or an update, eml or
 	// mbox for an email. Empty, raw and text write the content unchanged.
-	Format string `yaml:"format" json:"format"`
+	Format Format `yaml:"format" json:"format"`
 
 	// Typed generators
 	Pdf     *PdfSpec     `yaml:"pdf" json:"pdf"`         // metadata for format: pdf

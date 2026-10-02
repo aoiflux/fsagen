@@ -3,6 +3,8 @@ package compile
 import (
 	"fmt"
 	"strings"
+
+	"github.com/aoiflux/fsagen/spec"
 )
 
 // SourceRef says where in the input an operation came from. Every error the
@@ -17,7 +19,7 @@ type SourceRef struct {
 	Iteration int // playbook: 0-based repeat iteration
 	Batch     int // playbook: 0-based batch index
 	Multi     bool
-	Name      string // the action as written
+	Name      spec.ActionName // the action as written
 }
 
 func (s SourceRef) String() string {

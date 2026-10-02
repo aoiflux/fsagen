@@ -212,7 +212,7 @@ func TestPlaybookRunsInTimeOrder(t *testing.T) {
 	defer prog.Close()
 	var got []string
 	for _, op := range prog.Ops {
-		got = append(got, op.Action+" "+op.Path)
+		got = append(got, string(op.Action)+" "+op.Path)
 	}
 	if want := "create home/note.txt,delete home/note.txt,create home/late-2.txt"; strings.Join(got, ",") != want {
 		t.Errorf("order = %s, want %s", strings.Join(got, ","), want)

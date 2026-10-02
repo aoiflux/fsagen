@@ -1,6 +1,7 @@
 package compile
 
 import (
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -112,7 +113,7 @@ func validateStep(file string, n *yaml.Node, si int, st spec.Step, actors map[st
 	if info.repeat > 1 && !sk.has("every") {
 		r.at("repeat", "repeat %d without every would stack every occurrence on the same instant; set every (every: 0s to do that on purpose)", st.Repeat)
 	}
-	if sk.has("condition") && !contains(Conditions, st.Condition) {
+	if sk.has("condition") && !slices.Contains(Conditions, st.Condition) {
 		r.at("condition", "unknown condition %q (want one of: %s; a step condition tests the iteration index)", st.Condition, strings.Join(Conditions, ", "))
 	}
 	if len(st.Actions) == 0 {
@@ -148,10 +149,10 @@ func validateAction(file string, an *yaml.Node, si, ai int, a spec.Action, errs 
 	errs.add(checkFields(aref, ak, a.Action, true))
 	r := reporter{errs: errs, src: aref, keys: ak}
 
-	if ak.has("condition") && !contains(Conditions, a.Condition) {
+	if ak.has("condition") && !slices.Contains(Conditions, a.Condition) {
 		r.at("condition", "unknown condition %q (want one of: %s; an action condition tests the batch index)", a.Condition, strings.Join(Conditions, ", "))
 	}
-	if ak.has("template") && !contains(Templates, a.Template) {
+	if ak.has("template") && !slices.Contains(Templates, a.Template) {
 		r.at("template", "unknown template %q (want one of: %s)", a.Template, strings.Join(Templates, ", "))
 	}
 	for _, f := range []struct{ key, val string }{{"path", a.Path}, {"new_path", a.NewPath}} {

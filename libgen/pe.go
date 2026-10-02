@@ -371,13 +371,13 @@ func (img *peImage) bytes() []byte {
 // writeCOFFHeader writes the PE signature and the COFF header after it.
 func (img *peImage) writeCOFFHeader(b []byte) []byte {
 	b = append(b, 'P', 'E', 0, 0)
-	b = le16(b, img.code)
-	b = le16(b, uint16(len(img.sections)))
-	b = le32(b, img.timestamp())
-	b = le32(b, 0) // no symbol table
-	b = le32(b, 0)
-	b = le16(b, uint16(img.optSize))
-	return le16(b, img.characteristics())
+	b = binary.LittleEndian.AppendUint16(b, img.code)
+	b = binary.LittleEndian.AppendUint16(b, uint16(len(img.sections)))
+	b = binary.LittleEndian.AppendUint32(b, img.timestamp())
+	b = binary.LittleEndian.AppendUint32(b, 0) // no symbol table
+	b = binary.LittleEndian.AppendUint32(b, 0)
+	b = binary.LittleEndian.AppendUint16(b, uint16(img.optSize))
+	return binary.LittleEndian.AppendUint16(b, img.characteristics())
 }
 
 // writeOptionalHeader writes the optional header and the data directories,
@@ -388,41 +388,41 @@ func (img *peImage) writeOptionalHeader(b []byte) ([]byte, int) {
 	imageBase := img.imageBase()
 
 	if img.wide {
-		b = le16(b, 0x20b) // PE32+
+		b = binary.LittleEndian.AppendUint16(b, 0x20b) // PE32+
 	} else {
-		b = le16(b, 0x10b) // PE32
+		b = binary.LittleEndian.AppendUint16(b, 0x10b) // PE32
 	}
 	b = append(b, 14, 0) // linker version
-	b = le32(b, sizeOfCode)
-	b = le32(b, sizeOfInit)
-	b = le32(b, sizeOfUninit)
-	b = le32(b, entry)
-	b = le32(b, baseOfCode)
+	b = binary.LittleEndian.AppendUint32(b, sizeOfCode)
+	b = binary.LittleEndian.AppendUint32(b, sizeOfInit)
+	b = binary.LittleEndian.AppendUint32(b, sizeOfUninit)
+	b = binary.LittleEndian.AppendUint32(b, entry)
+	b = binary.LittleEndian.AppendUint32(b, baseOfCode)
 	if !img.wide {
-		b = le32(b, baseOfData)
-		b = le32(b, uint32(imageBase))
+		b = binary.LittleEndian.AppendUint32(b, baseOfData)
+		b = binary.LittleEndian.AppendUint32(b, uint32(imageBase))
 	} else {
-		b = le64(b, imageBase)
+		b = binary.LittleEndian.AppendUint64(b, imageBase)
 	}
-	b = le32(b, peSectionAlign)
-	b = le32(b, peFileAlign)
-	b = le16(b, 6) // operating system version
-	b = le16(b, 0)
+	b = binary.LittleEndian.AppendUint32(b, peSectionAlign)
+	b = binary.LittleEndian.AppendUint32(b, peFileAlign)
+	b = binary.LittleEndian.AppendUint16(b, 6) // operating system version
+	b = binary.LittleEndian.AppendUint16(b, 0)
 	major, minor := img.imageVersion()
-	b = le16(b, major)
-	b = le16(b, minor)
-	b = le16(b, 6) // subsystem version
-	b = le16(b, 0)
-	b = le32(b, 0) // Win32VersionValue
-	b = le32(b, img.sizeOfImage)
-	b = le32(b, img.sizeOfHeaders)
+	b = binary.LittleEndian.AppendUint16(b, major)
+	b = binary.LittleEndian.AppendUint16(b, minor)
+	b = binary.LittleEndian.AppendUint16(b, 6) // subsystem version
+	b = binary.LittleEndian.AppendUint16(b, 0)
+	b = binary.LittleEndian.AppendUint32(b, 0) // Win32VersionValue
+	b = binary.LittleEndian.AppendUint32(b, img.sizeOfImage)
+	b = binary.LittleEndian.AppendUint32(b, img.sizeOfHeaders)
 	checksumAt := len(b)
-	b = le32(b, 0) // patched once the whole file exists
-	b = le16(b, img.subsystem)
-	b = le16(b, img.dllCharacteristics())
+	b = binary.LittleEndian.AppendUint32(b, 0) // patched once the whole file exists
+	b = binary.LittleEndian.AppendUint16(b, img.subsystem)
+	b = binary.LittleEndian.AppendUint16(b, img.dllCharacteristics())
 	b = img.writeStackAndHeap(b)
-	b = le32(b, 0) // loader flags
-	b = le32(b, dataDirectories)
+	b = binary.LittleEndian.AppendUint32(b, 0) // loader flags
+	b = binary.LittleEndian.AppendUint32(b, dataDirectories)
 	return img.writeDataDirectories(b), checksumAt
 }
 
@@ -441,10 +441,10 @@ func (img *peImage) writeStackAndHeap(b []byte) []byte {
 	const reserve, commit = 0x100000, 0x1000
 	for _, v := range []uint64{reserve, commit, reserve, commit} {
 		if img.wide {
-			b = le64(b, v)
+			b = binary.LittleEndian.AppendUint64(b, v)
 			continue
 		}
-		b = le32(b, uint32(v))
+		b = binary.LittleEndian.AppendUint32(b, uint32(v))
 	}
 	return b
 }
@@ -457,8 +457,8 @@ func (img *peImage) writeDataDirectories(b []byte) []byte {
 	dirs[resourceDirIndex] = [2]uint32{img.resourceDir, img.resourceDirSize}
 	dirs[iatDirIndex] = [2]uint32{img.iatAddr, img.iatSize}
 	for _, dir := range dirs {
-		b = le32(b, dir[0])
-		b = le32(b, dir[1])
+		b = binary.LittleEndian.AppendUint32(b, dir[0])
+		b = binary.LittleEndian.AppendUint32(b, dir[1])
 	}
 	return b
 }
@@ -469,15 +469,15 @@ func (img *peImage) writeSectionTable(b []byte) []byte {
 		var name [MaxPESectionName]byte
 		copy(name[:], sec.name)
 		b = append(b, name[:]...)
-		b = le32(b, max(sec.vsize, 1))
-		b = le32(b, sec.vaddr)
-		b = le32(b, sec.rsize)
-		b = le32(b, sec.raw)
-		b = le32(b, 0) // relocations
-		b = le32(b, 0) // line numbers
-		b = le16(b, 0)
-		b = le16(b, 0)
-		b = le32(b, sec.flags)
+		b = binary.LittleEndian.AppendUint32(b, max(sec.vsize, 1))
+		b = binary.LittleEndian.AppendUint32(b, sec.vaddr)
+		b = binary.LittleEndian.AppendUint32(b, sec.rsize)
+		b = binary.LittleEndian.AppendUint32(b, sec.raw)
+		b = binary.LittleEndian.AppendUint32(b, 0) // relocations
+		b = binary.LittleEndian.AppendUint32(b, 0) // line numbers
+		b = binary.LittleEndian.AppendUint16(b, 0)
+		b = binary.LittleEndian.AppendUint16(b, 0)
+		b = binary.LittleEndian.AppendUint32(b, sec.flags)
 	}
 	return b
 }
@@ -743,23 +743,23 @@ func versionResource(v PEVersion, dll bool) []byte {
 	fileMS, fileLS := versionParts(v.FileVersion)
 	prodMS, prodLS := versionParts(or(v.ProductVersion, v.FileVersion))
 	fixed := make([]byte, 0, 52)
-	fixed = le32(fixed, 0xfeef04bd)
-	fixed = le32(fixed, 0x00010000)
-	fixed = le32(fixed, fileMS)
-	fixed = le32(fixed, fileLS)
-	fixed = le32(fixed, prodMS)
-	fixed = le32(fixed, prodLS)
-	fixed = le32(fixed, 0x3f) // file flags mask
-	fixed = le32(fixed, 0)    // no debug or prerelease flags
-	fixed = le32(fixed, 0x40004)
+	fixed = binary.LittleEndian.AppendUint32(fixed, 0xfeef04bd)
+	fixed = binary.LittleEndian.AppendUint32(fixed, 0x00010000)
+	fixed = binary.LittleEndian.AppendUint32(fixed, fileMS)
+	fixed = binary.LittleEndian.AppendUint32(fixed, fileLS)
+	fixed = binary.LittleEndian.AppendUint32(fixed, prodMS)
+	fixed = binary.LittleEndian.AppendUint32(fixed, prodLS)
+	fixed = binary.LittleEndian.AppendUint32(fixed, 0x3f) // file flags mask
+	fixed = binary.LittleEndian.AppendUint32(fixed, 0)    // no debug or prerelease flags
+	fixed = binary.LittleEndian.AppendUint32(fixed, 0x40004)
 	if dll {
-		fixed = le32(fixed, 2) // VFT_DLL
+		fixed = binary.LittleEndian.AppendUint32(fixed, 2) // VFT_DLL
 	} else {
-		fixed = le32(fixed, 1) // VFT_APP
+		fixed = binary.LittleEndian.AppendUint32(fixed, 1) // VFT_APP
 	}
-	fixed = le32(fixed, 0) // subtype
-	fixed = le32(fixed, 0) // file date
-	fixed = le32(fixed, 0)
+	fixed = binary.LittleEndian.AppendUint32(fixed, 0) // subtype
+	fixed = binary.LittleEndian.AppendUint32(fixed, 0) // file date
+	fixed = binary.LittleEndian.AppendUint32(fixed, 0)
 
 	var strings_ []*verNode
 	for _, kv := range [][2]string{
@@ -818,16 +818,6 @@ func pad4(b []byte) []byte {
 }
 
 func align(v, to uint32) uint32 { return (v + to - 1) / to * to }
-
-func le16(b []byte, v uint16) []byte { return append(b, byte(v), byte(v>>8)) }
-
-func le32(b []byte, v uint32) []byte {
-	return append(b, byte(v), byte(v>>8), byte(v>>16), byte(v>>24))
-}
-
-func le64(b []byte, v uint64) []byte {
-	return append(le32(b, uint32(v)), byte(v>>32), byte(v>>40), byte(v>>48), byte(v>>56))
-}
 
 func or(a, b string) string {
 	if strings.TrimSpace(a) == "" {

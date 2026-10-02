@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -503,18 +502,40 @@ func TestObservedModeAndDirSize(t *testing.T) {
 	}
 }
 
-// TestEveryFormatHasAWriter: Write dispatches on the format name, and Formats
-// is what a caller is told it may ask for. A name in one and not the other
-// would either be unreachable or fail at the last moment.
+// TestEveryFormatHasAWriter: Formats is what a caller is told it may ask for,
+// and Write dispatches over the same table, so a listed format always has a
+// writer by construction. What that leaves open is two entries claiming one
+// name or one extension: the second would be unreachable, and
+// FormatForExtension would answer with whichever came first. So this goes
+// through the exported calls rather than the table.
 func TestEveryFormatHasAWriter(t *testing.T) {
-	for _, name := range Formats {
-		if _, ok := writers[name]; !ok {
-			t.Errorf("format %q is in Formats but has no writer", name)
+	if len(Formats) != len(writers) {
+		t.Fatalf("Formats lists %d formats, writers has %d", len(Formats), len(writers))
+	}
+	names := map[string]bool{}
+	exts := map[string]string{}
+	for i, w := range writers {
+		if Formats[i] != w.name {
+			t.Errorf("Formats[%d] = %q, want %q: the published order is the table's", i, Formats[i], w.name)
+		}
+		if names[w.name] {
+			t.Errorf("two writers are named %q, so one of them cannot be reached", w.name)
+		}
+		names[w.name] = true
+		if err := (&Timeline{}).Write(new(bytes.Buffer), w.name); err != nil {
+			t.Errorf("Write(%q): %v", w.name, err)
+		}
+		for _, ext := range w.extensions {
+			if first, dup := exts[ext]; dup {
+				t.Errorf("%s is claimed by both %q and %q", ext, first, w.name)
+			}
+			exts[ext] = w.name
+			if got, ok := FormatForExtension(ext); !ok || got != w.name {
+				t.Errorf("FormatForExtension(%q) = %q, %v; want %q, true", ext, got, ok, w.name)
+			}
 		}
 	}
-	for name := range writers {
-		if !slices.Contains(Formats, name) {
-			t.Errorf("writers has %q, which is not in Formats", name)
-		}
+	if err := (&Timeline{}).Write(new(bytes.Buffer), "nosuchformat"); err == nil {
+		t.Error("Write accepted a format that is not in the table")
 	}
 }

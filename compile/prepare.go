@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -184,11 +185,11 @@ func settleContent(op *Op, r reporter) {
 // checkClosedSets rejects a value outside the closed set its key allows.
 func checkClosedSets(op *Op, r reporter) {
 	k := op.keys
-	if k.has("type") && !contains(Types, op.Type) {
+	if k.has("type") && !slices.Contains(Types, op.Type) {
 		r.at("type", "unknown type %q (want file or dir)", op.Type)
 	}
-	if formats, ok := Formats[op.Action]; ok && k.has("format") && !contains(formats, op.Format) {
-		r.at("format", "unknown format %q for %s (want one of: %s)", op.Format, op.Action, strings.Join(formats, ", "))
+	if formats, ok := Formats[op.Action]; ok && k.has("format") && !slices.Contains(formats, op.Format) {
+		r.at("format", "unknown format %q for %s (want one of: %s)", op.Format, op.Action, strings.Join(spec.FormatNames(formats), ", "))
 	}
 	if k.has("pdf") && op.Format != "pdf" {
 		r.at("pdf", "only applies with format: pdf")
@@ -315,11 +316,11 @@ func normalizeTarget(op *Op, r reporter) {
 	if dir && op.keys.has("ext") {
 		r.at("ext", "path %q ends in '/', which makes it a directory; drop the slash or the ext", op.Path)
 	}
-	op.Dir = op.Action == "create" && (op.Type == "dir" || dir)
-	if dir && op.Action == "create" && op.Type == "file" {
+	op.Dir = op.Action == spec.ActionCreate && (op.Type == "dir" || dir)
+	if dir && op.Action == spec.ActionCreate && op.Type == "file" {
 		r.at("path", "ends in '/' (a directory) but type is file")
 	}
-	if op.Action == "create" && !op.Dir && op.Ext != "" && path.Ext(clean) == "" {
+	if op.Action == spec.ActionCreate && !op.Dir && op.Ext != "" && path.Ext(clean) == "" {
 		clean += op.Ext
 	}
 	op.Path = clean
@@ -336,7 +337,7 @@ func inferFormatFromExtension(op *Op, r reporter) {
 	ext := strings.ToLower(path.Ext(op.Path))
 	format, known := inferredFormats[ext]
 	switch {
-	case known && (op.Action == "create" || op.Action == "update"):
+	case known && (op.Action == spec.ActionCreate || op.Action == spec.ActionUpdate):
 		op.Format = format
 	case known:
 		r.at("path", "%s implies a %s file; adding filler to one would corrupt it, so give content or content_file, or format: text to write placeholder text on purpose", ext, format)
@@ -350,11 +351,11 @@ func inferFormatFromExtension(op *Op, r reporter) {
 // Stream content is not a file's, so ads is left out.
 func randomContent(op *Op) bool {
 	switch op.Action {
-	case "create":
+	case spec.ActionCreate:
 		if op.Dir {
 			return false
 		}
-	case "update", "append":
+	case spec.ActionUpdate, spec.ActionAppend:
 	default:
 		return false
 	}
@@ -370,7 +371,7 @@ func givesContent(op *Op) bool {
 // content_len, or a default per action, when it gives no content of its
 // own. An explicit content, even an empty one, is written as it is.
 func randomLength(op *Op) int {
-	if !randomContent(op) && !(op.Action == "ads" && !givesContent(op)) {
+	if !randomContent(op) && !(op.Action == spec.ActionADS && !givesContent(op)) {
 		return 0
 	}
 	if op.ContentLen > 0 {
@@ -382,9 +383,9 @@ func randomLength(op *Op) int {
 		return 0
 	}
 	switch op.Action {
-	case "append":
+	case spec.ActionAppend:
 		return 256
-	case "ads":
+	case spec.ActionADS:
 		return 128
 	}
 	return 1024

@@ -163,6 +163,17 @@ func Load(mode Mode, file string, opts Options) (*Program, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The returned program owns the source root and releases it through
+	// Program.Close; every path that does not return one has to release it
+	// here instead. One deferred close covers them all, so a failure added
+	// below cannot be the one that leaks a directory handle.
+	loaded := false
+	defer func() {
+		if !loaded {
+			src.Close()
+		}
+	}()
+
 	sum := sha256.Sum256(data)
 	prog := &Program{Mode: mode, File: file, SHA256: hex.EncodeToString(sum[:]), Sources: src}
 
@@ -171,28 +182,21 @@ func Load(mode Mode, file string, opts Options) (*Program, error) {
 		var m spec.Manifest
 		root, err := decodeFile(file, data, &m)
 		if err != nil {
-			src.Close()
 			return nil, err
 		}
-		prog.Ops, prog.StartNow, err = compileManifest(file, root, &m, opts, src)
-		if err != nil {
-			src.Close()
+		if prog.Ops, prog.StartNow, err = compileManifest(file, root, &m, opts, src); err != nil {
 			return nil, err
 		}
 	case ModePlaybook:
 		var pb spec.Playbook
 		root, err := decodeFile(file, data, &pb)
 		if err != nil {
-			src.Close()
 			return nil, err
 		}
-		prog.Ops, prog.StartNow, err = compilePlaybook(file, root, &pb, opts, src)
-		if err != nil {
-			src.Close()
+		if prog.Ops, prog.StartNow, err = compilePlaybook(file, root, &pb, opts, src); err != nil {
 			return nil, err
 		}
 	default:
-		src.Close()
 		return nil, fmt.Errorf("unknown input mode %q", mode)
 	}
 
@@ -201,7 +205,6 @@ func Load(mode Mode, file string, opts Options) (*Program, error) {
 		errs.add(checkValues(&prog.Ops[i], src))
 	}
 	if err := errs.err(); err != nil {
-		src.Close()
 		return nil, err
 	}
 
@@ -214,8 +217,8 @@ func Load(mode Mode, file string, opts Options) (*Program, error) {
 	}
 	prog.Model = tree
 	if prog.Ops, err = simulate(prog.Ops, tree, opts); err != nil {
-		src.Close()
 		return nil, err
 	}
+	loaded = true
 	return prog, nil
 }

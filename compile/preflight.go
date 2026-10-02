@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
+
+	"github.com/aoiflux/fsagen/spec"
 )
 
 // Caps is what the platform and output volume can do.
@@ -39,7 +41,7 @@ func unsettable(op *Op, caps Caps) []string {
 // unsupported explains why caps cannot perform op, or returns "".
 func unsupported(op *Op, caps Caps) string {
 	switch op.Action {
-	case "ads", "motw":
+	case spec.ActionADS, spec.ActionMOTW:
 		if !caps.NamedStreams {
 			return fmt.Sprintf("%s writes an alternate data stream, which this platform or volume does not support", op.Action)
 		}

@@ -19,11 +19,10 @@ func fsNameOf(*os.Root) string { return "" }
 // birth time in Birthtimespec, which is negative where the file system has
 // none.
 func statMeta(r *os.Root, name string) (Meta, error) {
-	fi, err := r.Lstat(name)
+	m, fi, err := lstatMeta(r, name)
 	if err != nil {
 		return Meta{}, err
 	}
-	m := Meta{Times: Times{Mtime: fi.ModTime().UTC()}}
 	st, ok := fi.Sys().(*syscall.Stat_t)
 	if !ok {
 		return m, nil

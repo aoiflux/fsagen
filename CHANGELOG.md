@@ -1,5 +1,63 @@
 # Changelog
 
+## Unreleased: a typed action and format vocabulary, and the last of the polish
+
+Actions and formats were bare strings in about 250 places across eight packages,
+and nothing but a test tied the dispatch tables to the closed set. `spec` now
+declares `ActionName` and `Format` with a constant per value, and
+`spec.Operation` carries those types: `compile.Fields`, `Required`, `Formats`,
+the simulator table, the executor table and the answer key are all keyed off
+them, so renaming an action is a compile error at every mention rather than a
+value nothing matches at run time, and an action can no longer be passed where a
+format is wanted. `spec.Actions` replaces `compile.Actions`, beside the
+constants it holds. The published JSON Schema, the ledger, the dry-run listing
+and all 135 goldens are byte-identical: a named string type marshals as its
+string.
+
+The binary writers were four near-identical families, two of which (`put32` and
+`putBE32`) differed by three characters for opposite byte orders. Every one is
+gone: PE, MP4 and PNG append through `encoding/binary` with the order named at
+the call site, and the zip headers keep one buffer pair, now called `putLE16`
+and `putLE32`. `BuildZip` was the longest function in the repo and is now
+eighteen lines, with each member's header fields worked out once and written
+twice from one struct rather than twice from scratch.
+
+Smaller things, each a place where two copies could drift or a number meant
+something it did not say: `timeline.Formats` is derived from the writers table
+it claimed to be derived from; `Sources.ReadFile` and `Check` share one
+path-resolving step instead of two copies of it and of a 100-character error
+string; `compile.Load` releases the source root on one deferred path rather than
+seven; the settle pause goes through an injected clock, so the retry test
+asserts which pauses were taken without taking them; the Windows NT opens share
+one `ntOpen`, and the suspend-access-time sentinel is named once; `100` is
+`tick`, `1e7` is `ticksPerSecond`, and `1<<48-1` is `mftRecordMask`; the
+platform's permission-bit question moved to `sandbox`, where the other platform
+answers live; `contains` is `slices.Contains`; and `main` uses
+`sandbox.FileMode`/`DirMode` rather than raw octal. `schema.nestedDefs` gained
+the covering test it never had, which catches a refinement naming a field the
+struct does not have — the silent half of the mistake its type assertions used
+to make loudly.
+
+## Unreleased: the release scripts take the version
+
+`./build.sh v0.1.0` and `.\build.ps1 v0.1.0` build that version: it names every
+asset and is stamped into the binaries with `-ldflags -X`, so `fsagen --version`
+reports the release rather than the pseudo-version Go derives from an untagged
+commit. That is what the v0.1.0 assets shipped with — built before the tag
+existed, they are named `fsagen_6b5b91a_*` and report
+`v0.0.0-20260927132346-6b5b91ad4367`. Each script now runs the host binary after
+building and fails if it does not report the version in its own filename, which
+also catches a `-X` that quietly hit nothing because the variable moved.
+
+The version stays optional and still defaults to `git describe`, because that is
+what a test build wants; the difference is that the default is stamped too, so
+the filename and `--version` agree either way. The scripts also say when the
+commit being built carries no tag, carries a different one, or has uncommitted
+changes. `runinfo.Build` prefers the stamped version and takes the revision from
+the toolchain regardless, so the commit behind a binary stays checkable against
+the tag whatever the version claims. Both scripts still write byte-identical
+checksums for the same version and toolchain, checked across the two.
+
 ## v0.1.0 — first tagged release (2026-09-27)
 
 The first tag on the renamed module, `github.com/aoiflux/fsagen`. Generator

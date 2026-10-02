@@ -7,6 +7,8 @@ import (
 	"slices"
 	"sort"
 	"time"
+
+	"github.com/aoiflux/fsagen/spec"
 )
 
 // AnswerKeyFileName is the answer key's name in the sidecar directory.
@@ -97,7 +99,7 @@ func AnswerKey(entries []Entry, finals []Final) []Fact {
 // action itself did, and what became of the content it touched.
 func actionFacts(e Entry, seen map[int]bool) []Fact {
 	base := Fact{N: e.N, At: e.At, Object: e.Object, Kind: e.Kind, Path: e.Path}
-	if e.Action == "copy" {
+	if e.Action == spec.ActionCopy {
 		// A copy is answerable for the file it wrote, not the one it read.
 		base.Path = e.NewPath
 	}
@@ -110,15 +112,15 @@ func actionFacts(e Entry, seen map[int]bool) []Fact {
 func effectFact(e Entry, base Fact) []Fact {
 	f := base
 	switch e.Action {
-	case "delete":
+	case spec.ActionDelete:
 		f.Event, f.SHA256 = Deleted, e.SHA256Before
-	case "rename":
+	case spec.ActionRename:
 		f.Event, f.Path, f.From = Renamed, e.NewPath, e.Path
-	case "rotate":
+	case spec.ActionRotate:
 		f.Event, f.Object, f.Path, f.From, f.Kind = Renamed, e.Moved, e.NewPath, e.Path, "file"
-	case "mace":
+	case spec.ActionMACE:
 		f.Event, f.Times, f.Fields = Stomped, e.Times, slices.Clone(e.Explicit)
-	case "ads", "motw":
+	case spec.ActionADS, spec.ActionMOTW:
 		return writtenStreamFacts(e, base)
 	default:
 		return nil
@@ -139,7 +141,10 @@ func writtenStreamFacts(e Entry, base Fact) []Fact {
 }
 
 // contentWriters are the actions that put bytes in a file.
-var contentWriters = []string{"create", "append", "update", "truncate", "copy", "rotate", "email", "ansible-vault"}
+var contentWriters = []spec.ActionName{
+	spec.ActionCreate, spec.ActionAppend, spec.ActionUpdate, spec.ActionTruncate,
+	spec.ActionCopy, spec.ActionRotate, spec.ActionEmail, spec.ActionVault,
+}
 
 // contentFacts says what became of the file's content: created when this is the
 // first operation to make it, modified when the bytes changed. update and
@@ -152,14 +157,14 @@ func contentFacts(e Entry, base Fact, seen map[int]bool) []Fact {
 	var out []Fact
 	f := base
 	switch {
-	case !seen[e.Object] && e.Action != "update" && e.Action != "truncate":
+	case !seen[e.Object] && e.Action != spec.ActionUpdate && e.Action != spec.ActionTruncate:
 		f.Event, f.Size, f.SHA256 = Created, e.Size, e.SHA256After
 		out = append(out, f)
 	case e.SHA256After != e.SHA256Before:
 		f.Event, f.Size, f.SHA256Before, f.SHA256 = Modified, e.Size, e.SHA256Before, e.SHA256After
 		out = append(out, f)
 	}
-	if e.Action == "copy" {
+	if e.Action == spec.ActionCopy {
 		// Streams travel with a copy, so the copy is answerable for each one.
 		out = append(out, allStreamFacts(base, e.Streams)...)
 	}

@@ -128,12 +128,12 @@ go build -o fsagen .
 ```
 
 To build every released binary at once, with checksums, run the release script
-for your shell. Both take no arguments, write to `dist/`, and produce the same
-`SHA256SUMS` for the same commit:
+for your shell with the version to build. Both write to `dist/` and produce the
+same `SHA256SUMS` for the same version and toolchain:
 
 ```sh
-./build.sh          # POSIX
-.\build.ps1         # Windows
+./build.sh v0.1.0       # POSIX
+.\build.ps1 v0.1.0      # Windows
 ```
 
 ```text
@@ -147,9 +147,11 @@ dist/
 └── SHA256SUMS
 ```
 
-`<version>` is whatever `git describe` reports: `v0.1.0` on a tagged commit,
-`v0.1.0-2-gda99bb6` two commits later. Tag before building a release, or the
-asset names will not match the version you publish.
+`<version>` is the version you passed. It names every file and is stamped into
+the binaries, so `fsagen --version` reports it too — the build fails if it does
+not. Leave it out and both scripts fall back to `git describe`
+(`v0.1.0-2-gda99bb6` two commits after a tag), which is what a test build wants;
+a release should be built from its tag, and the scripts say so when it is not.
 
 Released under the MIT License (see `LICENSE`).
 
@@ -1267,14 +1269,16 @@ phishing message to a real gap in a beacon log.
 
 1. `go run ./tools/gate`, and run the suite on the platforms whose goldens the
    change touches (see _Platform support_).
-2. Tag the commit, so the binaries carry the version: fsagen reads its version
-   from Go's own VCS stamping, not from a linker flag.
-3. `./build.sh` or `.\build.ps1` — six binaries and a `SHA256SUMS` into `dist/`.
-   Both scripts produce the same checksums for the same commit, so it does not
-   matter which one runs.
+2. Tag the commit you are releasing, and pass that tag to the build script. The
+   version you pass names every asset and is stamped into the binaries, so
+   `fsagen --version` reports the release rather than a pseudo-version.
+3. `./build.sh v0.1.0` or `.\build.ps1 v0.1.0` — six binaries and a
+   `SHA256SUMS` into `dist/`. Both produce the same checksums for the same
+   version and toolchain, so it does not matter which one runs; each warns if
+   the commit is not tagged, or is tagged as something else.
 4. Publish `dist/` as the release assets and write the release notes as the
-   body. Check that the asset names carry the version and not a bare commit
-   hash: if they do, step 2 was skipped and the binaries need rebuilding.
+   body. The asset names carry the version the binaries themselves report,
+   because the build fails when the two disagree.
 
 ### Dependencies
 

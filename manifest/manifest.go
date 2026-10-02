@@ -52,6 +52,10 @@ type ExecContext struct {
 	// lets a test play the part of another process reading the output between
 	// settling and verifying. Nil does nothing.
 	AfterSettle func(round int)
+	// Sleep waits out one of SettleRetries. Nil takes time.Sleep; injecting
+	// it is what lets a test assert which pauses were taken without
+	// spending them, so the pauses it declares can be the real ones.
+	Sleep func(time.Duration)
 }
 
 // settleRetries are the pauses this run waits before settling again.
@@ -67,6 +71,15 @@ func (c ExecContext) afterSettle(round int) {
 	if c.AfterSettle != nil {
 		c.AfterSettle(round)
 	}
+}
+
+// sleep waits out a pause between settle passes.
+func (c ExecContext) sleep(d time.Duration) {
+	if c.Sleep != nil {
+		c.Sleep(d)
+		return
+	}
+	time.Sleep(d)
 }
 
 // ExecuteManifest compiles a manifest and applies it under root with default
@@ -232,7 +245,7 @@ func newEntry(i int, op compile.Op, caps compile.Caps) ledger.Entry {
 		Moved:   op.Moved,
 		Kind:    kindName(op.Kind),
 	}
-	if op.Action == "ads" || op.Action == "motw" {
+	if op.Action == spec.ActionADS || op.Action == spec.ActionMOTW {
 		e.Stream = compile.StreamOf(op.Operation)
 	}
 	e.Explicit = explicit(op)
@@ -295,9 +308,9 @@ func uncontrolled(t model.Times, caps compile.Caps) []string {
 // delete.
 func target(op compile.Op) string {
 	switch op.Action {
-	case "rename", "copy":
+	case spec.ActionRename, spec.ActionCopy:
 		return op.NewPath
-	case "delete":
+	case spec.ActionDelete:
 		return ""
 	}
 	return op.Path
@@ -387,7 +400,7 @@ func SettleAndVerify(ctx ExecContext, tree *model.Tree) error {
 		if !movedAccessOnly(err) {
 			break
 		}
-		time.Sleep(pause)
+		ctx.sleep(pause)
 		if err := Settle(ctx, tree); err != nil {
 			return err
 		}
@@ -502,23 +515,23 @@ func within(a, b time.Time, res time.Duration) bool {
 }
 
 // executors say how each action writes itself into the output. Every name in
-// compile.Actions has an entry, which TestEveryActionExecutes proves.
-var executors = map[string]func(ExecContext, compile.Op) error{
-	"create":        execCreate,
-	"update":        execWrite,
-	"append":        execAppend,
-	"edit":          execEdit,
-	"delete":        execDelete,
-	"mace":          execMace,
-	"rename":        execRename,
-	"copy":          execCopy,
-	"truncate":      execTruncate,
-	"rotate":        execRotate,
-	"archive":       writeArchive,
-	"email":         execEmail,
-	"ansible-vault": execVault,
-	"ads":           execStream,
-	"motw":          execStream,
+// spec.Actions has an entry, which TestEveryActionExecutes proves.
+var executors = map[spec.ActionName]func(ExecContext, compile.Op) error{
+	spec.ActionCreate:   execCreate,
+	spec.ActionUpdate:   execWrite,
+	spec.ActionAppend:   execAppend,
+	spec.ActionEdit:     execEdit,
+	spec.ActionDelete:   execDelete,
+	spec.ActionMACE:     execMace,
+	spec.ActionRename:   execRename,
+	spec.ActionCopy:     execCopy,
+	spec.ActionTruncate: execTruncate,
+	spec.ActionRotate:   execRotate,
+	spec.ActionArchive:  writeArchive,
+	spec.ActionEmail:    execEmail,
+	spec.ActionVault:    execVault,
+	spec.ActionADS:      execStream,
+	spec.ActionMOTW:     execStream,
 }
 
 func executeOp(ctx ExecContext, c compile.Op) error {
@@ -630,7 +643,7 @@ func execStream(ctx ExecContext, c compile.Op) error {
 // streamContent is what the stream holds: a mark of the web is built from its
 // own fields, and an ads carries the operation's content.
 func streamContent(c compile.Op) []byte {
-	if c.Action != "motw" {
+	if c.Action != spec.ActionMOTW {
 		return contentOf(c)
 	}
 	var b strings.Builder

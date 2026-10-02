@@ -3,6 +3,7 @@ package libgen
 import (
 	"bytes"
 	"compress/flate"
+	"encoding/binary"
 	"fmt"
 	"hash/adler32"
 	"hash/crc32"
@@ -60,90 +61,137 @@ func BuildZip(entries []ZipEntry, comment string) ([]byte, error) {
 	seen := make(map[string]bool, len(entries))
 	var body, central bytes.Buffer
 	for _, e := range entries {
-		name := strings.TrimPrefix(e.Name, "./")
-		if name == "" || strings.HasPrefix(name, "/") || strings.Contains(name, "\\") {
-			return nil, fmt.Errorf("zip member %q: names are relative and slash-separated", e.Name)
-		}
-		if seen[name] {
-			return nil, fmt.Errorf("zip member %q appears twice", name)
-		}
-		seen[name] = true
-
-		dir := strings.HasSuffix(name, "/")
-		data := e.Data
-		if dir && len(data) > 0 {
-			return nil, fmt.Errorf("zip member %q is a directory and cannot hold data", name)
-		}
-		stored, method, err := storedBytes(data, e.Deflate && !dir)
+		m, err := zipMemberOf(e, body.Len(), seen)
 		if err != nil {
 			return nil, err
 		}
-
-		offset := body.Len()
-		if offset >= zipMax || len(stored) >= zipMax || len(data) >= zipMax {
-			return nil, fmt.Errorf("zip member %q crosses the 4 GiB limit of the zip format", name)
-		}
-		flags := uint16(0)
-		if !isASCII(name) {
-			flags |= zipUTF8Flag
-		}
-		date, clock := dosTime(e.Modified)
-		crc := crc32.ChecksumIEEE(data)
-		attrs := uint32(zipAttrArchive)
-		if dir {
-			attrs = zipAttrDir
-		}
-
-		put32(&body, zipLocalSig)
-		put16(&body, zipVersion)
-		put16(&body, flags)
-		put16(&body, method)
-		put16(&body, clock)
-		put16(&body, date)
-		put32(&body, crc)
-		put32(&body, uint32(len(stored)))
-		put32(&body, uint32(len(data)))
-		put16(&body, uint16(len(name)))
-		put16(&body, 0)
-		body.WriteString(name)
-		body.Write(stored)
-
-		put32(&central, zipCentralSig)
-		put16(&central, zipVersion) // made by MS-DOS, so no Unix permission bits
-		put16(&central, zipVersion)
-		put16(&central, flags)
-		put16(&central, method)
-		put16(&central, clock)
-		put16(&central, date)
-		put32(&central, crc)
-		put32(&central, uint32(len(stored)))
-		put32(&central, uint32(len(data)))
-		put16(&central, uint16(len(name)))
-		put16(&central, 0)
-		put16(&central, 0)
-		put16(&central, 0)
-		put16(&central, 0)
-		put32(&central, attrs)
-		put32(&central, uint32(offset))
-		central.WriteString(name)
+		m.writeLocal(&body)
+		m.writeCentral(&central)
 	}
 
 	var out bytes.Buffer
 	out.Write(body.Bytes())
 	out.Write(central.Bytes())
-	put32(&out, zipEOCDSig)
+	writeEOCD(&out, len(entries), central.Len(), body.Len(), comment)
+	return out.Bytes(), nil
+}
+
+// zipMember is one entry as the archive records it. Every field is written
+// twice, in the local header before the data and again in the central
+// directory, and a reader that finds the two disagreeing calls the archive
+// corrupt — so they are worked out once, here, rather than at each of the two
+// places they are emitted.
+type zipMember struct {
+	name        string
+	stored      []byte // the bytes that go into the archive
+	size        int    // the member's own length, before any compression
+	offset      int    // where its local header begins
+	method      uint16
+	flags       uint16
+	date, clock uint16
+	crc         uint32
+	attrs       uint32
+}
+
+// zipMemberOf checks one entry and works out what the archive will record for
+// it, at offset bytes into the member body. seen carries the names already
+// used, which it adds to.
+func zipMemberOf(e ZipEntry, offset int, seen map[string]bool) (zipMember, error) {
+	name := strings.TrimPrefix(e.Name, "./")
+	if name == "" || strings.HasPrefix(name, "/") || strings.Contains(name, "\\") {
+		return zipMember{}, fmt.Errorf("zip member %q: names are relative and slash-separated", e.Name)
+	}
+	if seen[name] {
+		return zipMember{}, fmt.Errorf("zip member %q appears twice", name)
+	}
+	seen[name] = true
+
+	dir := strings.HasSuffix(name, "/")
+	if dir && len(e.Data) > 0 {
+		return zipMember{}, fmt.Errorf("zip member %q is a directory and cannot hold data", name)
+	}
+	stored, method, err := storedBytes(e.Data, e.Deflate && !dir)
+	if err != nil {
+		return zipMember{}, err
+	}
+	if offset >= zipMax || len(stored) >= zipMax || len(e.Data) >= zipMax {
+		return zipMember{}, fmt.Errorf("zip member %q crosses the 4 GiB limit of the zip format", name)
+	}
+
+	m := zipMember{
+		name:   name,
+		stored: stored,
+		size:   len(e.Data),
+		offset: offset,
+		method: method,
+		crc:    crc32.ChecksumIEEE(e.Data),
+		attrs:  zipAttrArchive,
+	}
+	if !isASCII(name) {
+		m.flags |= zipUTF8Flag
+	}
+	m.date, m.clock = dosTime(e.Modified)
+	if dir {
+		m.attrs = zipAttrDir
+	}
+	return m, nil
+}
+
+// writeLocal writes the member's local header and its data.
+func (m zipMember) writeLocal(b *bytes.Buffer) {
+	putLE32(b, zipLocalSig)
+	putLE16(b, zipVersion)
+	putLE16(b, m.flags)
+	putLE16(b, m.method)
+	putLE16(b, m.clock)
+	putLE16(b, m.date)
+	putLE32(b, m.crc)
+	putLE32(b, uint32(len(m.stored)))
+	putLE32(b, uint32(m.size))
+	putLE16(b, uint16(len(m.name)))
+	putLE16(b, 0)
+	b.WriteString(m.name)
+	b.Write(m.stored)
+}
+
+// writeCentral writes the member's central directory entry, which repeats the
+// local header and adds where to find it.
+func (m zipMember) writeCentral(b *bytes.Buffer) {
+	putLE32(b, zipCentralSig)
+	putLE16(b, zipVersion) // made by MS-DOS, so no Unix permission bits
+	putLE16(b, zipVersion)
+	putLE16(b, m.flags)
+	putLE16(b, m.method)
+	putLE16(b, m.clock)
+	putLE16(b, m.date)
+	putLE32(b, m.crc)
+	putLE32(b, uint32(len(m.stored)))
+	putLE32(b, uint32(m.size))
+	putLE16(b, uint16(len(m.name)))
+	putLE16(b, 0)
+	putLE16(b, 0)
+	putLE16(b, 0)
+	putLE16(b, 0)
+	putLE32(b, m.attrs)
+	putLE32(b, uint32(m.offset))
+	b.WriteString(m.name)
+}
+
+// writeEOCD writes the end-of-central-directory record, which says how many
+// members there are and where the directory describing them starts.
+func writeEOCD(out *bytes.Buffer, entries, centralLen, bodyLen int, comment string) {
+	putLE32(out, zipEOCDSig)
 	// The counts and offsets below are 16- and 32-bit, so an archive past those
 	// limits would record a wrong member count or a wrong directory offset and
-	// read as a smaller archive than it is.
-	put16(&out, 0)
-	put16(&out, 0)
-	put16(&out, uint16(len(entries)))
-	put16(&out, uint16(len(entries)))
-	put32(&out, uint32(central.Len()))
-	put32(&out, uint32(body.Len()))
-	put16(&out, uint16(len(comment)))
+	// read as a smaller archive than it is. BuildZip rejects both before here.
+	putLE16(out, 0)
+	putLE16(out, 0)
+	putLE16(out, uint16(entries))
+	putLE16(out, uint16(entries))
+	putLE32(out, uint32(centralLen))
+	putLE32(out, uint32(bodyLen))
+	putLE16(out, uint16(len(comment)))
 	out.WriteString(comment)
-	return out.Bytes(), nil
 }
 
 // StoredZipOverhead is the length BuildZip adds to the members' own bytes when
@@ -178,11 +226,15 @@ func isASCII(s string) bool {
 	return true
 }
 
-func put16(b *bytes.Buffer, v uint16) { b.Write([]byte{byte(v), byte(v >> 8)}) }
+// putLE16 and putLE32 are the only byte-order helpers left in this package:
+// everywhere else that assembles a binary format appends through
+// encoding/binary at the call site, naming the order there. A zip header is
+// seventeen consecutive fields written into a buffer, which reads better
+// through these — so they name the order they write instead, because the
+// mistake worth preventing is one of these being read as the other way round.
+func putLE16(b *bytes.Buffer, v uint16) { b.Write(binary.LittleEndian.AppendUint16(nil, v)) }
 
-func put32(b *bytes.Buffer, v uint32) {
-	b.Write([]byte{byte(v), byte(v >> 8), byte(v >> 16), byte(v >> 24)})
-}
+func putLE32(b *bytes.Buffer, v uint32) { b.Write(binary.LittleEndian.AppendUint32(nil, v)) }
 
 // ZipFiller returns a zip holding one member of n filler bytes: what
 // "format: zip" writes when the scenario only wants a real archive of about a

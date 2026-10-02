@@ -110,7 +110,7 @@ func defaultDates(op *spec.Operation, ref time.Time) *fieldError {
 			return err
 		}
 	}
-	if op.Action == "email" && op.Email != nil && strings.TrimSpace(op.Email.Date) == "" {
+	if op.Action == spec.ActionEmail && op.Email != nil && strings.TrimSpace(op.Email.Date) == "" {
 		if ref.IsZero() {
 			return &fieldError{"email", "the message needs a date: set email.date, or give the operation an mtime or the manifest a start"}
 		}

@@ -79,7 +79,7 @@ func TestSchemaAllowsExactlyTheFieldMatrix(t *testing.T) {
 				continue
 			}
 			seen[action] = true
-			if want := compile.AllowedFields(action, tc.playbook); !reflect.DeepEqual(c.Then.PropertyNames.Enum, want) {
+			if want := compile.AllowedFields(spec.ActionName(action), tc.playbook); !reflect.DeepEqual(c.Then.PropertyNames.Enum, want) {
 				t.Errorf("%s %s: schema allows %v, validator allows %v", tc.def, action, c.Then.PropertyNames.Enum, want)
 			}
 			for _, key := range c.Then.PropertyNames.Enum {
@@ -89,9 +89,9 @@ func TestSchemaAllowsExactlyTheFieldMatrix(t *testing.T) {
 			}
 		}
 		var missing []string
-		for _, a := range compile.Actions {
-			if !seen[a] {
-				missing = append(missing, a)
+		for _, a := range spec.Actions {
+			if !seen[string(a)] {
+				missing = append(missing, string(a))
 			}
 		}
 		sort.Strings(missing)
@@ -135,4 +135,78 @@ func TestSchemaRootKeysMatchSpec(t *testing.T) {
 			t.Errorf("%s: schema root keys %v, spec fields %v", tc.typ.Name(), got, want)
 		}
 	}
+}
+
+// TestNestedDefsRefineRealFields: nestedDefs generates each $defs entry from a
+// struct and then refines individual properties by name. def.prop writes the
+// name it is given whether or not the struct has a field for it, so a renamed
+// or misspelled field would publish a property the tool ignores and drop the
+// constraint that was meant to be added — silently, where the hand-written
+// chains of type assertions it replaced at least panicked. Every refined name
+// is therefore checked back against reflection, and the table below against the
+// generated defs, so a definition added without a table entry fails rather
+// than going unchecked.
+func TestNestedDefsRefineRealFields(t *testing.T) {
+	structs := map[string]any{
+		"PeVersion":       spec.PeVersion{},
+		"HistorySpec":     spec.HistorySpec{},
+		"EditInsert":      spec.EditInsert{},
+		"Header":          spec.Header{},
+		"PdfSpec":         spec.PdfSpec{},
+		"DocxSpec":        spec.DocxSpec{},
+		"EmailSpec":       spec.EmailSpec{},
+		"Attachment":      spec.Attachment{},
+		"VaultSpec":       spec.VaultSpec{},
+		"PeSpec":          spec.PeSpec{},
+		"PeSection":       spec.PeSection{},
+		"HistoryVisit":    spec.HistoryVisit{},
+		"HistoryDownload": spec.HistoryDownload{},
+		"ArchiveSpec":     spec.ArchiveSpec{},
+		"EditSpec":        spec.EditSpec{},
+		"EditReplace":     spec.EditReplace{},
+	}
+
+	defs := map[string]any{}
+	nestedDefs(defs)
+
+	for name := range defs {
+		if _, ok := structs[name]; !ok {
+			t.Errorf("$defs.%s is not in this test's table, so nothing checks its properties", name)
+		}
+	}
+
+	for name, v := range structs {
+		entry, ok := defs[name]
+		if !ok {
+			t.Errorf("nestedDefs registered no $defs.%s", name)
+			continue
+		}
+		got := propertiesOf(t, name, entry)
+		want := propertiesOf(t, name, objectSchemaFromStruct(v, nil))
+		for prop := range got {
+			if _, ok := want[prop]; !ok {
+				t.Errorf("$defs.%s has property %q, which %T has no field for", name, prop, v)
+			}
+		}
+		for prop := range want {
+			if _, ok := got[prop]; !ok {
+				t.Errorf("$defs.%s is missing property %q, which %T has a field for", name, prop, v)
+			}
+		}
+	}
+}
+
+// propertiesOf is the properties map of a $defs entry, or a failure saying
+// which entry was not the object the rest of the test assumes.
+func propertiesOf(t *testing.T, name string, entry any) map[string]any {
+	t.Helper()
+	schema, ok := entry.(map[string]any)
+	if !ok {
+		t.Fatalf("$defs.%s is %T, want an object", name, entry)
+	}
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("$defs.%s has no properties object", name)
+	}
+	return props
 }

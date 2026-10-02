@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"github.com/aoiflux/fsagen/compile"
 	"github.com/aoiflux/fsagen/sandbox"
+	"github.com/aoiflux/fsagen/spec"
 	"github.com/aoiflux/fsagen/util"
 	"os"
 	"path/filepath"
@@ -504,15 +505,15 @@ func min(a, b int) int {
 
 // TestEveryActionExecutes: the executor dispatches on the action name, so an
 // action in the closed set with no entry would compile and then fail at runtime
-// with "unknown action". The table and compile.Actions have to agree both ways.
+// with "unknown action". The table and spec.Actions have to agree both ways.
 func TestEveryActionExecutes(t *testing.T) {
-	for _, action := range compile.Actions {
+	for _, action := range spec.Actions {
 		if _, ok := executors[action]; !ok {
-			t.Errorf("action %q is in compile.Actions but has no executor", action)
+			t.Errorf("action %q is in spec.Actions but has no executor", action)
 		}
 	}
 	for action := range executors {
-		if !slices.Contains(compile.Actions, action) {
+		if !slices.Contains(spec.Actions, action) {
 			t.Errorf("executors has %q, which is not in compile.Actions", action)
 		}
 	}

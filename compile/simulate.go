@@ -141,24 +141,24 @@ type simulation struct {
 	primary string
 }
 
-// simulators say what each action does to the model. Every name in Actions has
-// an entry, which TestEveryActionSimulates proves.
-var simulators = map[string]func(*simulation) error{
-	"create":        applyCreate,
-	"append":        applyAppend,
-	"update":        applyWrite,
-	"truncate":      applyWrite,
-	"edit":          applyWrite,
-	"archive":       applyArchive,
-	"delete":        applyDelete,
-	"mace":          applyMace,
-	"rename":        applyRename,
-	"copy":          applyCopy,
-	"rotate":        applyRotate,
-	"email":         applyEmail,
-	"ansible-vault": applyVault,
-	"ads":           applyStream,
-	"motw":          applyStream,
+// simulators say what each action does to the model. Every name in spec.Actions
+// has an entry, which TestEveryActionSimulates proves.
+var simulators = map[spec.ActionName]func(*simulation) error{
+	spec.ActionCreate:   applyCreate,
+	spec.ActionAppend:   applyAppend,
+	spec.ActionUpdate:   applyWrite,
+	spec.ActionTruncate: applyWrite,
+	spec.ActionEdit:     applyWrite,
+	spec.ActionArchive:  applyArchive,
+	spec.ActionDelete:   applyDelete,
+	spec.ActionMACE:     applyMace,
+	spec.ActionRename:   applyRename,
+	spec.ActionCopy:     applyCopy,
+	spec.ActionRotate:   applyRotate,
+	spec.ActionEmail:    applyEmail,
+	spec.ActionVault:    applyVault,
+	spec.ActionADS:      applyStream,
+	spec.ActionMOTW:     applyStream,
 }
 
 // apply performs one operation on the model, enforcing the preconditions the
@@ -272,7 +272,7 @@ func applyAppend(s *simulation) error {
 
 // applyWrite covers the actions that change a file which must already exist.
 func applyWrite(s *simulation) error {
-	if err := s.mustFile(s.op.Action); err != nil {
+	if err := s.mustFile(string(s.op.Action)); err != nil {
 		return err
 	}
 	written(s.tree, s.op.Path, s.when)
@@ -444,7 +444,7 @@ func applyStream(s *simulation) error {
 // StreamOf is the stream an ads or motw operation writes. A mark of the web
 // always goes to the stream Windows reads it from.
 func StreamOf(op spec.Operation) string {
-	if op.Action == "motw" {
+	if op.Action == spec.ActionMOTW {
 		return ZoneIdentifierStream
 	}
 	return op.Stream
@@ -462,8 +462,8 @@ func renameErr(err error, from, to string) error {
 	return err
 }
 
-func hintFor(action string) string {
-	if action == "update" || action == "truncate" {
+func hintFor(action spec.ActionName) string {
+	if action == spec.ActionUpdate || action == spec.ActionTruncate {
 		return "; use create to make a new file"
 	}
 	return ""
@@ -472,14 +472,14 @@ func hintFor(action string) string {
 // EmailFormat is the effective format of an email operation: the one it gives,
 // or the one its extension implies. Both the simulator and the executor decide
 // from this, so they cannot disagree about what a message is written as.
-func EmailFormat(op spec.Operation) string {
+func EmailFormat(op spec.Operation) spec.Format {
 	if op.Format != "" {
 		return op.Format
 	}
 	if strings.EqualFold(path.Ext(op.Path), ".mbox") {
-		return "mbox"
+		return spec.FormatMbox
 	}
-	return "eml"
+	return spec.FormatEML
 }
 
 // archiveMembers settles what an archive holds: first every live path under

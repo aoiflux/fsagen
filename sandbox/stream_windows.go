@@ -41,33 +41,16 @@ func openStream(r *os.Root, name, stream string, access, disposition uint32) (*o
 	}
 	defer base.Close()
 
-	objName, err := windows.NewNTUnicodeString(":" + stream + ":$DATA")
+	h, err := ntOpen{
+		parent:      windows.Handle(base.Fd()),
+		name:        ":" + stream + ":$DATA",
+		access:      access,
+		attributes:  windows.FILE_ATTRIBUTE_NORMAL,
+		disposition: disposition,
+		options:     windows.FILE_NON_DIRECTORY_FILE,
+	}.open()
 	if err != nil {
-		return nil, err
-	}
-	oa := &windows.OBJECT_ATTRIBUTES{
-		RootDirectory: windows.Handle(base.Fd()),
-		ObjectName:    objName,
-		Attributes:    windows.OBJ_CASE_INSENSITIVE | windows.OBJ_DONT_REPARSE,
-	}
-	oa.Length = uint32(unsafe.Sizeof(*oa))
-
-	var (
-		h    windows.Handle
-		iosb windows.IO_STATUS_BLOCK
-	)
-	err = windows.NtCreateFile(&h, access|windows.SYNCHRONIZE, oa, &iosb, nil,
-		windows.FILE_ATTRIBUTE_NORMAL,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
-		disposition,
-		windows.FILE_NON_DIRECTORY_FILE|windows.FILE_SYNCHRONOUS_IO_NONALERT,
-		0, 0)
-	if err != nil {
-		full := name + ":" + stream
-		if ntNotExist(err) {
-			return nil, &os.PathError{Op: "open", Path: full, Err: os.ErrNotExist}
-		}
-		return nil, &os.PathError{Op: "open", Path: full, Err: err}
+		return nil, &os.PathError{Op: "open", Path: name + ":" + stream, Err: err}
 	}
 	return os.NewFile(uintptr(h), name+":"+stream), nil
 }

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # build.sh builds every release binary for fsagen into dist/, then writes the
-# checksums. It takes no arguments: ./build.sh is the whole interface.
+# checksums. Run ./build.sh --help for the one argument it takes.
 #
 # Set NO_COLOR to turn the colours off. build.ps1 is the PowerShell twin and
-# writes a byte-identical SHA256SUMS for the same commit and toolchain.
+# writes a byte-identical SHA256SUMS for the same version and toolchain.
 set -euo pipefail
 
 readonly APP=fsagen
@@ -30,6 +30,7 @@ readonly BOLD DIM RED GREEN YELLOW CYAN RESET
 die() { printf '%s\n' "  ${RED}${BOLD}error${RESET} $*" >&2; exit 1; }
 rule() { printf '  %s%s%s\n' "$DIM" "$(printf '%68s' '' | tr ' ' -)" "$RESET"; }
 field() { printf '  %s%-10s%s %s\n' "$DIM" "$1" "$RESET" "$2"; }
+note() { printf '  %s%-10s%s %s! %s%s\n' "$DIM" '' "$RESET" "$YELLOW" "$1" "$RESET"; }
 heading() { printf '\n  %s%s%s\n' "$BOLD" "$1" "$RESET"; }
 ok() { printf '%s%-4s%s' "$GREEN" OK "$RESET"; }
 bad() { printf '%s%-4s%s' "$RED" FAIL "$RESET"; }
@@ -57,6 +58,64 @@ sha256_of() {
 	fi
 }
 
+usage() {
+	cat <<'EOF'
+Usage: ./build.sh [version]
+
+Builds every release binary into dist/ and writes SHA256SUMS.
+
+  version      the version to build, such as v0.1.0. It names every file and is
+               stamped into the binaries, so fsagen --version reports it too.
+               Defaults to git describe, which is what a test build wants.
+
+  -h, --help   print this and exit
+
+  NO_COLOR     set it in the environment to turn the colours off
+EOF
+}
+
+given=''
+case "${1:-}" in
+-h | --help) usage; exit 0 ;;
+-*) die "unknown option $1 (./build.sh --help)" ;;
+*) given=${1:-} ;;
+esac
+[ "$#" -le 1 ] || die "one version at most, such as ./build.sh v0.1.0"
+
+# A version names every file and goes inside the binaries, so it has to be one
+# Go accepts as a module version: v, three numbers, an optional prerelease.
+version_ok() { printf '%s' "$1" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$'; }
+
+command -v go >/dev/null 2>&1 || die "go is not on PATH"
+[ -f "$ROOT/go.mod" ] || die "no go.mod in $ROOT"
+
+if [ -n "$given" ]; then
+	version_ok "$given" || die "version must look like v1.2.3 or v1.2.3-rc.1, not '$given'"
+	VERSION=$given ORIGIN=given
+else
+	VERSION=$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null) || VERSION=''
+	[ -n "$VERSION" ] || VERSION=dev
+	ORIGIN='git describe'
+fi
+readonly VERSION ORIGIN
+
+# Stamping a version the commit does not carry is how a release ends up
+# promising bytes it was not built from. It stays allowed, because test builds
+# want it; it does not stay quiet.
+TAG=$(git -C "$ROOT" describe --tags --exact-match 2>/dev/null) || TAG=''
+DIRTY=''
+[ -z "$(git -C "$ROOT" status --porcelain 2>/dev/null)" ] || DIRTY=yes
+readonly TAG DIRTY
+
+# The stamped variable is named after the module, so reading that path from
+# go.mod is what stops a module rename leaving behind a -X that hits nothing.
+MODULE=$(go list -m 2>/dev/null) || die "cannot read the module path (go list -m failed)"
+readonly STAMP=$MODULE/runinfo.version
+
+HOST_OS=$(go env GOOS)
+HOST_ARCH=$(go env GOARCH)
+readonly HOST_OS HOST_ARCH
+
 # A binary's name carries its version and platform, so several releases can sit
 # in one directory without colliding.
 artifact() {
@@ -65,28 +124,15 @@ artifact() {
 	printf '%s_%s_%s_%s%s' "$APP" "$VERSION" "$1" "$2" "$ext"
 }
 
-command -v go >/dev/null 2>&1 || die "go is not on PATH"
-[ -f "$ROOT/go.mod" ] || die "no go.mod in $ROOT"
-
-VERSION=$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo dev)
-readonly VERSION
-# A release is built from a tagged commit, because the version in every file
-# name is git describe's. Building two commits later silently names the assets
-# v0.1.0-2-gda99bb6, which is how a release ends up carrying a bare hash.
-TAGGED=yes
-git -C "$ROOT" describe --tags --exact-match >/dev/null 2>&1 || TAGGED=no
-readonly TAGGED
-HOST_OS=$(go env GOOS)
-HOST_ARCH=$(go env GOARCH)
-readonly HOST_OS HOST_ARCH
-
 printf '\n  %s%s release build%s\n' "$BOLD$CYAN" "$APP" "$RESET"
 rule
-field version "$VERSION"
-if [ "$TAGGED" = no ]; then
-	printf '  %s%-10s%s %s! no tag on this commit: fine for a test build, not for a release%s\n' \
-		"$DIM" '' "$RESET" "$YELLOW" "$RESET"
+field version "$VERSION  ${DIM}($ORIGIN)${RESET}"
+if [ -z "$TAG" ]; then
+	note "no tag on this commit: fine for a test build, not for a release"
+elif [ "$TAG" != "${VERSION%-dirty}" ]; then
+	note "this commit is tagged $TAG, so these binaries claim a version they are not"
 fi
+[ -z "$DIRTY" ] || note "uncommitted changes: --version will report +modified"
 field toolchain "$(go env GOVERSION)"
 field output "$DIST"
 field targets "${#TARGETS[@]}  ${DIM}(windows, linux, darwin x amd64, arm64)${RESET}"
@@ -104,10 +150,10 @@ for target in "${TARGETS[@]}"; do
 	goos=${target%/*} goarch=${target#*/}
 	name=$(artifact "$goos" "$goarch")
 	t0=$(now_ms)
-	# -trimpath keeps the build host's paths out of the binary; the revision and
-	# dirty flag that --version reports come from Go's own VCS stamping.
+	# -trimpath keeps the build host's paths out of the binary and -X puts the
+	# version in; the revision printed beside it is Go's own VCS stamping.
 	if log=$(CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch \
-		go build -trimpath -o "$DIST/$name" . 2>&1); then
+		go build -trimpath -ldflags "-X $STAMP=$VERSION" -o "$DIST/$name" . 2>&1); then
 		printf '    %s  %-14s %-52s %9s  %5ss\n' "$(ok)" "$target" "$name" \
 			"$(human "$(size_of "$DIST/$name")")" "$(secs $(( $(now_ms) - t0 )) )"
 		built+=("$name")
@@ -137,11 +183,18 @@ printf '    %s  %-14s %s%d entries, verify with: sha256sum -c SHA256SUMS%s\n' \
 
 heading "smoke test"
 host_artifact=$DIST/$(artifact "$HOST_OS" "$HOST_ARCH")
-if [ -x "$host_artifact" ]; then
-	printf '    %s  %-14s %s%s%s\n' "$(ok)" "$HOST_OS/$HOST_ARCH" "$DIM" "$("$host_artifact" --version)" "$RESET"
-else
+if [ ! -x "$host_artifact" ]; then
 	printf '    %s%-4s%s  %s%s is not a release target, nothing to run%s\n' \
 		"$YELLOW" skip "$RESET" "$DIM" "$HOST_OS/$HOST_ARCH" "$RESET"
+else
+	reported=$("$host_artifact" --version) || die "$(basename "$host_artifact") --version failed"
+	printf '    %s  %-14s %s%s%s\n' "$(ok)" "$HOST_OS/$HOST_ARCH" "$DIM" "$reported" "$RESET"
+	# -X is silently ignored when the variable it names has moved, so the
+	# binary itself has to confirm the version these files are named after.
+	case "$reported" in
+	*"$APP $VERSION "*) ;;
+	*) die "built as $VERSION, but the binary reports: $reported" ;;
+	esac
 fi
 
 total=0
@@ -152,7 +205,7 @@ rule
 if [ "${#failed[@]}" -eq 0 ]; then
 	printf '  %s%sdone%s  %d/%d targets, %s total, %ss\n' "$BOLD" "$GREEN" "$RESET" \
 		"${#built[@]}" "${#TARGETS[@]}" "$(human "$total")" "$(secs $(( $(now_ms) - started )) )"
-	printf '  %sthis script does not test the binaries; run: go run ./tools/gate%s\n\n' "$DIM" "$RESET"
+	printf '  %sthis script checks nothing but --version; for the tests run: go run ./tools/gate%s\n\n' "$DIM" "$RESET"
 else
 	printf '  %s%sfailed%s  %d of %d targets: %s\n\n' "$BOLD" "$RED" "$RESET" \
 		"${#failed[@]}" "${#TARGETS[@]}" "${failed[*]}"

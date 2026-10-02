@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -280,11 +281,14 @@ func TestPortability(t *testing.T) {
 // file gets one built, and one fsagen still cannot build is refused rather
 // than filled with base32 text.
 func TestTypedExtensionInfersOrRefuses(t *testing.T) {
-	for _, tc := range []struct{ path, format string }{
-		{"a/dropper.exe", "pe"}, {"lib/helper.dll", "pe"},
-		{"a/exfil.zip", "zip"}, {"app.jar", "zip"},
-		{"img.PNG", "png"}, {"img.JPG", "jpeg"}, {"scan.jpeg", "jpeg"},
-		{"notes.docx", "docx"}, {"clip.mp4", "mp4"},
+	for _, tc := range []struct {
+		path   string
+		format spec.Format
+	}{
+		{"a/dropper.exe", spec.FormatPE}, {"lib/helper.dll", spec.FormatPE},
+		{"a/exfil.zip", spec.FormatZip}, {"app.jar", spec.FormatZip},
+		{"img.PNG", spec.FormatPNG}, {"img.JPG", spec.FormatJPEG}, {"scan.jpeg", spec.FormatJPEG},
+		{"notes.docx", spec.FormatDOCX}, {"clip.mp4", spec.FormatMP4},
 	} {
 		p := mustLoad(t, ModeManifest, "start: 2026-01-01T00:00:00Z\noperations:\n  - action: create\n    path: "+tc.path+"\n    content_len: 4096\n")
 		if got := p.Ops[0].Format; got != tc.format {
@@ -307,7 +311,7 @@ func TestTypedExtensionInfersOrRefuses(t *testing.T) {
 	if len(p.Ops) != 3 {
 		t.Fatal(len(p.Ops))
 	}
-	for i, want := range []string{"text", "", "pdf"} {
+	for i, want := range []spec.Format{spec.FormatText, "", spec.FormatPDF} {
 		if got := p.Ops[i].Format; got != want {
 			t.Errorf("op %d format %q, want %q", i+1, got, want)
 		}
@@ -492,14 +496,14 @@ func TestEmptyContentIsEmpty(t *testing.T) {
 // action in the closed set with no entry would compile and then silently do
 // nothing to the model. The table and the set have to agree in both directions.
 func TestEveryActionSimulates(t *testing.T) {
-	for _, action := range Actions {
+	for _, action := range spec.Actions {
 		if _, ok := simulators[action]; !ok {
-			t.Errorf("action %q is in Actions but has no simulator", action)
+			t.Errorf("action %q is in spec.Actions but has no simulator", action)
 		}
 	}
 	for action := range simulators {
-		if !contains(Actions, action) {
-			t.Errorf("simulators has %q, which is not in Actions", action)
+		if !slices.Contains(spec.Actions, action) {
+			t.Errorf("simulators has %q, which is not in spec.Actions", action)
 		}
 	}
 }

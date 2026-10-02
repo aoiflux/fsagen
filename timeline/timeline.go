@@ -23,7 +23,6 @@ import (
 	"io"
 	"io/fs"
 	"path"
-	"runtime"
 	"sort"
 	"strconv"
 	"time"
@@ -38,9 +37,10 @@ const (
 )
 
 // Formats lists the formats Write accepts, in the order they are documented.
-// It names exactly the writers table's keys, which TestEveryFormatHasAWriter
-// proves, so asking for a listed format can never find no writer.
-var Formats = []string{"csv", "txt", "bodyfile", "macb", "jsonl"}
+// It is built from the writers table rather than written out beside it, so a
+// format cannot be offered that nothing writes, or written that nothing
+// offers.
+var Formats = formatNames()
 
 // Type is what an entry describes.
 type Type string
@@ -239,12 +239,13 @@ func (w *walker) streamEntry(name string, obj Entry, s sandbox.Stream) (Entry, e
 // readable and executable by everyone, with write left to the read-only flag.
 const tskReadableBits = 0o555
 
-// reportedMode is the permission bits a timeline records. Windows has no
-// permission bits of its own, only a read-only flag, so the bits are written as
-// The Sleuth Kit writes them for NTFS.
+// reportedMode is the permission bits a timeline records. Where the platform
+// has none of its own, the bits are written as The Sleuth Kit writes them for
+// NTFS. Which platforms those are is sandbox's to know; what to write instead
+// is this package's, because it is a statement about the timeline format.
 func reportedMode(m fs.FileMode) fs.FileMode {
 	mode := m & (fs.ModePerm | fs.ModeDir)
-	if runtime.GOOS == "windows" {
+	if !sandbox.ModeHasPermissions {
 		mode |= tskReadableBits
 	}
 	return mode

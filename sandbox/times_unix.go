@@ -40,6 +40,17 @@ func setTimes(r *os.Root, name string, t Times, _ TimeCaps) error {
 
 func getMeta(r *os.Root, name, _ string) (Meta, error) { return statMeta(r, name) }
 
+// lstatMeta reads the one time every Unix reports through lstat. That is all
+// a platform without a stat reader can offer, and where the BSDs' richer
+// statMeta starts, so it returns the FileInfo it read for them to go on with.
+func lstatMeta(r *os.Root, name string) (Meta, os.FileInfo, error) {
+	fi, err := r.Lstat(name)
+	if err != nil {
+		return Meta{}, nil, err
+	}
+	return Meta{Times: Times{Mtime: fi.ModTime().UTC()}}, fi, nil
+}
+
 func openQuiet(r *os.Root, name string) (*os.File, error) {
 	if noatime != 0 {
 		f, err := r.OpenFile(name, os.O_RDONLY|noatime, 0)

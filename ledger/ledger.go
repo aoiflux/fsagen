@@ -10,6 +10,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+
+	"github.com/aoiflux/fsagen/spec"
 )
 
 // FileName is the ledger's name in the sidecar directory.
@@ -24,13 +26,13 @@ const (
 
 // Entry is one operation.
 type Entry struct {
-	N       int    `json:"n"`
-	Src     string `json:"src"`
-	At      string `json:"at,omitempty"`
-	Action  string `json:"action"`
-	Path    string `json:"path,omitempty"`
-	NewPath string `json:"new_path,omitempty"`
-	ID      string `json:"id,omitempty"`
+	N       int             `json:"n"`
+	Src     string          `json:"src"`
+	At      string          `json:"at,omitempty"`
+	Action  spec.ActionName `json:"action"`
+	Path    string          `json:"path,omitempty"`
+	NewPath string          `json:"new_path,omitempty"`
+	ID      string          `json:"id,omitempty"`
 	// Object is the model's serial number for the object the operation left
 	// behind (for a delete, the one it removed); it survives renames.
 	Object int `json:"object,omitempty"`

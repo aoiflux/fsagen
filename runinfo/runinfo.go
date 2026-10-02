@@ -31,6 +31,7 @@ import (
 	"github.com/aoiflux/fsagen/constant"
 	"github.com/aoiflux/fsagen/ledger"
 	"github.com/aoiflux/fsagen/sandbox"
+	"github.com/aoiflux/fsagen/spec"
 )
 
 // File names inside the sidecar directory.
@@ -111,10 +112,10 @@ type Capabilities struct {
 // Skipped is one operation the platform could not perform, left out because
 // the run was told to skip rather than fail.
 type Skipped struct {
-	Op     int    `json:"op"`
-	Src    string `json:"src"`
-	Action string `json:"action"`
-	Path   string `json:"path"`
+	Op     int             `json:"op"`
+	Src    string          `json:"src"`
+	Action spec.ActionName `json:"action"`
+	Path   string          `json:"path"`
 	// Field is set when only one field was dropped (an explicit time the
 	// platform cannot set) and the operation itself was performed.
 	Field  string `json:"field,omitempty"`
@@ -175,9 +176,32 @@ func NewInfo() *Info {
 // Write replaces dir/run-info.json atomically.
 func (i *Info) Write(dir string) error { return writeJSON(dir, InfoFileName, i) }
 
-// Build reports the module version and VCS revision this binary was built
-// from, as far as the toolchain recorded them.
+// version is the release version, stamped at link time by build.sh and
+// build.ps1 (-ldflags -X). Go stamps Main.Version itself, but only ever with a
+// tag it can see: built from an untagged commit it records a pseudo-version,
+// which is how the v0.1.0 assets shipped reporting
+// v0.0.0-20260927132346-6b5b91ad4367. The release scripts pass the version
+// they name the files after, so the name and the binary cannot disagree.
+//
+// This is only a claim about the version. The revision below always comes from
+// the toolchain, so the commit a binary was built from stays checkable against
+// the tag whatever this says.
+var version string
+
+// Build reports the version and VCS revision this binary was built from. The
+// version is the one a release script stamped, if one did, and the module
+// version the toolchain recorded otherwise.
 func Build() (module, revision string, modified bool) {
+	module, revision, modified = recorded()
+	if version != "" {
+		module = version
+	}
+	return
+}
+
+// recorded reports what the toolchain wrote into the binary, as far as it
+// recorded anything at all.
+func recorded() (module, revision string, modified bool) {
 	module = "(unknown)"
 	info, ok := debug.ReadBuildInfo()
 	if !ok {

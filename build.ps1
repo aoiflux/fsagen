@@ -2,15 +2,25 @@
 .SYNOPSIS
     Builds every release binary for fsagen into dist/, then writes the checksums.
 .DESCRIPTION
-    Takes no arguments: .\build.ps1 is the whole interface. Set NO_COLOR to turn
-    the colours off. build.sh is the POSIX twin and writes a byte-identical
-    SHA256SUMS for the same commit and toolchain.
+    Set NO_COLOR to turn the colours off. build.sh is the POSIX twin and writes a
+    byte-identical SHA256SUMS for the same version and toolchain.
 
     Colours go through Write-Host -ForegroundColor rather than ANSI escapes, so
     the output renders on Windows PowerShell 5.1 as well as PowerShell 7.
+.PARAMETER Version
+    The version to build, such as v0.1.0. It names every file and is stamped
+    into the binaries, so fsagen --version reports it too. Defaults to git
+    describe, which is what a test build wants.
+.EXAMPLE
+    .\build.ps1 v0.1.0
+.EXAMPLE
+    .\build.ps1
 #>
 [CmdletBinding()]
-param()
+param(
+    [Parameter(Position = 0)]
+    [string]$Version
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -41,10 +51,15 @@ function Write-Rule    { Write-Part ('  ' + ('-' * 68)) DarkGray }
 function Write-Field   { param($Name, $Value)
                          Write-Part ('  {0,-10} ' -f $Name) DarkGray -NoNewline
                          Write-Part $Value Gray }
+function Write-Note    { param($Text)
+                         Write-Part ('  {0,-10} ' -f '') DarkGray -NoNewline
+                         Write-Part "! $Text" Yellow }
 function Write-Heading { param($Text) Write-Host ''; Write-Part "  $Text" White }
 function Write-Status  { param([string]$Mark, [string]$Color, [string]$Rest)
                          Write-Part ('    {0,-4}  ' -f $Mark) $Color -NoNewline
                          Write-Part $Rest Gray }
+function Stop-Build    { param($Text)
+                         Write-Part "  error $Text" Red; Write-Host ''; exit 1 }
 
 function Format-Size { param([long]$Bytes) '{0:N1} MiB' -f ($Bytes / 1MB) }
 
@@ -74,32 +89,51 @@ function Invoke-Go {
     }
 }
 
-if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
-    Write-Part '  error go is not on PATH' Red; exit 1
-}
-if (-not (Test-Path (Join-Path $Root 'go.mod'))) {
-    Write-Part "  error no go.mod in $Root" Red; exit 1
+if (-not (Get-Command go -ErrorAction SilentlyContinue)) { Stop-Build 'go is not on PATH' }
+if (-not (Test-Path (Join-Path $Root 'go.mod'))) { Stop-Build "no go.mod in $Root" }
+
+if ($Version) {
+    # A version names every file and goes inside the binaries, so it has to be
+    # one Go accepts as a module version: v, three numbers, an optional
+    # prerelease.
+    $Version = $Version.Trim()
+    if ($Version -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$') {
+        Stop-Build "version must look like v1.2.3 or v1.2.3-rc.1, not '$Version'"
+    }
+    $Origin = 'given'
+} else {
+    $Version = & git -C $Root describe --tags --always --dirty 2>$null
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($Version)) { $Version = 'dev' }
+    $Version = $Version.Trim()
+    $Origin = 'git describe'
 }
 
-$Version = & git -C $Root describe --tags --always --dirty 2>$null
-if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($Version)) { $Version = 'dev' }
-$Version = $Version.Trim()
-# A release is built from a tagged commit, because the version in every file
-# name is git describe's. Building two commits later silently names the assets
-# v0.1.0-2-gda99bb6, which is how a release ends up carrying a bare hash.
-& git -C $Root describe --tags --exact-match 2>$null | Out-Null
-$Tagged = $LASTEXITCODE -eq 0
+# Stamping a version the commit does not carry is how a release ends up
+# promising bytes it was not built from. It stays allowed, because test builds
+# want it; it does not stay quiet.
+$Tag = & git -C $Root describe --tags --exact-match 2>$null
+if ($LASTEXITCODE -ne 0) { $Tag = '' } else { $Tag = ($Tag | Out-String).Trim() }
+$Dirty = -not [string]::IsNullOrWhiteSpace((& git -C $Root status --porcelain 2>$null | Out-String))
+
+# The stamped variable is named after the module, so reading that path from
+# go.mod is what stops a module rename leaving behind a -X that hits nothing.
+$Module = (& go list -m 2>$null | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or -not $Module) { Stop-Build 'cannot read the module path (go list -m failed)' }
+$Stamp = "$Module/runinfo.version"
+
 $HostOS = (& go env GOOS).Trim()
 $HostArch = (& go env GOARCH).Trim()
 
 Write-Host ''
 Write-Part "  $App release build" Cyan
 Write-Rule
-Write-Field 'version'   $Version
-if (-not $Tagged) {
-    Write-Part ('  {0,-10} ' -f '') DarkGray -NoNewline
-    Write-Part '! no tag on this commit: fine for a test build, not for a release' Yellow
+Write-Field 'version' "$Version  ($Origin)"
+if (-not $Tag) {
+    Write-Note 'no tag on this commit: fine for a test build, not for a release'
+} elseif ($Tag -ne ($Version -replace '-dirty$', '')) {
+    Write-Note "this commit is tagged $Tag, so these binaries claim a version they are not"
 }
+if ($Dirty) { Write-Note 'uncommitted changes: --version will report +modified' }
 Write-Field 'toolchain' (& go env GOVERSION).Trim()
 Write-Field 'output'    $Dist
 Write-Field 'targets'   ("{0}  (windows, linux, darwin x amd64, arm64)" -f $Targets.Count)
@@ -118,9 +152,10 @@ foreach ($t in $Targets) {
     $label = "$($t.OS)/$($t.Arch)"
     $name = Get-ArtifactName $t.OS $t.Arch
     $sw = [Diagnostics.Stopwatch]::StartNew()
-    # -trimpath keeps the build host's paths out of the binary; the revision and
-    # dirty flag that --version reports come from Go's own VCS stamping.
-    $r = Invoke-Go @('build', '-trimpath', '-o', (Join-Path $Dist $name), '.') `
+    # -trimpath keeps the build host's paths out of the binary and -X puts the
+    # version in; the revision printed beside it is Go's own VCS stamping.
+    $r = Invoke-Go @('build', '-trimpath', '-ldflags', "-X $Stamp=$Version",
+                     '-o', (Join-Path $Dist $name), '.') `
                    @{ CGO_ENABLED = '0'; GOOS = $t.OS; GOARCH = $t.Arch }
     $sw.Stop()
     if ($r.Code -eq 0) {
@@ -157,10 +192,17 @@ Write-Status 'OK' Green ('{0,-14} {1} entries, verify with: sha256sum -c SHA256S
 
 Write-Heading 'smoke test'
 $hostArtifact = Join-Path $Dist (Get-ArtifactName $HostOS $HostArch)
-if (Test-Path $hostArtifact) {
-    Write-Status 'OK' Green ('{0,-14} {1}' -f "$HostOS/$HostArch", (& $hostArtifact --version).Trim())
-} else {
+if (-not (Test-Path $hostArtifact)) {
     Write-Status 'skip' Yellow ("$HostOS/$HostArch is not a release target, nothing to run")
+} else {
+    $reported = (& $hostArtifact --version | Out-String).Trim()
+    Write-Status 'OK' Green ('{0,-14} {1}' -f "$HostOS/$HostArch", $reported)
+    # -X is silently ignored when the variable it names has moved, so the
+    # binary itself has to confirm the version these files are named after.
+    if ($reported -notlike "$App $Version *") {
+        Write-Host ''
+        Stop-Build "built as $Version, but the binary reports: $reported"
+    }
 }
 
 $total = ($built | ForEach-Object { (Get-Item (Join-Path $Dist $_)).Length } | Measure-Object -Sum).Sum
@@ -171,7 +213,7 @@ Write-Rule
 if ($failed.Count -eq 0) {
     Write-Part ('  done  {0}/{1} targets, {2} total, {3}s' -f `
         $built.Count, $Targets.Count, (Format-Size $total), $started.Elapsed.TotalSeconds.ToString('0.0')) Green
-    Write-Part '  this script does not test the binaries; run: go run ./tools/gate' DarkGray
+    Write-Part '  this script checks nothing but --version; for the tests run: go run ./tools/gate' DarkGray
     Write-Host ''
 } else {
     Write-Part ('  failed  {0} of {1} targets: {2}' -f $failed.Count, $Targets.Count, ($failed -join ' ')) Red

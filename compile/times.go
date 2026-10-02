@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/aoiflux/fsagen/model"
+	"github.com/aoiflux/fsagen/spec"
 	"github.com/aoiflux/fsagen/util"
 )
 
@@ -36,7 +37,7 @@ import (
 
 // opTime is the time the operation happens.
 func opTime(op *Op) time.Time {
-	if op.Action == "email" && op.Email != nil {
+	if op.Action == spec.ActionEmail && op.Email != nil {
 		if d, err := time.Parse(time.RFC3339, strings.TrimSpace(op.Email.Date)); err == nil {
 			return d.UTC()
 		}
@@ -133,7 +134,7 @@ func settleTimes(s *simulation) {
 	}
 	// A delete leaves nothing behind to describe; it recorded the removed
 	// object's identity and times before removing it.
-	if s.op.Action != "delete" {
+	if s.op.Action != spec.ActionDelete {
 		s.recordPrimary()
 	}
 	s.op.Stamps = stampsAfter(s.tree, s.op.Path, s.op.NewPath, s.primary)

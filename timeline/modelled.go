@@ -7,6 +7,7 @@ import (
 	"github.com/aoiflux/fsagen/ledger"
 	"github.com/aoiflux/fsagen/model"
 	"github.com/aoiflux/fsagen/sandbox"
+	"github.com/aoiflux/fsagen/spec"
 )
 
 // Controlled says which of the times a run can set beyond access and
@@ -34,7 +35,7 @@ func Modelled(tree *model.Tree, entries []ledger.Entry, c Controlled) *Timeline 
 	}
 	last := map[int]state{}
 	for _, e := range entries {
-		if e.Outcome != ledger.Done || e.Object == 0 || e.Action == "delete" {
+		if e.Outcome != ledger.Done || e.Object == 0 || e.Action == spec.ActionDelete {
 			continue
 		}
 		st := last[e.Object]

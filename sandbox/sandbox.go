@@ -215,20 +215,36 @@ func OpenSources(dir string, allowExternal bool) (*Sources, error) {
 // Close releases the source root.
 func (s *Sources) Close() error { return s.root.Close() }
 
+// resolve decides what a source path as written in the YAML refers to: the
+// policy's verdict on the path first, then whether reading outside the YAML's
+// directory is allowed at all. It returns a path to open, and whether that
+// path is on the host rather than inside the source root. Both ReadFile and
+// Check go through it, so a path one of them accepts the other cannot refuse.
+func (s *Sources) resolve(p string) (name string, external bool, err error) {
+	clean, external, err := pathpolicy.Source(p)
+	if err != nil {
+		return "", false, err
+	}
+	if external {
+		if !s.allowExternal {
+			return "", false, fmt.Errorf("source %q is outside the directory holding the YAML file; copy it there or pass --allow-external-sources", p)
+		}
+		return resolveExternal(s.dir, p), true, nil
+	}
+	return native(clean), false, nil
+}
+
 // ReadFile reads a source path exactly as written in the YAML.
 func (s *Sources) ReadFile(p string) ([]byte, error) {
-	clean, external, err := pathpolicy.Source(p)
+	name, external, err := s.resolve(p)
 	if err != nil {
 		return nil, err
 	}
 	var data []byte
 	if external {
-		if !s.allowExternal {
-			return nil, fmt.Errorf("source %q is outside the directory holding the YAML file; copy it there or pass --allow-external-sources", p)
-		}
-		data, err = os.ReadFile(resolveExternal(s.dir, p))
+		data, err = os.ReadFile(name)
 	} else {
-		data, err = s.root.ReadFile(native(clean))
+		data, err = s.root.ReadFile(name)
 	}
 	if err != nil {
 		return nil, err
@@ -241,18 +257,15 @@ func (s *Sources) ReadFile(p string) ([]byte, error) {
 // Check verifies that a source path is acceptable and exists, without
 // recording it as read.
 func (s *Sources) Check(p string) error {
-	clean, external, err := pathpolicy.Source(p)
+	name, external, err := s.resolve(p)
 	if err != nil {
 		return err
 	}
 	if external {
-		if !s.allowExternal {
-			return fmt.Errorf("source %q is outside the directory holding the YAML file; copy it there or pass --allow-external-sources", p)
-		}
-		_, err = os.Stat(resolveExternal(s.dir, p))
-		return err
+		_, err = os.Stat(name)
+	} else {
+		_, err = s.root.Stat(name)
 	}
-	_, err = s.root.Stat(native(clean))
 	return err
 }
 

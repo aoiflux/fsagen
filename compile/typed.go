@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -21,12 +22,12 @@ import (
 // .pdf is deliberately absent: a PDF needs its dates settled while the
 // operation is compiled, before the path has been rendered, so it stays an
 // explicit format: pdf.
-var inferredFormats = map[string]string{
-	".exe": "pe", ".dll": "pe", ".sys": "pe", ".scr": "pe",
-	".zip": "zip", ".jar": "zip",
-	".png": "png", ".jpg": "jpeg", ".jpeg": "jpeg",
-	".docx": "docx",
-	".mp4":  "mp4",
+var inferredFormats = map[string]spec.Format{
+	".exe": spec.FormatPE, ".dll": spec.FormatPE, ".sys": spec.FormatPE, ".scr": spec.FormatPE,
+	".zip": spec.FormatZip, ".jar": spec.FormatZip,
+	".png": spec.FormatPNG, ".jpg": spec.FormatJPEG, ".jpeg": spec.FormatJPEG,
+	".docx": spec.FormatDOCX,
+	".mp4":  spec.FormatMP4,
 }
 
 // refusedExtensions promise a format fsagen still cannot build. Refusing is
@@ -44,14 +45,16 @@ var refusedExtensions = map[string]string{
 
 // DocumentText reports a format whose content is the document's text rather
 // than filler bytes.
-func DocumentText(format string) bool { return format == "pdf" || format == "docx" }
+func DocumentText(format spec.Format) bool {
+	return format == spec.FormatPDF || format == spec.FormatDOCX
+}
 
 // blockFormats says which formats each typed block belongs to.
-var blockFormats = map[string][]string{
-	"pdf":     {"pdf"},
-	"docx":    {"docx"},
-	"pe":      {"pe"},
-	"history": {"chrome_history", "firefox_places"},
+var blockFormats = map[string][]spec.Format{
+	"pdf":     {spec.FormatPDF},
+	"docx":    {spec.FormatDOCX},
+	"pe":      {spec.FormatPE},
+	"history": {spec.FormatChromeHistory, spec.FormatFirefoxPlaces},
 }
 
 // checkTyped validates the typed blocks and the rules that tie a block to the
@@ -59,22 +62,22 @@ var blockFormats = map[string][]string{
 func checkTyped(op *Op, at func(field, format string, args ...any)) {
 	k := op.keys
 
-	if k.has("content_kind") && !contains(ContentKinds, op.ContentKind) {
+	if k.has("content_kind") && !slices.Contains(ContentKinds, op.ContentKind) {
 		at("content_kind", "unknown content_kind %q (want one of: %s)", op.ContentKind, strings.Join(ContentKinds, ", "))
 	}
 	for block, formats := range blockFormats {
-		if k.has(block) && !contains(formats, op.Format) {
-			at(block, "only applies with format: %s", strings.Join(formats, " or "))
+		if k.has(block) && !slices.Contains(formats, op.Format) {
+			at(block, "only applies with format: %s", strings.Join(spec.FormatNames(formats), " or "))
 		}
 	}
 	if Structured(op.Format) && !DocumentText(op.Format) {
 		rejectBodyKeys(op, at)
 	}
-	if k.has("content_len") && (op.Format == "chrome_history" || op.Format == "firefox_places") {
+	if k.has("content_len") && (op.Format == spec.FormatChromeHistory || op.Format == spec.FormatFirefoxPlaces) {
 		at("content_len", "a history database is as big as its contents make it; give history.visits instead")
 	}
 
-	if (op.Format == "chrome_history" || op.Format == "firefox_places") && op.History == nil {
+	if (op.Format == spec.FormatChromeHistory || op.Format == spec.FormatFirefoxPlaces) && op.History == nil {
 		at("format", "%s needs a history block saying what was browsed", op.Format)
 	}
 	if op.Pe != nil {
@@ -106,10 +109,10 @@ func checkTime(v string) error {
 
 func checkPE(op *Op, at func(string, string, ...any)) {
 	p := op.Pe
-	if p.Machine != "" && !contains(libgen.PEMachines, p.Machine) {
+	if p.Machine != "" && !slices.Contains(libgen.PEMachines, p.Machine) {
 		at("pe", "machine %q (want one of: %s)", p.Machine, strings.Join(libgen.PEMachines, ", "))
 	}
-	if p.Subsystem != "" && !contains(libgen.PESubsystems, p.Subsystem) {
+	if p.Subsystem != "" && !slices.Contains(libgen.PESubsystems, p.Subsystem) {
 		at("pe", "subsystem %q (want one of: %s)", p.Subsystem, strings.Join(libgen.PESubsystems, ", "))
 	}
 	// A zero timestamp is a real thing to want: it is what a reproducible
@@ -137,7 +140,7 @@ func checkHistory(op *Op, at func(string, string, ...any)) {
 		if strings.TrimSpace(v.URL) == "" {
 			at("history", "visits[%d] has no url", i)
 		}
-		if v.Transition != "" && !contains(libgen.Transitions, v.Transition) {
+		if v.Transition != "" && !slices.Contains(libgen.Transitions, v.Transition) {
 			at("history", "visits[%d]: unknown transition %q (want one of: %s)", i, v.Transition, strings.Join(libgen.Transitions, ", "))
 		}
 		if err := checkTime(v.Time); err != nil {
@@ -166,7 +169,7 @@ func checkHistory(op *Op, at func(string, string, ...any)) {
 
 func checkArchive(op *Op, at func(string, string, ...any)) {
 	a := op.Archive
-	if a.Method != "" && !contains(ArchiveMethods, a.Method) {
+	if a.Method != "" && !slices.Contains(ArchiveMethods, a.Method) {
 		at("archive", "method %q (want one of: %s)", a.Method, strings.Join(ArchiveMethods, ", "))
 	}
 	if len(a.Members) == 0 && len(a.MemberRefs) == 0 {
@@ -356,7 +359,7 @@ func checkPeSection(sec spec.PeSection, i int, seen map[string]bool, at func(str
 		at("pe", "sections[%d]: size %d is negative", i, sec.Size)
 	}
 	for _, f := range sec.Flags {
-		if contains(libgen.PESectionFlags, f) {
+		if slices.Contains(libgen.PESectionFlags, f) {
 			continue
 		}
 		at("pe", "sections[%d]: unknown flag %q (want one of: %s)", i, f, strings.Join(libgen.PESectionFlags, ", "))
