@@ -1,0 +1,18 @@
+# input-sha256 18f6cd3b25f1b0019395fa2494480b84c961ee9b9f7cacdc0f10797f6cceb4d0
+d Users/User1/AppData/Local/Google/Chrome/User Data/
+d Users/User1/AppData/Local/Google/Chrome/User Data/Default/
+f 978802a3d5e1d58d9874c2f8ffb06624bad371fd594f4c2a279cf200c41bd224 53248 Users/User1/AppData/Local/Google/Chrome/User Data/Default/History
+d Users/
+d Users/User1/
+d Users/User1/AppData/
+d Users/User1/AppData/Local/
+d Users/User1/AppData/Local/Google/
+d Users/User1/AppData/Local/Google/Chrome/
+d Users/User2/
+d Users/User2/AppData/
+d Users/User2/AppData/Roaming/
+d Users/User2/AppData/Roaming/Mozilla/
+d Users/User2/AppData/Roaming/Mozilla/Firefox/
+d Users/User2/AppData/Roaming/Mozilla/Firefox/Profiles/
+d Users/User2/AppData/Roaming/Mozilla/Firefox/Profiles/default/
+f 3fe439d20f6d2c63898e50e4fb6d8b3e7bbe0a136c944bb4c160c53e9ffbba9f 28672 Users/User2/AppData/Roaming/Mozilla/Firefox/Profiles/default/places.sqlite

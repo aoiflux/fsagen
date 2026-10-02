@@ -1,0 +1,11 @@
+# input-sha256 ba8ab1c772fdcf02ecea93316104f79b0cc6cbf3fc6ecee0d8162fdaa9e24b6d
+{"event":"created","n":1,"at":"2021-06-01T09:00:00Z","object":4,"kind":"file","path":"users/alice/docs/quarterly.csv","size":512,"sha256":"d26478ad4e827af19d7b17d813a044e2c256675acb45db004a2651f43be76b23"}
+{"event":"created","n":2,"at":"2021-06-01T09:00:00Z","object":5,"kind":"file","path":"users/alice/docs/customers.csv","size":512,"sha256":"7d607a179c5d2bfa4cc7cea4215cf1eb71ecc97b19e79bda31f7e397e3b7174a"}
+{"event":"created","n":3,"at":"2021-06-01T09:00:00Z","object":6,"kind":"dir","path":"users/alice/staging"}
+{"event":"renamed","n":4,"at":"2021-06-01T09:10:00Z","object":4,"kind":"file","path":"users/alice/staging/quarterly.csv","from":"users/alice/docs/quarterly.csv"}
+{"event":"renamed","n":5,"at":"2021-06-01T09:10:00Z","object":5,"kind":"file","path":"users/alice/staging/customers.csv","from":"users/alice/docs/customers.csv"}
+{"event":"created","n":7,"at":"2021-06-01T09:15:00Z","object":9,"kind":"file","path":"users/alice/logs/exfil.log","size":46,"sha256":"1e1832425402349b1609cb9ac3a3224a70d72c37ed95719102e29bec3a2b116e"}
+{"event":"modified","n":8,"at":"2021-06-01T09:17:00Z","object":9,"kind":"file","path":"users/alice/logs/exfil.log","size":92,"sha256_before":"1e1832425402349b1609cb9ac3a3224a70d72c37ed95719102e29bec3a2b116e","sha256":"525c39cf86b9ccdfe371f48b5bd8c03c72ce2e892d121a1efd1878d951d31490"}
+{"event":"modified","n":9,"at":"2021-06-01T09:19:00Z","object":9,"kind":"file","path":"users/alice/logs/exfil.log","size":138,"sha256_before":"525c39cf86b9ccdfe371f48b5bd8c03c72ce2e892d121a1efd1878d951d31490","sha256":"2964cef22ea3842dcdab0b5eef69cdb6083062436bb28a3c8e87a7ace97ae0e5"}
+{"event":"stomped","n":10,"at":"2021-06-01T09:25:00Z","object":6,"kind":"dir","path":"users/alice/staging","times":{"atime":"2021-05-01T10:00:00Z","mtime":"2021-05-01T10:00:00Z","ctime":"2021-06-01T09:10:00Z","crtime":"2021-06-01T09:00:00Z"},"fields":["atime","mtime"]}
+{"event":"mtime_before_crtime","object":6,"kind":"dir","path":"users/alice/staging","mtime":"2021-05-01T10:00:00Z","crtime":"2021-06-01T09:00:00Z"}

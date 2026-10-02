@@ -1,0 +1,5 @@
+# input-sha256 860f94d6577cd62152c3e8bc412760aca89e893b809af3fb74be43d8f4eb4f4e
+{"event":"created","n":1,"object":2,"kind":"dir","path":"Chrome/Default"}
+{"event":"created","n":2,"object":3,"kind":"file","path":"Chrome/Default/History","size":53248,"sha256":"7e001eed1b96018cd5b0f770c193bb9d368b71a1eaa61195620f9aa61de4c9f8"}
+{"event":"created","n":3,"object":6,"kind":"dir","path":"Firefox/Profiles/default"}
+{"event":"created","n":4,"object":7,"kind":"file","path":"Firefox/Profiles/default/places.sqlite","size":28672,"sha256":"b05b482c7581ab326e4347beb781d76f24295907d0c5ab0a9978a95ba15de64c"}

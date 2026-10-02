@@ -10,7 +10,6 @@
 package libgen
 
 import (
-	"bytes"
 	"database/sql"
 	"fmt"
 	"os"
@@ -23,11 +22,12 @@ import (
 	"time"
 
 	_ "github.com/glebarez/go-sqlite" // registers the "sqlite" database/sql driver
-	"github.com/jung-kurt/gofpdf"
 
 	"github.com/aoiflux/fsagen/constant"
+	"github.com/aoiflux/fsagen/email"
 	"github.com/aoiflux/fsagen/prng"
 	"github.com/aoiflux/fsagen/sandbox"
+	"github.com/aoiflux/fsagen/spec"
 )
 
 // DefaultStart is the default bulk start time: the reference time for the
@@ -273,21 +273,17 @@ func genJPEG(s *prng.Stream, _ time.Time) ([]byte, error) {
 	return JPEG(DefaultImageSize, DefaultImageSize, s, nil)
 }
 
+// genPdf renders through RenderPDF, the same paginating renderer the pdf
+// format uses, so a bulk .pdf gets margins, wrapped text, a sorted catalog and
+// a checked pdf.Err(). What it replaced placed 25 runs at fixed coordinates,
+// the first of them at y=0 -- above the top of the page, and so invisible.
 func genPdf(s *prng.Stream, start time.Time) ([]byte, error) {
-	pdf := gofpdf.New("P", "mm", "A4", "")
-	pdf.SetCatalogSort(true)
-	pdf.SetCreationDate(start)
-	pdf.SetModificationDate(start)
-	pdf.AddPage()
-	pdf.SetFont("Arial", "", 12)
-	for i := 0; i < 25; i++ {
-		pdf.Text(10, 10*float64(i), s.Text(20))
+	var b strings.Builder
+	for range bulkPdfParagraphs {
+		b.WriteString(s.Text(bulkTextLen))
+		b.WriteString("\n\n")
 	}
-	var buf bytes.Buffer
-	if err := pdf.Output(&buf); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
+	return RenderPDF(b.String(), PDFMeta{Author: "fsagen", Created: start, Modified: start})
 }
 
 func genMP4(s *prng.Stream, start time.Time) ([]byte, error) {
@@ -315,15 +311,47 @@ func genHTML(s *prng.Stream, _ time.Time) ([]byte, error) {
 	return []byte(fmt.Sprintf(`<!doctype html><html><head><meta charset="utf-8"><title>%s</title></head><body><p>%s</p></body></html>`, body[:8], body)), nil
 }
 
-func genLog(s *prng.Stream, start time.Time) ([]byte, error) {
-	lines := make([]string, 0, 50)
+// How much of each shape a bulk file carries. They are named together because
+// they are arbitrary: nothing reads them back, they only have to be stable.
+const (
+	// bulkLogLines is how many lines each of the log-shaped kinds carries.
+	bulkLogLines = 50
+	// bulkPdfParagraphs is how many paragraphs of bulkTextLen a bulk pdf holds.
+	bulkPdfParagraphs = 25
+	// bulkTextLen is the length of one invented run of text.
+	bulkTextLen = 20
+	// bulkMboxMessages is how many messages a bulk mbox accumulates.
+	bulkMboxMessages = 3
+	// bulkEmailBodyLen is the body length of one generated message.
+	bulkEmailBodyLen = 120
+	// bulkEmailOffset puts a message partway into the day the corpus starts on,
+	// so its date is not the same instant as the files around it.
+	bulkEmailOffset = 12 * time.Hour
+)
+
+// timestampedLines is the body the three log-shaped kinds share: bulkLogLines
+// lines, one per step from start, each newline-terminated. They differed only
+// in the step, the line format, and whether they joined a slice or appended to
+// a builder -- which came to the same bytes.
+func timestampedLines(start time.Time, step time.Duration, line func(i int, t time.Time) string) []byte {
+	var b strings.Builder
 	t := start
-	for i := 0; i < 50; i++ {
-		msg := s.Text(24)
-		lines = append(lines, fmt.Sprintf("%s INFO user=%s event=%s", t.Format(time.RFC3339), s.Text(6), msg))
-		t = t.Add(time.Minute)
+	for i := range bulkLogLines {
+		b.WriteString(line(i, t))
+		b.WriteByte('\n')
+		t = t.Add(step)
 	}
-	return []byte(strings.Join(lines, "\n") + "\n"), nil
+	return []byte(b.String())
+}
+
+func genLog(s *prng.Stream, start time.Time) ([]byte, error) {
+	return timestampedLines(start, time.Minute, func(_ int, t time.Time) string {
+		// The event is drawn before the user, which is not the order the two
+		// are printed in. The stream decides the bytes, so the draws stay in
+		// the order they were already in.
+		event := s.Text(24)
+		return fmt.Sprintf("%s INFO user=%s event=%s", t.Format(time.RFC3339), s.Text(6), event)
+	}), nil
 }
 
 func genReg(s *prng.Stream, _ time.Time) ([]byte, error) {
@@ -372,23 +400,15 @@ func genExe(s *prng.Stream, start time.Time) ([]byte, error) {
 }
 
 func genJSONL(s *prng.Stream, start time.Time) ([]byte, error) {
-	var b strings.Builder
-	t := start
-	for i := 0; i < 50; i++ {
-		fmt.Fprintf(&b, `{"ts":"%s","level":"info","user":"%s","msg":"%s"}`+"\n", t.Format(time.RFC3339), s.Text(6), s.Text(18))
-		t = t.Add(30 * time.Second)
-	}
-	return []byte(b.String()), nil
+	return timestampedLines(start, 30*time.Second, func(_ int, t time.Time) string {
+		return fmt.Sprintf(`{"ts":"%s","level":"info","user":"%s","msg":"%s"}`, t.Format(time.RFC3339), s.Text(6), s.Text(18))
+	}), nil
 }
 
 func genSyslog(s *prng.Stream, start time.Time) ([]byte, error) {
-	lines := make([]string, 0, 50)
-	t := start
-	for i := 0; i < 50; i++ {
-		lines = append(lines, fmt.Sprintf("%s host01 fsagen[%d]: %s", t.Format(time.RFC3339), 1000+i, s.Text(20)))
-		t = t.Add(45 * time.Second)
-	}
-	return []byte(strings.Join(lines, "\n") + "\n"), nil
+	return timestampedLines(start, 45*time.Second, func(i int, t time.Time) string {
+		return fmt.Sprintf("%s host01 fsagen[%d]: %s", t.Format(time.RFC3339), 1000+i, s.Text(20))
+	}), nil
 }
 
 func genMarkdown(s *prng.Stream, _ time.Time) ([]byte, error) {
@@ -396,23 +416,52 @@ func genMarkdown(s *prng.Stream, _ time.Time) ([]byte, error) {
 	return []byte(fmt.Sprintf("# %s\n\n%s\n", title, s.Text(80))), nil
 }
 
+// bulkEmail is the message the eml and mbox kinds build, described the way the
+// email action describes one. Going through email.Build is what gives a bulk
+// message its headers in canonical order, folded at 78 columns, with a
+// Message-ID and CRLF throughout; going through email.ToMbox is what escapes a
+// body line beginning "From ", which the hand-written mbox did not, and which
+// is how one message gets read as two.
+//
+// The draws are named rather than written inline, so the order the stream is
+// consumed in is the order they appear on the page.
+func bulkEmail(s *prng.Stream, date time.Time, subject string) email.Options {
+	id := "<" + s.Hex(16) + "@example.com>"
+	body := s.Text(bulkEmailBodyLen)
+	return email.Options{
+		Spec: spec.EmailSpec{
+			From:      "alice@example.com",
+			To:        []string{"bob@example.com"},
+			Subject:   subject,
+			Date:      date.Format(time.RFC3339),
+			MessageID: id,
+			BodyText:  body,
+		},
+		// Never called for a text-only message, but a deterministic one has to
+		// be here before a body is ever added beside the text.
+		Boundary: func() string { return "----=_fsagen_" + s.Hex(24) },
+	}
+}
+
 func genEml(s *prng.Stream, start time.Time) ([]byte, error) {
-	date := start.Add(12 * time.Hour).Format(time.RFC1123Z)
-	subj := "Test message " + s.Text(6)
-	return []byte(fmt.Sprintf("Date: %s\r\nFrom: alice@example.com\r\nTo: bob@example.com\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s\r\n", date, subj, s.Text(120))), nil
+	subject := "Test message " + s.Text(6)
+	msg, _, err := email.Build(bulkEmail(s, start.Add(bulkEmailOffset), subject))
+	return msg, err
 }
 
 func genMbox(s *prng.Stream, start time.Time) ([]byte, error) {
-	var b strings.Builder
-	base := start.Add(12 * time.Hour)
-	for i := 0; i < 3; i++ {
-		ts := base.Add(time.Duration(i) * time.Hour).Format(time.RFC1123Z)
-		subj := fmt.Sprintf("Message %d %s", i+1, s.Text(6))
-		body := s.Text(100)
-		fmt.Fprintf(&b, "From alice@example.com %s\n", ts)
-		fmt.Fprintf(&b, "Date: %s\nFrom: alice@example.com\nTo: bob@example.com\nSubject: %s\n\n%s\n\n", ts, subj, body)
+	var out []byte
+	base := start.Add(bulkEmailOffset)
+	for i := range bulkMboxMessages {
+		subject := fmt.Sprintf("Message %d %s", i+1, s.Text(6))
+		opts := bulkEmail(s, base.Add(time.Duration(i)*time.Hour), subject)
+		msg, date, err := email.Build(opts)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, email.ToMbox(msg, email.EnvelopeSender(opts.Spec), date)...)
 	}
-	return []byte(b.String()), nil
+	return out, nil
 }
 
 // buildSQLite creates a database in a private temporary directory outside

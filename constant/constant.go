@@ -43,8 +43,13 @@ const (
 // time fields to the ledger, and writes the answer key. Version 5 makes the
 // tool answerable for what it claims: it verifies every time it set by reading
 // it back, records what it could not do, and writes a modelled timeline beside
-// the observed one.
-const GeneratorVersion = 5
+// the observed one. Version 6 builds the bulk eml, mbox and pdf with the same
+// builders the email and pdf formats use, rather than a second hand-written
+// copy of each: a generated message carries canonical folded headers and a
+// Message-ID, an mbox escapes a body line beginning "From " and dates its
+// separator the way mbox does, and a pdf is paginated with margins and with
+// its first line on the page.
+const GeneratorVersion = 6
 
 const (
 	TxtExtension    = ".txt"

@@ -1,0 +1,7 @@
+# input-sha256 e8eedec097c607c98a557cbfaf9cf740b7b66c3443273aafef910d7a42ed1013
+d users/
+d users/bob/
+d users/bob/bundles/
+f 31247a70520ab7d9ee345c0f0102e2472f4d4e95a8c5d4e964e32a25126fa269 1968 users/bob/bundles/bundle.zip
+d users/bob/mail/
+d users/bob/media/

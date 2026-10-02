@@ -756,12 +756,12 @@ func writeEmail(ctx ExecContext, c compile.Op, target string) error {
 	}
 
 	switch format := compile.EmailFormat(op); format {
-	case "eml":
+	case spec.FormatEML:
 		if err := ctx.FS.WriteFile(target, msg, fileModeFor(op)); err != nil {
 			return err
 		}
 		return applyMode(ctx.FS, op, target)
-	case "mbox":
+	case spec.FormatMbox:
 		// Append, so a whole thread accumulates across steps.
 		return appendTo(ctx.FS, op, target, email.ToMbox(msg, email.EnvelopeSender(*op.Email), date))
 	default:

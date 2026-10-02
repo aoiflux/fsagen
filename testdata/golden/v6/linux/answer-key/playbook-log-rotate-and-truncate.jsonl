@@ -1,0 +1,7 @@
+# input-sha256 f4400ed0a3bd894e172302637f7b21d0109ef7679cb496d27224300e7bf2dd48
+{"event":"created","n":1,"at":"2021-10-10T00:00:00Z","object":5,"kind":"file","path":"systems/web01/var/log/access.log","size":41,"sha256":"6456429f111fe0376b4e5f13b80f1fd6a9cf2bf9a5e6616e5828e9d9fd61e827"}
+{"event":"renamed","n":2,"at":"2021-10-10T00:15:00Z","object":5,"kind":"file","path":"systems/web01/var/log/access.log.1","from":"systems/web01/var/log/access.log"}
+{"event":"created","n":2,"at":"2021-10-10T00:15:00Z","object":6,"kind":"file","path":"systems/web01/var/log/access.log","size":0,"sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}
+{"event":"modified","n":3,"at":"2021-10-10T00:15:00Z","object":6,"kind":"file","path":"systems/web01/var/log/access.log","size":35,"sha256_before":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","sha256":"d4babf419a94f1b4c962e77a48eda687255a77219f79d23ddadac742e20f58c6"}
+{"event":"modified","n":4,"at":"2021-10-10T00:30:00Z","object":6,"kind":"file","path":"systems/web01/var/log/access.log","size":0,"sha256_before":"d4babf419a94f1b4c962e77a48eda687255a77219f79d23ddadac742e20f58c6","sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}
+{"event":"modified","n":5,"at":"2021-10-10T00:30:00Z","object":6,"kind":"file","path":"systems/web01/var/log/access.log","size":36,"sha256_before":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","sha256":"6e2107eea207c5f2b262cf8ec0aba098bddbf8d4cf209745518fe62cd2c356be"}
