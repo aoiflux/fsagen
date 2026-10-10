@@ -210,6 +210,14 @@ func volumeFurniture(rel string) bool {
 	return strings.HasPrefix(top, "$") || strings.EqualFold(top, "System Volume Information") || top == "lost+found"
 }
 
+// selfEntry says whether rel names a directory's own "." or ".." entry,
+// a stream of it included.
+func selfEntry(rel string) bool {
+	base, _ := splitStream(rel)
+	last := base[strings.LastIndex(base, "/")+1:]
+	return last == "." || last == ".."
+}
+
 // streamFurniture says whether a stream is one NTFS keeps for itself, such
 // as a directory's $I30 index, which a tool may list beside the named
 // streams a scenario writes.

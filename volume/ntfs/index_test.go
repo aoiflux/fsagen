@@ -37,43 +37,11 @@ func indexShape(t *testing.T, dev *volume.Device) string {
 		must(t, err)
 		ir, ia, bm := findAttr(attrs, atIndexRoot, "$I30"), findAttr(attrs, atIndexAlloc, "$I30"), findAttr(attrs, atBitmap, "$I30")
 		fmt.Fprintf(&b, "%s:", p)
-		if bm != nil {
-			fmt.Fprintf(&b, " bitmap %x, %d bytes of blocks", bm.value, ia.size)
-		}
-		b.WriteString("\n")
-		var node func(label string, h []byte)
-		node = func(label string, h []byte) {
-			var names []string
-			var kids []int64
-			for p := int(le.Uint32(h[0:])); ; {
-				e := h[p:]
-				n, kl, flags := int(le.Uint16(e[8:])), int(le.Uint16(e[10:])), le.Uint16(e[12:])
-				if flags&ieNode != 0 {
-					kids = append(kids, int64(le.Uint64(e[n-8:])))
-				}
-				if flags&ieEnd != 0 {
-					break
-				}
-				fn, err := readFileName(e[16 : 16+kl])
-				must(t, err)
-				names = append(names, fn.name)
-				p += n
-			}
-			fmt.Fprintf(&b, "  %s: %d entries %08x", label, len(names), crc32.ChecksumIEEE([]byte(strings.Join(names, "/"))))
-			if len(names) > 0 {
-				fmt.Fprintf(&b, " from %.12q", names[0])
-			}
-			if kids != nil {
-				fmt.Fprintf(&b, ", children %v", kids)
-			}
-			b.WriteString("\n")
-			for _, vcn := range kids {
-				blk, err := r.indexBlock(ia.runs, vcn)
-				must(t, err)
-				node(fmt.Sprintf("block %d", vcn), blk[0x18:])
-			}
-		}
-		node(fmt.Sprintf("root, room %d", le.Uint32(ir.value[24:])-16), ir.value[16:])
+		shapeOf(t, r, &b, ir, ia, bm, func(key []byte) string {
+			fn, err := readFileName(key)
+			must(t, err)
+			return fn.name
+		})
 		for _, c := range d.children {
 			if c.dir {
 				dir(c, path.Join(p, c.name))
@@ -81,6 +49,63 @@ func indexShape(t *testing.T, dev *volume.Device) string {
 		}
 	}
 	dir(r.root, "/")
+	return b.String()
+}
+
+// shapeOf lays out one index, as indexShape does, naming each entry by
+// what name makes of its key.
+func shapeOf(t *testing.T, r *Reader, b *strings.Builder, ir, ia, bm *rattr, name func(key []byte) string) {
+	t.Helper()
+	if bm != nil {
+		fmt.Fprintf(b, " bitmap %x, %d bytes of blocks", bm.value, ia.size)
+	}
+	b.WriteString("\n")
+	var node func(label string, h []byte)
+	node = func(label string, h []byte) {
+		var names []string
+		var kids []int64
+		for p := int(le.Uint32(h[0:])); ; {
+			e := h[p:]
+			n, kl, flags := int(le.Uint16(e[8:])), int(le.Uint16(e[10:])), le.Uint16(e[12:])
+			if flags&ieNode != 0 {
+				kids = append(kids, int64(le.Uint64(e[n-8:])))
+			}
+			if flags&ieEnd != 0 {
+				break
+			}
+			names = append(names, name(e[16:16+kl]))
+			p += n
+		}
+		fmt.Fprintf(b, "  %s: %d entries %08x", label, len(names), crc32.ChecksumIEEE([]byte(strings.Join(names, "/"))))
+		if len(names) > 0 {
+			fmt.Fprintf(b, " from %.12q", names[0])
+		}
+		if kids != nil {
+			fmt.Fprintf(b, ", children %v", kids)
+		}
+		b.WriteString("\n")
+		for _, vcn := range kids {
+			blk, err := r.indexBlock(ia.runs, vcn)
+			must(t, err)
+			node(fmt.Sprintf("block %d", vcn), blk[0x18:])
+		}
+	}
+	node(fmt.Sprintf("root, room %d", le.Uint32(ir.value[24:])-16), ir.value[16:])
+}
+
+// reparseShape lays out $Extend\$Reparse's $R index as indexShape lays out
+// a directory's, each entry named by its key: the tag and file reference.
+func reparseShape(t *testing.T, dev *volume.Device) string {
+	t.Helper()
+	r, err := Open(dev)
+	must(t, err)
+	_, _, _, attrs, err := r.record(recReparse)
+	must(t, err)
+	var b strings.Builder
+	b.WriteString("$R:")
+	shapeOf(t, r, &b, findAttr(attrs, atIndexRoot, "$R"), findAttr(attrs, atIndexAlloc, "$R"), findAttr(attrs, atBitmap, "$R"), func(key []byte) string {
+		return fmt.Sprintf("%08x/%d/%d", le.Uint32(key), refNum(le.Uint64(key[4:])), le.Uint64(key[4:])>>48)
+	})
 	return b.String()
 }
 
@@ -188,6 +213,13 @@ func TestIndexMatchesLibntfs3g(t *testing.T) {
 // and lays out its indexes after each.
 func libntfs3gShape(t *testing.T, harness string, size int64, phases [][]string) string {
 	t.Helper()
+	return libntfs3gRun(t, harness, size, phases, func(dev *volume.Device, _ int) string { return indexShape(t, dev) })
+}
+
+// libntfs3gRun runs the phases with the harness on a volume mkntfs makes,
+// and lays out what shape makes of the volume after each.
+func libntfs3gRun(t *testing.T, harness string, size int64, phases [][]string, shape func(dev *volume.Device, phase int) string) string {
+	t.Helper()
 	mkntfs, err := exec.LookPath("mkntfs")
 	if err != nil {
 		t.Fatal("FSAGEN_NTFS_HARNESS is set, but mkntfs is not installed")
@@ -208,7 +240,7 @@ func libntfs3gShape(t *testing.T, harness string, size int64, phases [][]string)
 		}
 		f, err := os.Open(img)
 		must(t, err)
-		fmt.Fprintf(&b, "== phase %d\n%s", i+1, indexShape(t, volume.NewDevice(f, 0, size)))
+		fmt.Fprintf(&b, "== phase %d\n%s", i+1, shape(volume.NewDevice(f, 0, size), i))
 		f.Close()
 	}
 	return b.String()
@@ -393,4 +425,101 @@ func TestIndexSuccessorThatDoesNotFit(t *testing.T) {
 	}
 	reads("after the root moved for a successor")
 	_, _ = v.finish(t)
+}
+
+// linkShape lays out what a symlink's record and its directory's entry
+// say of it: its attribute types in order, its $STANDARD_INFORMATION
+// flags, its reparse data, and the flags and reparse tag of its
+// $FILE_NAME, in the record and in the index.
+func linkShape(t *testing.T, dev *volume.Device, name string) string {
+	t.Helper()
+	r, err := Open(dev)
+	must(t, err)
+	n, err := r.lookup(name)
+	must(t, err)
+	_, _, _, attrs, err := r.record(n.num)
+	must(t, err)
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s: attributes", name)
+	for _, a := range attrs {
+		fmt.Fprintf(&b, " %#x", a.typ)
+	}
+	fmt.Fprintf(&b, ", flags %#x, reparse point %x", le.Uint32(findAttr(attrs, atStdInfo, "").value[32:]), findAttr(attrs, atReparse, "").value)
+	fn := must2(readFileName(findAttr(attrs, atFileName, "").value))
+	fmt.Fprintf(&b, ", $FILE_NAME flags %#x tag %#x", fn.flags, fn.reparse)
+	parent, err := r.lookup(path.Dir(name))
+	must(t, err)
+	es, err := r.indexEntries(parent)
+	must(t, err)
+	for _, e := range es {
+		if e.fn.name == path.Base(name) {
+			fmt.Fprintf(&b, ", in the index %#x tag %#x", e.fn.flags, e.fn.reparse)
+		}
+	}
+	return b.String() + "\n"
+}
+
+// $Extend\$Reparse's $R files symlinks as libntfs-3g 2022.10.3 files them,
+// by tag and file reference, growing into index blocks and back as a
+// directory index does: seventy symlinks, then every other one removed,
+// then the rest. A symlink's record, flags and $FILE_NAME are libntfs-3g's
+// too. testdata/libntfs3g-reparse.txt records libntfs-3g's; with the
+// harness, the test runs it live, as TestIndexMatchesLibntfs3g does.
+func TestReparseIndexMatchesLibntfs3g(t *testing.T) {
+	const size = 64 << 20
+	link := func(i int) string { return fmt.Sprintf("/s/link-%02d", i) }
+	var phases [][]string
+	ops := []string{"d /s"}
+	for i := range 70 {
+		ops = append(ops, "s "+link(i))
+	}
+	phases = append(phases, ops)
+	ops = nil
+	for i := 1; i < 70; i += 2 {
+		ops = append(ops, "r "+link(i))
+	}
+	phases = append(phases, ops)
+	ops = nil
+	for i := 0; i < 70; i += 2 {
+		ops = append(ops, "r "+link(i))
+	}
+	phases = append(phases, ops)
+
+	v := newVolume(t, size, 0, volume.NextFit)
+	var ours strings.Builder
+	for i, ops := range phases {
+		for _, op := range ops {
+			switch name := op[3:]; op[0] {
+			case 'd':
+				must(t, v.MkdirAll(name, target.DirMode))
+			case 's':
+				must(t, v.Symlink(name, "t", false))
+			case 'r':
+				must(t, v.Remove(name))
+			}
+		}
+		dev := volume.NewDevice(v.file, 0, size)
+		fmt.Fprintf(&ours, "== phase %d\n%s", i+1, reparseShape(t, dev))
+		if i == 0 {
+			ours.WriteString(linkShape(t, dev, "s/link-00"))
+		}
+	}
+	_, _ = v.finish(t)
+	golden := filepath.Join("testdata", "libntfs3g-reparse.txt")
+	if harness := os.Getenv("FSAGEN_NTFS_HARNESS"); harness != "" {
+		theirs := libntfs3gRun(t, harness, size, phases, func(dev *volume.Device, phase int) string {
+			s := reparseShape(t, dev)
+			if phase == 0 {
+				s += linkShape(t, dev, "s/link-00")
+			}
+			return s
+		})
+		if *update {
+			must(t, os.WriteFile(golden, []byte(theirs), 0o644))
+		}
+		compareShapes(t, "libntfs-3g's", ours.String(), theirs)
+	}
+	want, err := os.ReadFile(golden)
+	must(t, err)
+	compareShapes(t, golden, ours.String(), string(want))
 }

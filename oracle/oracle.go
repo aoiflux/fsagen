@@ -370,6 +370,9 @@ func (sc *Scorecard) WriteText(w io.Writer) {
 	if p.Reused > 0 {
 		fmt.Fprintf(w, "residue      %d deleted entries a later write reused (not scored)\n", p.Reused)
 	}
+	if p.DeletedStreams > 0 {
+		fmt.Fprintf(w, "streams      %d of deleted entries (not scored)\n", p.DeletedStreams)
+	}
 	names := "exactly"
 	if sc.Case == caseFold {
 		names = "ignoring case"

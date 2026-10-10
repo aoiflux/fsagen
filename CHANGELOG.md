@@ -928,7 +928,181 @@ Deviations from the plan:
   up in the directory it already has open, and libntfs-3g agrees with fsagen
   from then on.
 - **Index slack and freed blocks are still not residue facts**, as in the
-  first NTFS landing.
+  first NTFS landing. _NTFS streams, links, `$FILE_NAME` times and slack_,
+  below, makes them so.
+
+### NTFS streams, links, `$FILE_NAME` times and slack
+
+The third NTFS landing (M4.2.3c), the last of the roadmap's. An NTFS image
+now holds what a live NTFS volume holds, and what no live volume lets a
+program write. Pre-flight no longer refuses streams, hard links, symlinks,
+junctions, slack or a timestomp's `fn_` times on an NTFS image, and
+`playbook-macro-phish`, the example with a hard link, now makes one.
+
+**What the driver writes.**
+- **Streams** are named `$DATA` attributes, in the record while they fit
+  and in clusters once they do not. Writing one replaces it, its old
+  clusters left as `overwrite` residue. Content that outgrows its record
+  moves to clusters itself, as libntfs-3g moves the attribute being resized;
+  a record that still does not hold its attributes, as when a hard link adds
+  a name, moves its largest resident content out. A directory takes a
+  stream too. A deleted file's streams leave their clusters as residue of
+  their own.
+- **Hard links** are further `$FILE_NAME` attributes of the record, in the
+  POSIX namespace, each placed after those whose values sort before it byte
+  by byte, as libntfs-3g places an indexed attribute. The record's link
+  count follows. Each name has its own `$FILE_NAME` times, a new one the
+  file's own at that moment, and its own entry in its directory's index.
+  Removing a name drops its `$FILE_NAME` and entry and keeps the record;
+  renaming one files it again in the Win32 namespace.
+- **Symlinks and junctions** are reparse points: an empty file, or an empty
+  directory for a directory symlink and a junction, with a `$REPARSE_POINT`
+  holding the data the live Windows target writes (both now build it in
+  `internal/reparse`) and the reparse flag in `$STANDARD_INFORMATION`.
+  - The directory's entry carries the flag and the tag. The record's own
+    `$FILE_NAME` carries them only once a rename writes it anew, as
+    libntfs-3g, and Windows, set a reparse point on an object already made.
+  - Each is filed in `$Extend\$Reparse`'s `$R` index by tag and file
+    reference, and taken out when it is deleted. `$R` is a B-tree like a
+    directory's, on the same code, which now takes view indexes too.
+  - A junction's target is written on `C:`. An image has no drive letter;
+    `C:` is the one a system volume has.
+- **`$FILE_NAME` times.** A timestomp's `fn_` times are set in the record
+  and the directory's index alike, for the name it names. The settle pass
+  sets every name's `$FILE_NAME` times from the model, as it sets the other
+  times; one that sets the times a name already has writes nothing. The
+  `FilenameTimes` capability is true, so the run manifest says
+  `filename_times_controlled: true` and a `stomped` fact `fn_controlled:
+  true`.
+- **Slack** is exact, written in the rest of the file's last cluster and
+  recorded `verified: true`. A file of 1 KiB or less is refused on NTFS
+  images as on live NTFS: it may stay in its record, with no cluster at
+  all. The rule now keys on a new capability, `ResidentData`, which both
+  claim.
+- **Index entries left behind** are a new kind of residue,
+  `ntfs_index_entry`: an entry a delete or a rename took out of a
+  directory's index whose bytes are still whole in one of its index blocks.
+  That is past the entries of a block in use, anywhere in a block the index
+  freed, or anywhere in a deleted directory's blocks. Its `number` and `seq`
+  are the file reference it held, and `offset` where it lies. Residue is
+  now listed in the order of the operations that left it.
+
+**What the reader checks.** fsagen's NTFS reader reads streams, reads links
+as links without going through them, and reports each name's `$FILE_NAME`
+times. It checks that `$R` files every reparse point the tree holds, under
+its tag and file reference, in order, and nothing else.
+
+**Interfaces.** `target.Meta` gains `FileName`, the times of the name's
+`$FILE_NAME`, and `target.Caps` gains `ResidentData`. A new optional
+`target.FilenameTimer` sets them; `volume` gains `StreamDriver` and
+`FileNameDriver`, and a `Volume` now holds streams and junctions.
+`internal/memtarget` keeps `$FILE_NAME` times per name, as they are set.
+
+**The image clock.** A target that keeps times of its own is now told an
+operation's time as the model has it (`compile.Op.Clock`): for an email, its
+`Date` rather than the playbook's time. Only an email's own image times
+change, and no golden image holds an email.
+
+**Timelines.** Where the run sets `$FILE_NAME` times (an NTFS image), each
+name the run left has a `$FILE_NAME` entry of its own in a modelled
+timeline, with those times, as The Sleuth Kit lists one; an observed
+timeline reads them from the image. The bodyfile, MACB and text formats
+name it `path ($FILE_NAME)`, in TSK's order (after a stream, before
+` -> target`); the CSV gives it the type `filename`, the JSON lines
+`"file_name": true`, and Timesketch `"attribute_name": "$FILE_NAME"`. The
+format goldens are re-recorded with a `$FILE_NAME` entry of a file and of a
+link.
+
+**diff-oracle.**
+- A seventh category, `filenames`, scores the times of each name's
+  `$FILE_NAME`. They are expected where they are known: those a timestomp
+  set on an image (kept when a directory above the name moves, forgotten
+  when the name itself moves), and every name's from a `--model` that lists
+  them. A hard-linked file's record holds one `$FILE_NAME` per name, and a
+  tool may give any of them for any name, as The Sleuth Kit gives one for
+  all: a row is scored against the name whose times it agrees with best.
+- `$FILE_NAME` rows of deleted entries, or of names the run did not leave,
+  are still set aside and counted.
+- A directory's `.` and `..` entries are set aside as the volume's own; The
+  Sleuth Kit lists a directory's streams under its `.` as well as its name.
+- A row for a stream of a deleted entry found by its address is set aside
+  and counted (`deleted_streams`), not taken for the entry listed twice.
+- The golden report and scorecard are re-recorded with the new category.
+
+**Tests.**
+- The driver's own: `TestStreams`, `TestHardLinks`, `TestReparsePoints`,
+  `TestReparseIndexShrinks`, `TestFileNameTimes`, `TestSlack`,
+  `TestIndexEntryResidue` and `TestIndexEntryResidueInFreedBlock`. `fls` and `ntfsls` read every volume they make.
+- `TestReparseIndexMatchesLibntfs3g`: the libntfs-3g harness gains an `s`
+  operation that makes a symlink with libntfs-3g's
+  `ntfs_set_ntfs_reparse_data`. Seventy symlinks, then half removed, then
+  the rest: `$R` is libntfs-3g's after each, root, blocks and keys, and a
+  symlink's record, flags, reparse data and `$FILE_NAME`s are too.
+  `volume/ntfs/testdata/libntfs3g-reparse.txt` records libntfs-3g's.
+- `TestNTFSSetsFileNameTimesAsTheModel`: every example's NTFS image, with
+  the settle pass kept from setting `$FILE_NAME` times, still verifies. The
+  driver sets each name's times where the model says NTFS does; the settle
+  pass sets them only for a target, the in-memory one, that keeps none of
+  its own. It is how the email clock above was found.
+- `testdata/image/ntfs.yaml` gains streams on a file and a directory,
+  resident and not; hard links, one losing a name; a file symlink, a
+  directory symlink and a junction, and a symlink deleted; a timestomp of
+  `$FILE_NAME` times; slack; a stream deleted with its file; and a directory
+  whose index block is freed with an entry in it. Its golden is re-recorded.
+- `TestNTFSObservedTimelineTo100ns` scores fsagen's reading of that image
+  with the modelled timeline as the model: files, streams, times, hashes,
+  links and `$FILE_NAME` times, all at 1.0 with no tolerance.
+- `TestNTFSReadByGoNTFS`: go-ntfs reads each name's record, so that a hard
+  link's names share one; its `$FILE_NAME` times to the 100 ns; every
+  stream, byte for byte; and each link's reparse data. go-ntfs carves
+  every `ntfs_index_entry` the answer key names from the directory's index
+  blocks. go-ntfs lists a record once per directory under one of its names,
+  so the test now takes each name from the record's own `$FILE_NAME`s.
+- `TestImageReadBy7Zip`: 7-Zip extracts the streams, makes the symlinks and
+  junction links with their targets, and the hard link a second name of
+  one file (`-snld` lets it make `../Logs`).
+- `TestNTFSListedByTSK` scores `fls -r -m` with the modelled timeline as
+  the model, `$FILE_NAME` times included: every category is perfect but for
+  the one thing below.
+- Thirteen deliberate breakages were tried. Twelve were caught, each by a
+  test other than the golden. The thirteenth, a timestomp not writing its
+  `fn_` times itself, changes nothing: the settle pass writes the same
+  times with as many writes, so the finished image is the same.
+
+**Found on the way: The Sleuth Kit lists a freed index block's entries as
+files that are there.** TSK 4.12.1 reads every index block
+`$INDEX_ALLOCATION` maps, without `$BITMAP`, and takes an entry within a
+block's used length as allocated. libntfs-3g frees a block by clearing its
+bit and leaves it as it was, so the entry fsagen's fixture leaves in
+`Cache`'s freed block is, to TSK, a live file, and its deletion is missed.
+`TestNTFSListedByTSK` pins exactly that. go-ntfs reads such a block the same
+way, but its listing skips records not in use.
+
+Deviations from the plan:
+
+- **A hard link's namespace is POSIX, taken from `dir /x`, not read from a
+  disk.** Windows gives a hard link no short name where short names are on
+  (on the dev box's C:), which a Win32 name would get; reading the
+  namespace itself needs an administrator. libntfs-3g makes links POSIX
+  too.
+- **Reparse flags reach the record's `$FILE_NAME` only on a rename**, as
+  libntfs-3g writes them. `$FILE_NAME` sizes still follow the content in
+  the record and the index alike, as before.
+- **A junction points at a path on `C:`.**
+- **The settle pass sets `$FILE_NAME` times on every target that claims
+  them**, as it sets the other times, rather than only a timestomp setting
+  them; on an NTFS image it changes nothing, which
+  `TestNTFSSetsFileNameTimesAsTheModel` shows.
+- **Index entries are residue only where they are whole in an index
+  block.** An entry partly overwritten, or left in the slack of an
+  `$INDEX_ROOT` in its record, is not looked for.
+- **A deleted entry's `$FILE_NAME` is in no modelled timeline,** so it is
+  not scored; tools list it, and diff-oracle sets it aside.
+- **libntfs-3g is compared for file symlinks only.** It makes every name
+  POSIX, so a hard link's record would not compare. Directory symlinks and
+  junctions go through the same `$R` and reparse-point code, and are checked
+  by fsagen's reader, go-ntfs, 7-Zip and ntfs-3g's tools, not against
+  libntfs-3g.
 
 ## v0.2.0 — the bulk corpus becomes answerable for itself (2026-10-02)
 

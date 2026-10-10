@@ -1,6 +1,6 @@
 Modelled timeline: the times, sizes and digests the scenario intends, including what it deleted
 Times are UTC; - is a time the scenario does not control.
-Entries: 6
+Entries: 8
 ====================================================================================================
 
 2021-03-01 09:00:04.000000000 [dir   ] /docs
@@ -23,6 +23,14 @@ Entries: 6
     size 1099511627776 | mode r/rr--r--r-- | uid 1000 | gid 100 | inode 5 | md5 -
     accessed 2021-03-01 09:00:05.000000000 | modified 2021-03-01 09:00:05.000000000 | changed - | born -
 
--                             [link  ] /link
+-                             [link  ] /link -> docs
     size 0 | mode l/lrwxrwxrwx | uid 0 | gid 0 | inode 6 | md5 -
     accessed - | modified - | changed - | born -
+
+2021-03-01 09:00:00.000000000 [file  ] /docs/a.txt ($FILE_NAME)
+    size 5 | mode r/rrw-r--r-- | uid 0 | gid 0 | inode 3 | md5 -
+    accessed 2021-03-01 09:00:00.000000000 | modified 2021-03-01 09:00:00.000000000 | changed 2021-03-01 09:00:00.000000000 | born 2021-03-01 09:00:00.000000000
+
+2021-03-01 09:00:06.000000000 [link  ] /link ($FILE_NAME) -> docs
+    size 0 | mode l/lrwxrwxrwx | uid 0 | gid 0 | inode 6 | md5 -
+    accessed 2021-03-01 09:00:06.000000000 | modified 2021-03-01 09:00:06.000000000 | changed 2021-03-01 09:00:06.000000000 | born 2021-03-01 09:00:06.000000000

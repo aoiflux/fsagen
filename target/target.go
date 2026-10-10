@@ -65,6 +65,9 @@ type Meta struct {
 	// Links is the number of names the object has (0 where the target does
 	// not say).
 	Links int
+	// FileName are the times NTFS keeps in the $FILE_NAME attribute of this
+	// name, nil where the target does not report them.
+	FileName *Times
 	// Link is LinkSymlink or LinkJunction for a link, and Target what it
 	// points at: for a symlink as stored, with '/' between names; for a
 	// junction a path in the output when it points into it.
@@ -112,6 +115,9 @@ type Caps struct {
 	// for --validate with no output volume).
 	Slack       SlackSupport
 	ClusterSize int
+	// ResidentData: a small file's content may be kept in its MFT record,
+	// with no cluster and so no slack (NTFS).
+	ResidentData bool
 	// MinTime and MaxTime bound the times the volume can store; zero is no
 	// bound. FAT keeps none before 1980 or after 2107.
 	MinTime, MaxTime time.Time
@@ -215,6 +221,14 @@ type Slacker interface {
 	// WriteSlack writes data just past byte at of name, which must be where
 	// its content ends, and leaves the file ending at at.
 	WriteSlack(name string, at int64, data []byte) error
+}
+
+// FilenameTimer is a target that sets the times NTFS keeps in a name's
+// $FILE_NAME attribute. One whose Caps claim FilenameTimes must implement
+// it.
+type FilenameTimer interface {
+	// SetFileNameTimes sets the non-zero times of name's $FILE_NAME.
+	SetFileNameTimes(name string, t Times) error
 }
 
 // Finisher is a target that is built in one go, such as an image: what it

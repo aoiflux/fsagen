@@ -134,8 +134,12 @@ func (tl *Timeline) WriteCSV(w io.Writer) error {
 		if e.Deleted {
 			deleted = "true"
 		}
+		typ := string(e.Type)
+		if e.FileName {
+			typ = "filename"
+		}
 		if err := cw.Write([]string{
-			e.Path, e.Stream, string(e.Type), strconv.FormatInt(e.Size, 10), e.TSKMode(),
+			e.Path, e.Stream, typ, strconv.FormatInt(e.Size, 10), e.TSKMode(),
 			strconv.Itoa(e.UID), strconv.Itoa(e.GID), e.Inode,
 			rfc(e.Atime), rfc(e.Mtime), rfc(e.Ctime), rfc(e.Btime), e.MD5, deleted,
 		}); err != nil {
@@ -254,6 +258,8 @@ type jsonEntry struct {
 	// and has one name, so they add nothing to any other.
 	LinkTarget string `json:"link_target,omitempty"`
 	Links      int    `json:"links,omitempty"`
+	// FileName marks the record of a name's NTFS $FILE_NAME.
+	FileName bool `json:"file_name,omitempty"`
 }
 
 // WriteJSONL writes one JSON object per entry. The mode is octal; an
@@ -267,7 +273,7 @@ func (tl *Timeline) WriteJSONL(w io.Writer) error {
 			Path: e.Path, Stream: e.Stream, Type: e.Type, Size: e.Size, Mode: e.octal(),
 			UID: e.UID, GID: e.GID, Inode: e.Inode,
 			Atime: rfc(e.Atime), Mtime: rfc(e.Mtime), Ctime: rfc(e.Ctime), Crtime: rfc(e.Btime),
-			MD5: e.MD5, Deleted: e.Deleted, LinkTarget: e.LinkTarget, Links: e.Links,
+			MD5: e.MD5, Deleted: e.Deleted, LinkTarget: e.LinkTarget, Links: e.Links, FileName: e.FileName,
 		}); err != nil {
 			return err
 		}
@@ -302,6 +308,9 @@ type timesketchEvent struct {
 	Inode         string `json:"inode,omitempty"`
 	MD5           string `json:"md5,omitempty"`
 	Allocated     bool   `json:"is_allocated"`
+	// AttributeName is "$FILE_NAME" for the record of a name's $FILE_NAME,
+	// as Plaso names the attribute an NTFS time came from.
+	AttributeName string `json:"attribute_name,omitempty"`
 }
 
 // timesketchRow is one event: an entry at one of its times.
@@ -363,11 +372,21 @@ func (tl *Timeline) WriteTimesketch(w io.Writer) error {
 			Inode:         r.e.Inode,
 			MD5:           r.e.MD5,
 			Allocated:     !r.e.Deleted,
+			AttributeName: attributeName(r.e),
 		}); err != nil {
 			return err
 		}
 	}
 	return b.Flush()
+}
+
+// attributeName is the NTFS attribute an entry's times come from, where it
+// is not the object's $STANDARD_INFORMATION.
+func attributeName(e *Entry) string {
+	if e.FileName {
+		return "$FILE_NAME"
+	}
+	return ""
 }
 
 // macbFields names the four times in the order the MACB view shows them:

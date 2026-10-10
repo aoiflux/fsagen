@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"path"
 	"slices"
+	"strings"
 	"time"
 
+	"github.com/aoiflux/fsagen/internal/reparse"
 	"github.com/aoiflux/fsagen/target"
 	"github.com/aoiflux/fsagen/volume"
 )
@@ -144,12 +147,72 @@ func viewEntries(root []byte) []entry {
 	return out
 }
 
+// junctionDrive is the drive a junction's target is written on. An image
+// has no drive letter of its own; C: is the one a system volume has, and
+// the junctions Windows makes there (Documents and Settings) point at it.
+const junctionDrive = `C:`
+
+// reparseData is the reparse data of the link vn is: a symlink's target as
+// given, a junction's as a path on junctionDrive.
+func reparseData(vn *volume.Node) []byte {
+	if vn.Kind != volume.Junction {
+		return reparse.Symlink(vn.Target)
+	}
+	t := path.Clean(vn.Target)
+	if t == "." {
+		t = ""
+	}
+	return reparse.Junction(junctionDrive + `\` + strings.ReplaceAll(t, "/", `\`))
+}
+
+// namespace is the namespace Windows files a name it creates in: Win32
+// and DOS at once for a valid upper-case 8.3 name, else Win32 alone, as
+// short names are off.
+func namespace(leaf string) byte {
+	if isDOSName(leaf) {
+		return nsWin32DOS
+	}
+	return nsWin32
+}
+
+// fnFlags are the flags n's $FILE_NAME attributes carry.
+func (n *node) fnFlags() uint32 {
+	if n.dir != nil {
+		return faI30Index | n.attrs&faReparse
+	}
+	return n.attrs
+}
+
+// entry is n's name nm as its directory's index files it: with the flags
+// and reparse tag NTFS keeps there up to date, as libntfs-3g and Windows
+// bring an entry up to date when the record changes.
+func (n *node) entry(nm *name) entry {
+	fn := nm.fn
+	if n.tag != 0 {
+		fn.flags |= faReparse
+		fn.reparse = n.tag
+	}
+	return fileEntry(n.rec.ref(), fn)
+}
+
+// nameIn is n's name leaf in directory p, or nil.
+func (n *node) nameIn(p *node, leaf string) *name {
+	for _, nm := range n.names {
+		if nm.parent == p && collate(nm.fn.name, leaf) == 0 {
+			return nm
+		}
+	}
+	return nil
+}
+
 // Create gives the new node n the name in parent: a new record stamped
-// with the clock, and an entry in parent's index.
-func (f *FS) Create(parent *volume.Node, name string, vn *volume.Node) error {
+// with the clock, and an entry in parent's index. A symlink or junction is
+// an empty file or directory with a reparse point, filed in $Reparse too.
+func (f *FS) Create(parent *volume.Node, leaf string, vn *volume.Node) error {
 	p := nodeOf(parent)
-	dir := vn.Kind == volume.Dir
-	if !dir && vn.Kind != volume.File {
+	link := vn.Kind == volume.Symlink || vn.Kind == volume.Junction
+	dir := vn.Kind == volume.Dir || link && vn.LinkDir
+	if !dir && !link && vn.Kind != volume.File {
 		return errors.ErrUnsupported
 	}
 	sec, err := f.security(dir)
@@ -161,23 +224,22 @@ func (f *FS) Create(parent *volume.Node, name string, vn *volume.Node) error {
 		return err
 	}
 	now := f.clock()
-	n := &node{rec: r, parent: p, si: allAt(now)}
+	n := &node{rec: r, si: allAt(now)}
 	r.flags, r.links = recInUse, 1
-	ns := byte(nsWin32)
-	if isDOSName(name) {
-		ns = nsWin32DOS
-	}
-	n.fn = fileName{parent: p.rec.ref(), t: n.si, name: name, namespace: ns}
 	if dir {
 		r.flags |= recDir
-		n.fn.flags = faI30Index
 		n.dir = newDirIndex()
 	} else {
 		n.attrs = faArchive
 		if vn.Mode&0o200 == 0 {
 			n.attrs |= faReadOnly
 		}
-		n.fn.flags = n.attrs
+	}
+	var data []byte
+	if link {
+		data = reparseData(vn)
+		n.tag = binary.LittleEndian.Uint32(data)
+		n.attrs |= faReparse
 	}
 	r.add(&attr{typ: atStdInfo, resident: true, value: stdInfo(n.si, n.attrs, sec)})
 	if dir {
@@ -185,15 +247,71 @@ func (f *FS) Create(parent *volume.Node, name string, vn *volume.Node) error {
 	} else {
 		r.add(&attr{typ: atData, resident: true})
 	}
-	r.add(&attr{typ: atFileName, resident: true, indexed: true, value: n.fn.encode()})
+	// The reparse point is set once the object is made, as Windows sets it,
+	// so the record's $FILE_NAME does not show it; its entry does.
+	nm := &name{parent: p, fn: fileName{parent: p.rec.ref(), t: n.si, flags: n.fnFlags() &^ faReparse, name: leaf, namespace: namespace(leaf)}}
+	nm.a = r.add(&attr{typ: atFileName, resident: true, indexed: true, value: nm.fn.encode()})
+	n.names = []*name{nm}
+	if link {
+		r.add(&attr{typ: atReparse, resident: true, value: data})
+	}
 	if err := f.writeRecord(r); err != nil {
 		return err
 	}
 	vn.Sys = n
-	if err := f.indexAdd(p, fileEntry(r.ref(), n.fn)); err != nil {
+	if err := f.indexAdd(p, n.entry(nm)); err != nil {
 		return err
 	}
+	if link {
+		if err := f.indexAdd(f.reparse, reparseEntry(n)); err != nil {
+			return err
+		}
+		if err := f.writeIndex(f.reparse); err != nil {
+			return err
+		}
+	}
 	return f.touchDir(p)
+}
+
+// reparseEntry is n's entry in $Reparse's $R index: its tag and file
+// reference as the key, and no data, as libntfs-3g files one.
+func reparseEntry(n *node) entry {
+	key := make([]byte, 12)
+	binary.LittleEndian.PutUint32(key, n.tag)
+	binary.LittleEndian.PutUint64(key[4:], n.rec.ref())
+	return entry{view: true, dataOffset: 16 + 12, body: key}
+}
+
+// Link gives the file n the further name leaf in parent: a $FILE_NAME in
+// the POSIX namespace, as NTFS adds a hard link (it gives the name no
+// short name where short names are on), with the times n has once the
+// link has changed its record.
+func (f *FS) Link(parent *volume.Node, leaf string, vn *volume.Node) error {
+	p, n := nodeOf(parent), nodeOf(vn)
+	n.si.changed = f.clock()
+	f.putStdInfo(n)
+	first := n.names[0].fn
+	nm := &name{parent: p, fn: fileName{parent: p.rec.ref(), t: n.si, alloc: first.alloc, size: first.size, flags: first.flags, reparse: first.reparse, name: leaf, namespace: nsPOSIX}}
+	nm.a = n.rec.add(&attr{typ: atFileName, resident: true, indexed: true, value: nm.fn.encode()})
+	n.names = append(n.names, nm)
+	n.rec.links++
+	if err := f.fit(n.rec); err != nil {
+		return err
+	}
+	f.setSizes(n)
+	if err := f.indexAdd(p, n.entry(nm)); err != nil {
+		return err
+	}
+	if err := f.putFileNames(n); err != nil {
+		return err
+	}
+	if err := f.writeRecord(n.rec); err != nil {
+		return err
+	}
+	if err := f.touchDir(p); err != nil {
+		return err
+	}
+	return f.writeParents(n)
 }
 
 // touchDir stamps a directory's entries changed now and writes its index
@@ -213,73 +331,161 @@ func (f *FS) putStdInfo(n *node) {
 	binary.LittleEndian.PutUint32(si[32:], n.attrs)
 }
 
-// putFileName puts n's $FILE_NAME in its record and in its parent's index.
-func (f *FS) putFileName(n *node) error {
-	n.rec.find(atFileName, "").value = n.fn.encode()
-	return f.indexUpdate(n.parent, fileEntry(n.rec.ref(), n.fn))
+// putFileNames puts each of n's $FILE_NAMEs in its record and in its
+// directory's index.
+func (f *FS) putFileNames(n *node) error {
+	for _, nm := range n.names {
+		nm.a.value = nm.fn.encode()
+		if err := f.indexUpdate(nm.parent, n.entry(nm)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-// Commit writes n's content: in the record while it fits there, which
-// Windows tries only while the content has never left it; else in
-// clusters, in place over the ones it has, extended or cut to fit, or in
-// newly allocated ones when it was truncated first, the old ones freed
-// with their bytes left behind. The last cluster is zeroed past the end of
-// the content, as the cache manager writes it.
+// writeParents writes what changed of the indexes n's names are in.
+func (f *FS) writeParents(n *node) error {
+	done := map[*node]bool{}
+	for _, nm := range n.names {
+		if !done[nm.parent] {
+			done[nm.parent] = true
+			if err := f.writeIndex(nm.parent); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// setSizes puts the size of n's content, and what it takes, in its
+// $FILE_NAMEs.
+func (f *FS) setSizes(n *node) {
+	var alloc, size int64
+	if d := n.rec.find(atData, ""); d != nil && d.resident {
+		alloc, size = int64(align8(len(d.value))), int64(len(d.value))
+	} else if d != nil {
+		alloc, size = d.alloc, d.size
+	}
+	for _, nm := range n.names {
+		nm.fn.alloc, nm.fn.size = alloc, size
+	}
+}
+
+// store writes data as the content of a, a $DATA attribute of r: in the
+// record while it fits there, which Windows tries only while the content
+// has never left it; else in clusters, in place over the ones it has,
+// extended or cut to fit, or in newly allocated ones when it was truncated
+// first, the old ones freed with their bytes left behind. The last cluster
+// is zeroed past the end of the content, as the cache manager writes it.
+func (f *FS) store(r *record, a *attr, data []byte, truncated bool) error {
+	if a.resident {
+		a.value = slices.Clone(data)
+		if r.fits() {
+			return nil
+		}
+		a.resident, a.value = false, nil
+	} else if truncated {
+		if err := f.cut(a, 0, target.ResidueOverwrite); err != nil {
+			return err
+		}
+	}
+	if err := f.place(a, data); err != nil {
+		return err
+	}
+	return f.fit(r)
+}
+
+// place writes data over the clusters of a, a non-resident attribute,
+// taking more or freeing some to fit it.
+func (f *FS) place(a *attr, data []byte) error {
+	cs := int64(f.g.ClusterSize)
+	size := int64(len(data))
+	need := ceil(size, cs)
+	switch have := clusters(a.runs); {
+	case need < have:
+		if err := f.cut(a, need, target.ResidueOverwrite); err != nil {
+			return err
+		}
+	case need > have:
+		near := -1
+		if k := len(a.runs); k > 0 {
+			near = int(a.runs[k-1].lcn + a.runs[k-1].length)
+		}
+		runs, err := f.allocate(need-have, near)
+		if err != nil {
+			return err
+		}
+		a.runs = extend(a.runs, runs)
+	}
+	padded := make([]byte, need*cs)
+	copy(padded, data)
+	if err := f.writeRuns(a.runs, 0, padded); err != nil {
+		return err
+	}
+	a.alloc, a.size, a.init = need*cs, size, size
+	return nil
+}
+
+// fit moves r's largest resident content to clusters, as often as it
+// takes for r to hold its attributes.
+func (f *FS) fit(r *record) error {
+	for !r.fits() {
+		var big *attr
+		for _, a := range r.attrs {
+			if a.typ == atData && a.resident && len(a.value) > 0 && (big == nil || len(a.value) > len(big.value)) {
+				big = a
+			}
+		}
+		if big == nil {
+			return fmt.Errorf("record %d: %w", r.num, errRecordFull)
+		}
+		data := big.value
+		big.resident, big.value = false, nil
+		if err := f.place(big, data); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Commit writes n's content (see store), and the sizes in its names.
 func (f *FS) Commit(vn *volume.Node, truncated bool) error {
 	n := nodeOf(vn)
-	r := n.rec
-	d := r.find(atData, "")
-	size := int64(len(vn.Data))
-	cs := int64(f.g.ClusterSize)
-	if d.resident {
-		d.value = slices.Clone(vn.Data)
-		if !r.fits() {
-			d.resident, d.value = false, nil
-		}
-	} else if truncated {
-		if err := f.cut(d, 0, target.ResidueOverwrite); err != nil {
-			return err
-		}
+	if err := f.store(n.rec, n.rec.find(atData, ""), vn.Data, truncated); err != nil {
+		return err
 	}
-	if !d.resident {
-		need := ceil(size, cs)
-		switch have := clusters(d.runs); {
-		case need < have:
-			if err := f.cut(d, need, target.ResidueOverwrite); err != nil {
-				return err
-			}
-		case need > have:
-			near := -1
-			if k := len(d.runs); k > 0 {
-				near = int(d.runs[k-1].lcn + d.runs[k-1].length)
-			}
-			runs, err := f.allocate(need-have, near)
-			if err != nil {
-				return err
-			}
-			d.runs = extend(d.runs, runs)
-		}
-		padded := make([]byte, need*cs)
-		copy(padded, vn.Data)
-		if err := f.writeRuns(d.runs, 0, padded); err != nil {
-			return err
-		}
-		d.alloc, d.size, d.init = need*cs, size, size
-		n.fn.alloc = d.alloc
-	} else {
-		n.fn.alloc = int64(align8(int(size)))
-	}
-	n.fn.size = size
+	return f.changed(n)
+}
+
+// changed stamps n's content changed now and writes its record and its
+// names, whose sizes follow the content.
+func (f *FS) changed(n *node) error {
+	f.setSizes(n)
 	now := f.clock()
 	n.si.modified, n.si.changed = now, now
 	f.putStdInfo(n)
-	if err := f.putFileName(n); err != nil {
+	if err := f.putFileNames(n); err != nil {
 		return err
 	}
-	if err := f.writeRecord(r); err != nil {
+	if err := f.writeRecord(n.rec); err != nil {
 		return err
 	}
-	return f.writeIndex(n.parent)
+	return f.writeParents(n)
+}
+
+// WriteStream writes a named stream of n as a named $DATA attribute,
+// stored as content is (see store), replacing what it held as opening it
+// to be overwritten does.
+func (f *FS) WriteStream(vn *volume.Node, stream string) error {
+	n := nodeOf(vn)
+	a := n.rec.find(atData, stream)
+	if a == nil {
+		a = n.rec.add(&attr{typ: atData, name: stream, resident: true})
+	}
+	if err := f.store(n.rec, a, vn.Streams[stream], true); err != nil {
+		return err
+	}
+	return f.changed(n)
 }
 
 // cut frees d's clusters from the keep-th on, recording what they held, up
@@ -318,24 +524,61 @@ func (f *FS) cut(d *attr, keep int64, cause string) error {
 	return nil
 }
 
-// Remove takes name out of parent, and deletes the object as Windows does:
-// its record loses its in-use flag and its sequence number goes up, but
-// keeps everything else; its clusters are freed with their bytes in place.
-func (f *FS) Remove(parent *volume.Node, name string, vn *volume.Node) error {
+// Remove takes name out of parent. The object keeps its record while it
+// has another name; the name's $FILE_NAME goes, and the record's link
+// count. Its last name gone, it is deleted as Windows deletes it: its
+// record loses its in-use flag and its sequence number goes up, but keeps
+// everything else; its clusters, its streams' too, are freed with their
+// bytes in place; a link leaves $Reparse.
+func (f *FS) Remove(parent *volume.Node, leaf string, vn *volume.Node) error {
 	p, n := nodeOf(parent), nodeOf(vn)
-	if err := f.indexRemove(p, n.fn.name); err != nil {
+	nm := n.nameIn(p, leaf)
+	if nm == nil {
+		return fmt.Errorf("record %d has no name %q in record %d", n.rec.num, leaf, p.rec.num)
+	}
+	f.forget(p, n, nm, target.ResidueDelete)
+	if err := f.indexRemove(p, n.entry(nm)); err != nil {
 		return err
 	}
 	if err := f.touchDir(p); err != nil {
 		return err
 	}
 	r := n.rec
-	var data []byte
-	var exts []target.Extent
-	if d := r.find(atData, ""); d != nil && !d.resident && d.size > 0 {
-		var err error
-		if data, exts, err = f.readRuns(d.runs, 0, d.size); err != nil {
+	if vn.Names > 0 {
+		r.drop(nm.a)
+		n.names = slices.DeleteFunc(n.names, func(x *name) bool { return x == nm })
+		r.links--
+		n.si.changed = f.clock()
+		f.putStdInfo(n)
+		return f.writeRecord(r)
+	}
+	if n.tag != 0 {
+		if err := f.indexRemove(f.reparse, reparseEntry(n)); err != nil {
 			return err
+		}
+		if err := f.writeIndex(f.reparse); err != nil {
+			return err
+		}
+	}
+	// The content goes with the record; each stream's is left on its own.
+	type freed struct {
+		data []byte
+		exts []target.Extent
+	}
+	var content freed
+	var streams []freed
+	for _, a := range r.attrs {
+		if a.typ != atData || a.resident || a.size == 0 {
+			continue
+		}
+		data, exts, err := f.readRuns(a.runs, 0, a.size)
+		if err != nil {
+			return err
+		}
+		if a.name == "" {
+			content = freed{data, exts}
+		} else {
+			streams = append(streams, freed{data, exts})
 		}
 	}
 	for _, a := range r.attrs {
@@ -358,31 +601,39 @@ func (f *FS) Remove(parent *volume.Node, name string, vn *volume.Node) error {
 		return err
 	}
 	entry := &target.ResidueEntry{Type: "ntfs_mft_record", Number: int64(r.num), Seq: int(r.seq), Offset: f.dev.Abs(off), Length: recordSize}
-	f.res.Add(target.ResidueDelete, entry, raw, exts, data)
+	f.res.Add(target.ResidueDelete, entry, raw, content.exts, content.data)
+	for _, s := range streams {
+		f.res.Add(target.ResidueDelete, nil, nil, s.exts, s.data)
+	}
 	return nil
 }
 
-// Rename moves n to its new name: out of its old directory's index and
-// into its new one's, with a $FILE_NAME that takes the times n has once
-// the rename has changed its record, as NTFS writes it.
+// Rename moves n's name oldName in from to newName in to: out of its old
+// directory's index and into its new one's, with a $FILE_NAME in the Win32
+// namespace that takes the times n has once the rename has changed its
+// record, as NTFS writes it.
 func (f *FS) Rename(from *volume.Node, oldName string, to *volume.Node, newName string, vn *volume.Node) error {
 	src, dst, n := nodeOf(from), nodeOf(to), nodeOf(vn)
-	if err := f.indexRemove(src, n.fn.name); err != nil {
+	nm := n.nameIn(src, oldName)
+	if nm == nil {
+		return fmt.Errorf("record %d has no name %q in record %d", n.rec.num, oldName, src.rec.num)
+	}
+	f.forget(src, n, nm, target.ResidueRename)
+	if err := f.indexRemove(src, n.entry(nm)); err != nil {
 		return err
 	}
 	n.si.changed = f.clock()
 	f.putStdInfo(n)
-	n.parent = dst
-	n.fn.parent, n.fn.name, n.fn.t = dst.rec.ref(), newName, n.si
-	n.fn.namespace = nsWin32
-	if isDOSName(newName) {
-		n.fn.namespace = nsWin32DOS
-	}
-	n.rec.find(atFileName, "").value = n.fn.encode()
+	nm.parent = dst
+	nm.fn.parent, nm.fn.name, nm.fn.t, nm.fn.namespace = dst.rec.ref(), newName, n.si, namespace(newName)
+	nm.fn.flags, nm.fn.reparse = n.fnFlags(), n.tag
+	n.rec.drop(nm.a)
+	nm.a.value = nm.fn.encode()
+	n.rec.put(nm.a)
 	if err := f.writeRecord(n.rec); err != nil {
 		return err
 	}
-	if err := f.indexAdd(dst, fileEntry(n.rec.ref(), n.fn)); err != nil {
+	if err := f.indexAdd(dst, n.entry(nm)); err != nil {
 		return err
 	}
 	if err := f.touchDir(src); err != nil {
@@ -397,23 +648,52 @@ func (f *FS) Rename(from *volume.Node, oldName string, to *volume.Node, newName 
 // SetTimes stores t's non-zero times in n's $STANDARD_INFORMATION.
 func (f *FS) SetTimes(vn *volume.Node, t target.Times) error {
 	n := nodeOf(vn)
+	n.si = setTimes(n.si, t)
+	f.putStdInfo(n)
+	return f.writeRecord(n.rec)
+}
+
+// setTimes is to with t's non-zero times in place of its own.
+func setTimes(to times, t target.Times) times {
 	for _, s := range []struct {
 		to   *time.Time
 		from time.Time
-	}{{&n.si.accessed, t.Atime}, {&n.si.modified, t.Mtime}, {&n.si.changed, t.Ctime}, {&n.si.created, t.Btime}} {
+	}{{&to.accessed, t.Atime}, {&to.modified, t.Mtime}, {&to.changed, t.Ctime}, {&to.created, t.Btime}} {
 		if !s.from.IsZero() {
 			*s.to = s.from.UTC()
 		}
 	}
-	f.putStdInfo(n)
-	return f.writeRecord(n.rec)
+	return to
+}
+
+// SetFileNameTimes stores t's non-zero times in the $FILE_NAME of n's name
+// leaf in parent, in its record and its directory's index alike, as a tool
+// that sets them writes both. Times it already has write nothing.
+func (f *FS) SetFileNameTimes(parent *volume.Node, leaf string, vn *volume.Node, t target.Times) error {
+	p, n := nodeOf(parent), nodeOf(vn)
+	nm := n.nameIn(p, leaf)
+	if nm == nil {
+		return fmt.Errorf("record %d has no name %q in record %d", n.rec.num, leaf, p.rec.num)
+	}
+	was := nm.fn.t
+	if nm.fn.t = setTimes(was, t); nm.fn.t == was {
+		return nil
+	}
+	nm.a.value = nm.fn.encode()
+	if err := f.indexUpdate(p, n.entry(nm)); err != nil {
+		return err
+	}
+	if err := f.writeRecord(n.rec); err != nil {
+		return err
+	}
+	return f.writeIndex(p)
 }
 
 // Chmod sets or clears a file's read-only attribute, as Windows maps a
 // mode without the owner's write bit.
 func (f *FS) Chmod(vn *volume.Node) error {
 	n := nodeOf(vn)
-	if n.dir != nil {
+	if n.dir != nil || n.tag != 0 {
 		return nil
 	}
 	if vn.Mode&0o200 == 0 {
@@ -426,9 +706,17 @@ func (f *FS) Chmod(vn *volume.Node) error {
 	return f.writeRecord(n.rec)
 }
 
-// WriteSlack is refused: this writer keeps no slack yet.
+// WriteSlack writes data just past byte at of n's content, in the rest of
+// its last cluster.
 func (f *FS) WriteSlack(vn *volume.Node, at int64, data []byte) error {
-	return errors.ErrUnsupported
+	d := nodeOf(vn).rec.find(atData, "")
+	switch {
+	case d.resident:
+		return errors.New("the content is kept in the MFT record, with no cluster and so no slack")
+	case at != d.size || at+int64(len(data)) > d.alloc:
+		return fmt.Errorf("%d bytes from byte %d do not fit the slack of %d bytes in %d", len(data), at, d.size, d.alloc)
+	}
+	return f.writeRuns(d.runs, at, data)
 }
 
 // mode is how a node reads back: a directory open to all, a file read-only

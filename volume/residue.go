@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
+	"slices"
 
 	"github.com/aoiflux/fsagen/target"
 )
@@ -27,10 +28,19 @@ type record struct {
 // Begin names the operation and path the next residue comes from.
 func (t *Tracker) Begin(op int, path string) { t.op, t.path = op, path }
 
+// Source is the operation and path residue now comes from, for a driver
+// that works out later what that operation left.
+func (t *Tracker) Source() (int, string) { return t.op, t.path }
+
 // Add records residue: the entry left behind as it then read (nil if none),
 // and the content freed, as image-file extents and the bytes they held.
 func (t *Tracker) Add(cause string, entry *target.ResidueEntry, entryBytes []byte, extents []target.Extent, data []byte) {
-	r := target.Residue{N: t.op, Path: t.path, Cause: cause, Entry: entry, Extents: extents}
+	t.AddFrom(t.op, t.path, cause, entry, entryBytes, extents, data)
+}
+
+// AddFrom records residue that operation op left from path, as Add does.
+func (t *Tracker) AddFrom(op int, path, cause string, entry *target.ResidueEntry, entryBytes []byte, extents []target.Extent, data []byte) {
+	r := target.Residue{N: op, Path: path, Cause: cause, Entry: entry, Extents: extents}
 	if len(extents) > 0 {
 		sum := sha256.Sum256(data)
 		r.Size, r.SHA256 = int64(len(data)), hex.EncodeToString(sum[:])
@@ -39,10 +49,13 @@ func (t *Tracker) Add(cause string, entry *target.ResidueEntry, entryBytes []byt
 }
 
 // Resolve compares every record with the finished image, read from img (the
-// whole image file), and returns the residue in the order it was left.
+// whole image file), and returns the residue in the order of the operations
+// that left it, and as it was recorded within one.
 func (t *Tracker) Resolve(img io.ReaderAt) ([]target.Residue, error) {
 	out := make([]target.Residue, 0, len(t.recs))
-	for _, rec := range t.recs {
+	recs := slices.Clone(t.recs)
+	slices.SortStableFunc(recs, func(a, b record) int { return a.r.N - b.r.N })
+	for _, rec := range recs {
 		r := rec.r
 		if r.Entry != nil {
 			now := make([]byte, len(rec.entry))

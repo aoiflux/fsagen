@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -254,8 +255,9 @@ func TestImageObservedTimeline(t *testing.T) {
 }
 
 // 7-Zip, where it is installed, opens a VHD fsagen wrote, finds the MBR
-// and the FAT32 or NTFS volume in it, and extracts every file with the
-// digest SHA256SUMS gives.
+// and the FAT32 or NTFS volume in it, and extracts every file and stream
+// with the digest SHA256SUMS gives; on NTFS, its symlinks, junction and
+// hard link as links of those kinds.
 func TestImageReadBy7Zip(t *testing.T) {
 	sevenZip, err := exec.LookPath("7z")
 	if err != nil {
@@ -276,7 +278,9 @@ func readBy7Zip(t *testing.T, sevenZip, fsName, fixture, size string, files int)
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
 	out := filepath.Join(dir, "x")
-	if b, err := exec.Command(sevenZip, "x", "-y", "-o"+out, img).CombinedOutput(); err != nil {
+	// -snld lets it make a symlink that leaves its folder (../Logs), which
+	// it otherwise refuses as dangerous.
+	if b, err := exec.Command(sevenZip, "x", "-y", "-snld", "-o"+out, img).CombinedOutput(); err != nil {
 		t.Fatalf("7z: %v\n%s", err, b)
 	}
 	sums, err := os.ReadFile(filepath.Join(img+metaDirSuffix, runinfo.SumsFileName))
@@ -303,6 +307,29 @@ func readBy7Zip(t *testing.T, sevenZip, fsName, fixture, size string, files int)
 	}
 	if n < files {
 		t.Errorf("only %d files checked", n)
+	}
+	if fsName == "ntfs" {
+		readLinksBy7Zip(t, root)
+	}
+}
+
+// readLinksBy7Zip checks the links 7-Zip made of the NTFS fixture's: the
+// symlinks with their targets, the junction as a link, and the hard link
+// as a second name of the same file.
+func readLinksBy7Zip(t *testing.T, root string) {
+	at := func(p string) string { return filepath.Join(root, filepath.FromSlash(p)) }
+	for p, want := range map[string]string{"Archive/readme-link.txt": "../Documents/ReadMe.txt", "Archive/logs-link": "../Logs"} {
+		if got, err := os.Readlink(at(p)); err != nil || filepath.ToSlash(got) != want {
+			t.Errorf("7-Zip's %s points at %q (%v), want %q", p, got, err, want)
+		}
+	}
+	if fi, err := os.Lstat(at("Archive/docs-junction")); err != nil || fi.Mode()&(fs.ModeSymlink|fs.ModeIrregular) == 0 {
+		t.Errorf("7-Zip's junction is not a link: %v", err)
+	}
+	a, errA := os.Stat(at("Archive/locked-link.txt"))
+	b, errB := os.Stat(at("Documents/locked.txt"))
+	if errA != nil || errB != nil || !os.SameFile(a, b) {
+		t.Errorf("7-Zip did not make Archive/locked-link.txt a hard link of Documents/locked.txt (%v, %v)", errA, errB)
 	}
 }
 

@@ -3,14 +3,11 @@
 package sandbox
 
 import (
-	"encoding/binary"
-	"errors"
 	"os"
 	"path/filepath"
-	"strings"
-	"unicode/utf16"
 	"unsafe"
 
+	"github.com/aoiflux/fsagen/internal/reparse"
 	"golang.org/x/sys/windows"
 )
 
@@ -22,64 +19,20 @@ import (
 // be made with the same code. Go's os.Root.Symlink chooses by looking at the
 // target, which for a target that is not there yet is always a file link.
 
-const (
-	symlinkFlagRelative  = 1
-	maxReparseDataBuffer = 16 * 1024
-)
+const maxReparseDataBuffer = 16 * 1024
 
 func linkCaps(v volume) LinkCaps {
 	return LinkCaps{Hard: v.hardlinks, Sym: v.reparse && SymlinksAllowed(), Junction: v.reparse}
 }
 
-// symlink writes the reparse data CreateSymbolicLinkW writes: the print
-// name, then the substitute name, which for a drive or a share is the NT
-// path and otherwise the target itself, marked relative (a path from the
-// drive's root, \etc\hosts, included).
+// symlink writes the reparse data CreateSymbolicLinkW writes (see
+// reparse.Symlink).
 func symlink(r *os.Root, name, target string, dir bool) error {
-	t := strings.ReplaceAll(target, "/", `\`)
-	subst, flags := t, uint32(symlinkFlagRelative)
-	switch {
-	case strings.HasPrefix(t, `\\`):
-		subst, flags = `\??\UNC\`+t[2:], 0
-	case len(t) > 1 && t[1] == ':':
-		subst, flags = `\??\`+t, 0
-	}
-	s, p := utf16.Encode([]rune(subst)), utf16.Encode([]rune(t))
-	b := reparseHeader(windows.IO_REPARSE_TAG_SYMLINK, 12+2*(len(s)+len(p)))
-	b = binary.LittleEndian.AppendUint16(b, uint16(2*len(p)))
-	b = binary.LittleEndian.AppendUint16(b, uint16(2*len(s)))
-	b = binary.LittleEndian.AppendUint16(b, 0)
-	b = binary.LittleEndian.AppendUint16(b, uint16(2*len(p)))
-	b = binary.LittleEndian.AppendUint32(b, flags)
-	b = appendUTF16(appendUTF16(b, p), s)
-	return createReparse(r, name, dir, b)
+	return createReparse(r, name, dir, reparse.Symlink(target))
 }
 
 func junction(r *os.Root, name, target string) error {
-	s, p := utf16.Encode([]rune(`\??\`+target)), utf16.Encode([]rune(target))
-	// A mount point's names are each NUL-terminated, and their lengths leave
-	// the terminator out.
-	b := reparseHeader(windows.IO_REPARSE_TAG_MOUNT_POINT, 8+2*(len(s)+1+len(p)+1))
-	b = binary.LittleEndian.AppendUint16(b, 0)
-	b = binary.LittleEndian.AppendUint16(b, uint16(2*len(s)))
-	b = binary.LittleEndian.AppendUint16(b, uint16(2*(len(s)+1)))
-	b = binary.LittleEndian.AppendUint16(b, uint16(2*len(p)))
-	b = appendUTF16(appendUTF16(b, s), []uint16{0})
-	b = appendUTF16(appendUTF16(b, p), []uint16{0})
-	return createReparse(r, name, true, b)
-}
-
-func reparseHeader(tag uint32, dataLen int) []byte {
-	b := binary.LittleEndian.AppendUint32(nil, tag)
-	b = binary.LittleEndian.AppendUint16(b, uint16(dataLen))
-	return binary.LittleEndian.AppendUint16(b, 0)
-}
-
-func appendUTF16(b []byte, u []uint16) []byte {
-	for _, c := range u {
-		b = binary.LittleEndian.AppendUint16(b, c)
-	}
-	return b
+	return createReparse(r, name, true, reparse.Junction(target))
 }
 
 // createReparse creates name, a new empty file or directory, relative to
@@ -165,23 +118,6 @@ func reparseTarget(h windows.Handle) (string, error) {
 	if err := windows.DeviceIoControl(h, windows.FSCTL_GET_REPARSE_POINT, nil, 0, &buf[0], uint32(len(buf)), &n, nil); err != nil {
 		return "", err
 	}
-	b := buf[:n]
-	if len(b) < 16 {
-		return "", errors.New("short reparse data")
-	}
-	tag := binary.LittleEndian.Uint32(b)
-	off, size := int(binary.LittleEndian.Uint16(b[12:])), int(binary.LittleEndian.Uint16(b[14:]))
-	start := 16
-	if tag == windows.IO_REPARSE_TAG_SYMLINK {
-		start = 20
-	}
-	if start+off+size > len(b) {
-		return "", errors.New("reparse name runs past its data")
-	}
-	name := b[start+off : start+off+size]
-	u := make([]uint16, len(name)/2)
-	for i := range u {
-		u[i] = binary.LittleEndian.Uint16(name[2*i:])
-	}
-	return string(utf16.Decode(u)), nil
+	_, name, err := reparse.PrintName(buf[:n])
+	return name, err
 }

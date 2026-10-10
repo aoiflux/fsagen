@@ -1,9 +1,10 @@
 /*
  * harness applies a script of directory operations to an NTFS image with
- * libntfs-3g, so that TestIndexMatchesLibntfs3g can compare fsagen's
- * directory indexes with libntfs-3g's. Each line of the script is
- * "d path" (make a directory), "f path" (make an empty file) or "r path"
- * (remove one). Paths are absolute, with '/', in UTF-8.
+ * libntfs-3g, so that TestIndexMatchesLibntfs3g and
+ * TestReparseIndexMatchesLibntfs3g can compare fsagen's indexes with
+ * libntfs-3g's. Each line of the script is "d path" (make a directory),
+ * "f path" (make an empty file), "s path" (make a symlink to "t") or
+ * "r path" (remove one). Paths are absolute, with '/', in UTF-8.
  *
  *   harness image script
  *
@@ -23,7 +24,17 @@
 #include <ntfs-3g/volume.h>
 #include <ntfs-3g/inode.h>
 #include <ntfs-3g/dir.h>
+#include <ntfs-3g/reparse.h>
 #include <ntfs-3g/unistr.h>
+
+/* The reparse data CreateSymbolicLinkW writes for a relative symlink to
+ * "t": the tag, the data's length, the substitute name after the print
+ * name, the relative flag, then the print and substitute names. */
+static const char symlink_t[] = {
+	0x0c, 0x00, 0x00, (char)0xa0, 0x10, 0x00, 0x00, 0x00,
+	0x02, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x00,
+	0x01, 0x00, 0x00, 0x00, 't', 0x00, 't', 0x00,
+};
 
 static ntfs_inode *parent_of(ntfs_volume *vol, char *path, char **leaf)
 {
@@ -93,6 +104,16 @@ int main(int argc, char **argv)
 			}
 			if (ntfs_inode_close(dir)) {
 				perror("close");
+				return 1;
+			}
+			break;
+		case 's':
+			/* The directory is closed first: closing the link
+			 * brings its entry's $FILE_NAME up to date, reading
+			 * the directory's index from disk. */
+			ni = ntfs_create(dir, const_cpu_to_le32(0x100), uname, ulen, S_IFREG);
+			if (!ni || ntfs_set_ntfs_reparse_data(ni, symlink_t, sizeof(symlink_t), 0) || ntfs_inode_close(dir) || ntfs_inode_close(ni)) {
+				fprintf(stderr, "line %d: symlink: %s\n", n, strerror(errno));
 				return 1;
 			}
 			break;

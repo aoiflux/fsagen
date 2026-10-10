@@ -13,8 +13,9 @@ import (
 // Controlled says which of the times a run can set beyond access and
 // modification, which it always can. A time the run cannot set is unknown
 // in a modelled timeline, never the scenario's wish presented as fact.
+// FileName says the times of each name's NTFS $FILE_NAME are set too.
 type Controlled struct {
-	Birth, Change bool
+	Birth, Change, FileName bool
 }
 
 // Modelled builds the timeline the scenario intends from the model of the
@@ -24,6 +25,10 @@ type Controlled struct {
 // ledger's; the inode column is the ledger's object number, so each line can
 // be traced to the operations that made it. The mode is the one fsagen
 // requests, before any umask.
+//
+// Where the run sets the times NTFS keeps in each name's $FILE_NAME (an NTFS
+// image), each name the run left also has an entry for its $FILE_NAME, with
+// those times, as The Sleuth Kit lists one.
 //
 // It reads nothing from disk, so it is the same bytes on every run with the
 // same inputs and capability set.
@@ -47,7 +52,7 @@ func Modelled(tree *model.Tree, entries []ledger.Entry, c Controlled) *Timeline 
 	}
 
 	tl := &Timeline{Source: SourceModelled}
-	add := func(o *model.Object, p string, deleted bool) {
+	add := func(o *model.Object, p string, deleted bool) Entry {
 		st := last[o.Serial]
 		e := Entry{
 			Path:    p,
@@ -78,12 +83,16 @@ func Modelled(tree *model.Tree, entries []ledger.Entry, c Controlled) *Timeline 
 			se.Type, se.Stream, se.Size, se.MD5 = TypeStream, s.Name, int64(s.Size), s.MD5
 			tl.Entries = append(tl.Entries, se)
 		}
+		return e
 	}
 	// Each name of a hard-linked file is an entry, as each is a directory
 	// entry a tool lists.
 	for _, o := range tree.Settle() {
 		for _, n := range o.Names {
-			add(o, n.Path, false)
+			e := add(o, n.Path, false)
+			if c.FileName {
+				tl.Entries = append(tl.Entries, fileNameEntry(e, n.FN))
+			}
 		}
 	}
 	for _, o := range tree.Removed() {
@@ -93,6 +102,14 @@ func Modelled(tree *model.Tree, entries []ledger.Entry, c Controlled) *Timeline 
 	return tl
 }
 
+// fileNameEntry is the entry for the $FILE_NAME of the name e is, with its
+// times t: a record of the name, so it has no content to hash.
+func fileNameEntry(e Entry, t model.Times) Entry {
+	e.FileName, e.MD5 = true, ""
+	e.Atime, e.Mtime, e.Ctime, e.Btime = t.Atime, t.Mtime, t.Ctime, t.Btime
+	return e
+}
+
 // Finals lists, for a modelled timeline, where each object ended up (or was
 // deleted from) and its controlled modification and creation times: what
 // the answer key's final-state facts are drawn from. A hard-linked file is
@@ -100,7 +117,7 @@ func Modelled(tree *model.Tree, entries []ledger.Entry, c Controlled) *Timeline 
 func (tl *Timeline) Finals() []ledger.Final {
 	var out []ledger.Final
 	for _, e := range tl.Entries {
-		if e.Object == 0 || e.Type == TypeStream || e.alias {
+		if e.Object == 0 || e.Type == TypeStream || e.alias || e.FileName {
 			continue
 		}
 		out = append(out, ledger.Final{

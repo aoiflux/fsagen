@@ -40,10 +40,9 @@ const (
 	SlackExact      = target.SlackExact
 )
 
-// MinResidentSafe is the smallest file whose slack a live NTFS volume is
-// trusted to keep. A smaller one may live inside its MFT record, with no
-// cluster and so no slack; the true limit depends on the record, so this is
-// set conservatively at a whole record.
+// MinResidentSafe is the largest file NTFS may keep inside its MFT record,
+// with no cluster and so no slack: slack needs a bigger one. The true limit
+// depends on the record, so this is set conservatively at a whole record.
 const MinResidentSafe = 1024
 
 // ClusterOf is the cluster size a slack block asks for.
@@ -131,11 +130,11 @@ func slackUnsupported(op *Op, caps Caps) string {
 	c := ClusterOf(op.Slack)
 	switch {
 	case caps.Slack == "" || caps.Slack == SlackNone:
-		return "slack needs a target that keeps bytes past the end of a file: live NTFS (best effort) or a FAT32 or ext4 disk image"
+		return "slack needs a target that keeps bytes past the end of a file: live NTFS (best effort) or a FAT32, ext4 or NTFS disk image"
 	case caps.ClusterSize != 0 && caps.ClusterSize != c:
 		return fmt.Sprintf("slack is planned for %d-byte clusters, and this volume's are %d bytes; set cluster_size: %d", c, caps.ClusterSize, caps.ClusterSize)
-	case caps.Slack == SlackBestEffort && LogicalSize(op) <= MinResidentSafe:
-		return fmt.Sprintf("a %d-byte file may be kept inside its NTFS MFT record, with no cluster and so no slack; slack on a live volume needs more than %d bytes", LogicalSize(op), MinResidentSafe)
+	case caps.ResidentData && LogicalSize(op) <= MinResidentSafe:
+		return fmt.Sprintf("a %d-byte file may be kept inside its NTFS MFT record, with no cluster and so no slack; slack on NTFS needs more than %d bytes", LogicalSize(op), MinResidentSafe)
 	}
 	return ""
 }

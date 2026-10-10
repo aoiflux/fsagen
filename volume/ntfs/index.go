@@ -67,6 +67,9 @@ func (e entry) encodeIn(node bool) []byte {
 // size is how many bytes the entry takes in a node, with children or not.
 func (e entry) size(node bool) int {
 	n := align8(16 + len(e.key))
+	if e.view {
+		n = align8(16 + len(e.body))
+	}
 	if node {
 		n += 8
 	}
@@ -200,10 +203,17 @@ func (n *inode) insert(pos int, e entry, left, right int64) {
 	}
 }
 
-// dirIndex is a directory's $I30 index.
+// dirIndex is an index: a directory's $I30, or a view index such as
+// $Reparse's $R.
 type dirIndex struct {
-	root   *inode
-	blocks map[int64]*inode
+	// name is the index's attribute name, typ the attribute it indexes (0
+	// for a view index), coll how it collates, and cmp orders two entries
+	// that way.
+	name      string
+	typ, coll uint32
+	cmp       func(a, b entry) int
+	root      *inode
+	blocks    map[int64]*inode
 	// bitmap is $BITMAP's value, nil while the index has never had a
 	// block.
 	bitmap []byte
@@ -214,8 +224,27 @@ type dirIndex struct {
 }
 
 // newDirIndex is an empty directory's index.
-func newDirIndex() *dirIndex {
-	return &dirIndex{root: &inode{end: -1, vcn: -1}, blocks: map[int64]*inode{}, dirty: map[int64]bool{}}
+func newDirIndex() *dirIndex { return newIndex("$I30", atFileName, collFileName, byName) }
+
+// newIndex is an empty index.
+func newIndex(name string, typ, coll uint32, cmp func(a, b entry) int) *dirIndex {
+	return &dirIndex{name: name, typ: typ, coll: coll, cmp: cmp, root: &inode{end: -1, vcn: -1}, blocks: map[int64]*inode{}, dirty: map[int64]bool{}}
+}
+
+// byName orders directory entries by name, as COLLATION_FILE_NAME does.
+func byName(a, b entry) int { return collate(a.name, b.name) }
+
+// byULongs orders view entries by their keys read as 32-bit numbers, one
+// after another, as COLLATION_NTOFS_ULONGS does.
+func byULongs(a, b entry) int {
+	le := binary.LittleEndian
+	ka, kb := a.body[:a.dataOffset-16], b.body[:b.dataOffset-16]
+	for i := 0; i+4 <= len(ka) && i+4 <= len(kb); i += 4 {
+		if c := cmpU32(le.Uint32(ka[i:]), le.Uint32(kb[i:])); c != 0 {
+			return c
+		}
+	}
+	return len(ka) - len(kb)
 }
 
 // step is a node on the way down the index, and the place in it the way
@@ -225,12 +254,12 @@ type step struct {
 	pos int
 }
 
-// lookup walks down the index to name: to its entry if there is one, else
-// to the place in a leaf it would go.
-func (ix *dirIndex) lookup(name string) ([]step, bool) {
+// lookup walks down the index to key's entry if there is one, else to the
+// place in a leaf it would go.
+func (ix *dirIndex) lookup(key entry) ([]step, bool) {
 	var path []step
 	for n := ix.root; ; n = ix.blocks[n.child(path[len(path)-1].pos)] {
-		i, found := slices.BinarySearchFunc(n.es, name, func(e entry, name string) int { return collate(e.name, name) })
+		i, found := slices.BinarySearchFunc(n.es, key, ix.cmp)
 		path = append(path, step{n, i})
 		if found || n.leaf() {
 			return path, found
@@ -249,10 +278,10 @@ func (ix *dirIndex) mark(n *inode) {
 
 // rootValue is the $INDEX_ROOT value.
 func (ix *dirIndex) rootValue(g Geometry) []byte {
-	return indexRoot(atFileName, collFileName, g, ix.root.body(), !ix.root.leaf())
+	return indexRoot(ix.typ, ix.coll, g, ix.root.body(), !ix.root.leaf())
 }
 
-// The directory index is a B-tree, changed as libntfs-3g changes one:
+// An index is a B-tree, changed as libntfs-3g changes one:
 //
 //   - A new entry goes into a leaf. The root grows in the record while the
 //     record keeps 120 bytes free; past that, its entries move to a new
@@ -275,9 +304,9 @@ func (ix *dirIndex) rootValue(g Geometry) []byte {
 func (f *FS) indexAdd(d *node, e entry) error {
 	ix := d.dir
 	for {
-		path, found := ix.lookup(e.name)
+		path, found := ix.lookup(e)
 		if found {
-			return fmt.Errorf("record %d already has an entry %q", d.rec.num, e.name)
+			return fmt.Errorf("record %d's %s already has an entry %q", d.rec.num, ix.name, e.name)
 		}
 		at := path[len(path)-1]
 		need := at.n.size() + e.size(false)
@@ -309,7 +338,7 @@ func (f *FS) indexAdd(d *node, e entry) error {
 func (f *FS) makeRoom(d *node, room int) (bool, error) {
 	ix := d.dir
 	oldLen, newLen := align8(64+ix.root.size()), align8(64+room)
-	used := d.rec.used() - len(d.rec.find(atIndexRoot, "$I30").encode()) + oldLen
+	used := d.rec.used() - len(d.rec.find(atIndexRoot, ix.name).encode()) + oldLen
 	if after := used - oldLen + newLen; after <= recordSize && (newLen <= oldLen || after+120 <= recordSize || used+120 > recordSize) {
 		return true, nil
 	}
@@ -323,8 +352,8 @@ func (f *FS) reparent(d *node) error {
 	ix := d.dir
 	if ix.bitmap == nil {
 		ix.bitmap = make([]byte, 8)
-		d.rec.add(&attr{typ: atBitmap, name: "$I30", resident: true, value: ix.bitmap})
-		d.rec.add(nonresident(atIndexAlloc, "$I30", 0, nil, 0, 0, 0))
+		d.rec.add(&attr{typ: atBitmap, name: ix.name, resident: true, value: ix.bitmap})
+		d.rec.add(nonresident(atIndexAlloc, ix.name, 0, nil, 0, 0, 0))
 	}
 	vcn, err := f.newBlock(d, ix.root.es, ix.root.end)
 	if err != nil {
@@ -353,7 +382,7 @@ func (f *FS) newBlock(d *node, es []entry, end int64) (int64, error) {
 		ix.bitmap = append(ix.bitmap, make([]byte, 8)...)
 	}
 	ix.bitmap[bit/8] |= 1 << (bit % 8)
-	d.rec.find(atBitmap, "$I30").value = ix.bitmap
+	d.rec.find(atBitmap, ix.name).value = ix.bitmap
 	vcn := int64(bit) * int64(f.g.perIndexBlock())
 	ix.blocks[vcn] = &inode{es: es, end: end, vcn: vcn, raw: make([]byte, indexSize), usn: 1}
 	ix.dirty[vcn] = true
@@ -409,12 +438,12 @@ func (f *FS) split(d *node, path []step) (bool, error) {
 	return true, nil
 }
 
-// indexRemove takes name out of directory d's index.
-func (f *FS) indexRemove(d *node, name string) error {
+// indexRemove takes key's entry out of d's index.
+func (f *FS) indexRemove(d *node, key entry) error {
 	for {
-		path, found := d.dir.lookup(name)
+		path, found := d.dir.lookup(key)
 		if !found {
-			return fmt.Errorf("record %d has no entry %q", d.rec.num, name)
+			return fmt.Errorf("record %d's %s has no entry %q", d.rec.num, d.dir.name, key.name)
 		}
 		done, err := f.remove(d, path)
 		if err != nil || done {
@@ -501,12 +530,11 @@ func (f *FS) takeout(d *node, p *inode, i int) error {
 	return f.indexAdd(d, e)
 }
 
-// indexUpdate puts e in place of the entry of its name in directory d's
-// index.
+// indexUpdate puts e in place of the entry with its key in d's index.
 func (f *FS) indexUpdate(d *node, e entry) error {
-	path, found := d.dir.lookup(e.name)
+	path, found := d.dir.lookup(e)
 	if !found {
-		return fmt.Errorf("record %d has no entry %q", d.rec.num, e.name)
+		return fmt.Errorf("record %d's %s has no entry %q", d.rec.num, d.dir.name, e.name)
 	}
 	at := path[len(path)-1]
 	e.child = at.n.es[at.pos].child

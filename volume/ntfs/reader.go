@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"path"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/aoiflux/fsagen/internal/reparse"
 	"github.com/aoiflux/fsagen/target"
 	"github.com/aoiflux/fsagen/volume"
 )
@@ -29,21 +31,33 @@ type Reader struct {
 	cs      int64
 	mftRuns []run
 	root    *rnode
+	// reparse are the reparse points the tree holds, by file reference,
+	// with their tags.
+	reparse map[uint64]uint32
 }
 
 // rnode is one name and the record it names.
 type rnode struct {
-	name     string
-	num      uint32
-	dir      bool
-	attrs    uint32
-	links    int
-	times    target.Times
-	size     int64
-	value    []byte
-	runs     []run
-	children []*rnode
-	byName   map[string]*rnode
+	name  string
+	num   uint32
+	dir   bool
+	attrs uint32
+	links int
+	times target.Times
+	// fn are the times of the name's $FILE_NAME in the record.
+	fn    target.Times
+	size  int64
+	value []byte
+	runs  []run
+	// streams are the named $DATA attributes, by name.
+	streams map[string]*rattr
+	// link is target.LinkSymlink or target.LinkJunction for a reparse
+	// point of either kind, tag its reparse tag, and target what it points
+	// at.
+	link, target string
+	tag          uint32
+	children     []*rnode
+	byName       map[string]*rnode
 }
 
 // rattr is an attribute as the reader parses it.
@@ -70,7 +84,7 @@ func Open(dev *volume.Device) (*Reader, error) {
 	if spc > 0x80 {
 		spc = 1 << (256 - spc)
 	}
-	r := &Reader{dev: dev, cs: spc * sectorSize}
+	r := &Reader{dev: dev, cs: spc * sectorSize, reparse: map[uint64]uint32{}}
 	if rs := int8(b[0x40]); rs >= 0 && int64(rs)*r.cs != recordSize || rs < 0 && 1<<-rs != recordSize {
 		return nil, errors.New("ntfs: an MFT record size this reader does not know")
 	}
@@ -88,7 +102,7 @@ func Open(dev *volume.Device) (*Reader, error) {
 		return nil, errors.New("ntfs: $MFT has no runlist")
 	}
 	r.mftRuns = data.runs
-	root, err := r.node(recRoot<<48|recRoot, ".")
+	root, err := r.node(recRoot<<48|recRoot, ".", recRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +110,44 @@ func Open(dev *volume.Device) (*Reader, error) {
 	if err := r.load(root, "."); err != nil {
 		return nil, err
 	}
+	if err := r.checkReparse(); err != nil {
+		return nil, err
+	}
 	return r, nil
+}
+
+// checkReparse checks that $Extend\$Reparse's $R index files exactly the
+// reparse points the tree holds, each under its tag and file reference,
+// in order.
+func (r *Reader) checkReparse() error {
+	le := binary.LittleEndian
+	filed := map[uint64]uint32{}
+	var last []byte
+	err := r.indexWalk(recReparse, "$R", func(e []byte) error {
+		n, kl := int(le.Uint16(e[8:])), int(le.Uint16(e[10:]))
+		if kl != 12 || n < 16+kl {
+			return errors.New("a $R entry that is not a tag and a file reference")
+		}
+		key := e[16 : 16+kl]
+		if last != nil && byULongs(entry{dataOffset: 28, body: last}, entry{dataOffset: 28, body: key}) >= 0 {
+			return errors.New("$R is out of order")
+		}
+		last = key
+		filed[le.Uint64(key[4:])] = le.Uint32(key)
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("ntfs: $Reparse: %w", err)
+	}
+	for ref, tag := range r.reparse {
+		if got, ok := filed[ref]; !ok || got != tag {
+			return fmt.Errorf("ntfs: $Reparse does not file record %d's reparse point", refNum(ref))
+		}
+	}
+	if len(filed) != len(r.reparse) {
+		return fmt.Errorf("ntfs: $Reparse files %d reparse points, and the tree holds %d", len(filed), len(r.reparse))
+	}
+	return nil
 }
 
 // readRuns reads n bytes from byte pos of the clusters runs map; a hole
@@ -206,8 +257,8 @@ func (r *Reader) record(num uint32) (uint16, uint16, []byte, []rattr, error) {
 	return flags, seq, b, attrs, err
 }
 
-// node reads the record ref names, named name.
-func (r *Reader) node(ref uint64, name string) (*rnode, error) {
+// node reads the record ref names, named name in directory record parent.
+func (r *Reader) node(ref uint64, name string, parent uint32) (*rnode, error) {
 	num := refNum(ref)
 	flags, seq, b, attrs, err := r.record(num)
 	if err != nil {
@@ -216,14 +267,43 @@ func (r *Reader) node(ref uint64, name string) (*rnode, error) {
 	if flags&recInUse == 0 || seq != uint16(ref>>48) {
 		return nil, fmt.Errorf("ntfs: %q names record %d, sequence %d, which is not in use", name, num, ref>>48)
 	}
-	n := &rnode{name: name, num: num, dir: flags&recDir != 0, links: int(binary.LittleEndian.Uint16(b[18:]))}
+	n := &rnode{name: name, num: num, dir: flags&recDir != 0, links: int(binary.LittleEndian.Uint16(b[18:])), streams: map[string]*rattr{}}
 	si := findAttr(attrs, atStdInfo, "")
 	if si == nil || len(si.value) < 48 {
 		return nil, fmt.Errorf("ntfs: record %d has no $STANDARD_INFORMATION", num)
 	}
-	t := readTimes(si.value)
-	n.times = target.Times{Btime: t.created, Mtime: t.modified, Ctime: t.changed, Atime: t.accessed}
+	n.times = toTimes(readTimes(si.value))
 	n.attrs = binary.LittleEndian.Uint32(si.value[32:])
+	found := false
+	for i := range attrs {
+		a := &attrs[i]
+		switch {
+		case a.typ == atFileName && !found:
+			fn, err := readFileName(a.value)
+			if err != nil {
+				return nil, fmt.Errorf("ntfs: record %d: %w", num, err)
+			}
+			if refNum(fn.parent) == parent && collate(fn.name, name) == 0 {
+				n.fn, found = toTimes(fn.t), true
+			}
+		case a.typ == atData && a.name != "":
+			if !a.resident && ceil(a.size, r.cs) > clusters(a.runs) {
+				return nil, fmt.Errorf("ntfs: record %d holds %d bytes of stream %q in %d clusters", num, a.size, a.name, clusters(a.runs))
+			}
+			n.streams[a.name] = a
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf("ntfs: record %d has no $FILE_NAME for %q", num, name)
+	}
+	if rp := findAttr(attrs, atReparse, ""); rp != nil {
+		if n.attrs&faReparse == 0 {
+			return nil, fmt.Errorf("ntfs: record %d has a reparse point, and its flags say it has none", num)
+		}
+		if err := n.readLink(rp.value); err != nil {
+			return nil, fmt.Errorf("ntfs: record %d: %w", num, err)
+		}
+	}
 	if n.dir {
 		return n, nil
 	}
@@ -236,6 +316,34 @@ func (r *Reader) node(ref uint64, name string) (*rnode, error) {
 		return nil, fmt.Errorf("ntfs: record %d holds %d bytes in %d clusters", num, n.size, clusters(d.runs))
 	}
 	return n, nil
+}
+
+func toTimes(t times) target.Times {
+	return target.Times{Btime: t.created, Mtime: t.modified, Ctime: t.changed, Atime: t.accessed}
+}
+
+// readLink reads a symlink's or junction's reparse data: a symlink's
+// target as stored, with '/' between names, and a junction's as a path on
+// the volume when it is on junctionDrive.
+func (n *rnode) readLink(data []byte) error {
+	tag, t, err := reparse.PrintName(data)
+	if err != nil {
+		return err
+	}
+	n.tag = tag
+	switch tag {
+	case reparse.TagSymlink:
+		n.link, n.target = target.LinkSymlink, strings.ReplaceAll(t, `\`, "/")
+	case reparse.TagMountPoint:
+		n.link, n.target = target.LinkJunction, t
+		if rel, ok := strings.CutPrefix(t, junctionDrive+`\`); ok {
+			n.target = strings.ReplaceAll(rel, `\`, "/")
+			if n.target == "" {
+				n.target = "."
+			}
+		}
+	}
+	return nil
 }
 
 // content reads n's bytes.
@@ -252,18 +360,36 @@ func (r *Reader) content(n *rnode) ([]byte, error) {
 // and each entry must point to a block exactly when its node says it has
 // children.
 func (r *Reader) indexEntries(d *rnode) ([]fileEntryRef, error) {
-	_, _, _, attrs, err := r.record(d.num)
+	le := binary.LittleEndian
+	var out []fileEntryRef
+	err := r.indexWalk(d.num, "$I30", func(e []byte) error {
+		fn, err := readFileName(e[16 : 16+int(le.Uint16(e[10:]))])
+		if err != nil {
+			return err
+		}
+		out = append(out, fileEntryRef{le.Uint64(e[0:]), fn})
+		return nil
+	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("ntfs: directory record %d: %w", d.num, err)
 	}
-	ir := findAttr(attrs, atIndexRoot, "$I30")
+	return out, nil
+}
+
+// indexWalk calls visit with each entry of record num's index name, in
+// index order, the end entries left out (see indexEntries).
+func (r *Reader) indexWalk(num uint32, name string, visit func(e []byte) error) error {
+	_, _, _, attrs, err := r.record(num)
+	if err != nil {
+		return err
+	}
+	ir := findAttr(attrs, atIndexRoot, name)
 	if ir == nil || len(ir.value) < 32 {
-		return nil, fmt.Errorf("ntfs: directory record %d has no $I30 index", d.num)
+		return fmt.Errorf("no %s index", name)
 	}
-	ia, bm := findAttr(attrs, atIndexAlloc, "$I30"), findAttr(attrs, atBitmap, "$I30")
+	ia, bm := findAttr(attrs, atIndexAlloc, name), findAttr(attrs, atBitmap, name)
 	le := binary.LittleEndian
 	h := ir.value[16:]
-	var out []fileEntryRef
 	var walk func(h []byte, depth int) error
 	walk = func(h []byte, depth int) error {
 		if depth > 32 {
@@ -305,18 +431,13 @@ func (r *Reader) indexEntries(d *rnode) ([]fileEntryRef, error) {
 			if flags&ieEnd != 0 {
 				return nil
 			}
-			fn, err := readFileName(e[16 : 16+kl])
-			if err != nil {
+			if err := visit(e[:n]); err != nil {
 				return err
 			}
-			out = append(out, fileEntryRef{le.Uint64(e[0:]), fn})
 			p += n
 		}
 	}
-	if err := walk(h, 0); err != nil {
-		return nil, fmt.Errorf("ntfs: directory record %d: %w", d.num, err)
-	}
-	return out, nil
+	return walk(h, 0)
 }
 
 // blockPos is where index block vcn starts in $INDEX_ALLOCATION.
@@ -370,16 +491,19 @@ func (r *Reader) load(d *rnode, p string) error {
 		if refNum(e.fn.parent) != d.num {
 			return fmt.Errorf("ntfs: %s: %q's $FILE_NAME names record %d as its parent", p, e.fn.name, refNum(e.fn.parent))
 		}
-		n, err := r.node(e.ref, e.fn.name)
+		n, err := r.node(e.ref, e.fn.name, d.num)
 		if err != nil {
 			return fmt.Errorf("%s: %w", path.Join(p, e.fn.name), err)
 		}
 		d.byName[n.name] = n
 		d.children = append(d.children, n)
+		if n.link != "" {
+			r.reparse[e.ref] = n.tag
+		}
 	}
 	slices.SortFunc(d.children, func(a, b *rnode) int { return strings.Compare(a.name, b.name) })
 	for _, c := range d.children {
-		if c.dir {
+		if c.dir && c.link == "" {
 			if err := r.load(c, path.Join(p, c.name)); err != nil {
 				return err
 			}
@@ -398,7 +522,7 @@ func (r *Reader) lookup(name string) (*rnode, error) {
 		return n, nil
 	}
 	for c := range strings.SplitSeq(name, "/") {
-		if !n.dir {
+		if !n.dir || n.link != "" {
 			return nil, fs.ErrNotExist
 		}
 		next, ok := n.byName[c]
@@ -421,13 +545,18 @@ func (r *Reader) lookup(name string) (*rnode, error) {
 type dirEntry struct{ n *rnode }
 
 func (e dirEntry) Name() string               { return e.n.name }
-func (e dirEntry) IsDir() bool                { return e.n.dir }
+func (e dirEntry) IsDir() bool                { return e.n.dir && e.n.link == "" }
 func (e dirEntry) Type() fs.FileMode          { return e.Mode().Type() }
 func (e dirEntry) Info() (fs.FileInfo, error) { return e, nil }
 func (e dirEntry) Size() int64                { return e.n.size }
 func (e dirEntry) ModTime() time.Time         { return e.n.times.Mtime }
 func (e dirEntry) Sys() any                   { return nil }
-func (e dirEntry) Mode() fs.FileMode          { return mode(e.n.dir, e.n.attrs) }
+func (e dirEntry) Mode() fs.FileMode {
+	if e.n.link != "" {
+		return fs.ModeSymlink | 0o777
+	}
+	return mode(e.n.dir, e.n.attrs)
+}
 
 // WalkDir walks the volume in lexical order, the root first.
 func (r *Reader) WalkDir(fn fs.WalkDirFunc) error { return volume.Walk(r, fn) }
@@ -435,7 +564,7 @@ func (r *Reader) WalkDir(fn fs.WalkDirFunc) error { return volume.Walk(r, fn) }
 // ReadDirQuiet lists a directory, sorted by name.
 func (r *Reader) ReadDirQuiet(name string) ([]fs.DirEntry, error) {
 	n, err := r.lookup(name)
-	if err == nil && !n.dir {
+	if err == nil && (!n.dir || n.link != "") {
 		err = errors.New("not a directory")
 	}
 	if err != nil {
@@ -448,13 +577,15 @@ func (r *Reader) ReadDirQuiet(name string) ([]fs.DirEntry, error) {
 	return out, nil
 }
 
-// Meta reads an object's times, record number and links.
+// Meta reads an object's times, record number, links, and the times of
+// the name's $FILE_NAME.
 func (r *Reader) Meta(name string) (target.Meta, error) {
 	n, err := r.lookup(name)
 	if err != nil {
 		return target.Meta{}, perr("read metadata", name, err)
 	}
-	return target.Meta{Times: n.times, ID: strconv.FormatUint(uint64(n.num), 10), Links: n.links}, nil
+	fn := n.fn
+	return target.Meta{Times: n.times, ID: strconv.FormatUint(uint64(n.num), 10), Links: n.links, FileName: &fn, Link: n.link, Target: n.target}, nil
 }
 
 // Times reads an object's times.
@@ -469,7 +600,7 @@ func (r *Reader) Granularity() target.Granularity { return Granularity() }
 // ReadFile reads a file whole.
 func (r *Reader) ReadFile(name string) ([]byte, error) {
 	n, err := r.lookup(name)
-	if err == nil && n.dir {
+	if err == nil && (n.dir || n.link != "") {
 		err = errors.New("not a regular file")
 	}
 	if err != nil {
@@ -491,22 +622,50 @@ func (r *Reader) OpenQuiet(name string) (io.ReadCloser, error) {
 	return io.NopCloser(bytes.NewReader(data)), nil
 }
 
-// Streams lists an object's named streams: this writer makes none.
+// Streams lists an object's named streams, sorted by name. A link has
+// none of its own.
 func (r *Reader) Streams(name string) ([]target.Stream, error) {
-	if _, err := r.lookup(name); err != nil {
+	n, err := r.lookup(name)
+	if err != nil {
 		return nil, perr("list streams", name, err)
 	}
-	return nil, nil
+	if n.link != "" {
+		return nil, nil
+	}
+	var out []target.Stream
+	for _, s := range slices.Sorted(maps.Keys(n.streams)) {
+		out = append(out, target.Stream{Name: s, Size: n.streams[s].size})
+	}
+	return out, nil
 }
 
-// ReadStream reads a named stream: this writer makes none.
+// ReadStream reads a named stream whole.
 func (r *Reader) ReadStream(name, stream string) ([]byte, error) {
-	return nil, perr("read stream", name+":"+stream, fs.ErrNotExist)
+	n, err := r.lookup(name)
+	if err != nil {
+		return nil, perr("read stream", name+":"+stream, err)
+	}
+	a, ok := n.streams[stream]
+	if !ok || n.link != "" {
+		return nil, perr("read stream", name+":"+stream, fs.ErrNotExist)
+	}
+	if a.resident {
+		return slices.Clone(a.value), nil
+	}
+	data, err := r.readRuns(a.runs, 0, a.size)
+	if err != nil {
+		return nil, perr("read stream", name+":"+stream, err)
+	}
+	return data, nil
 }
 
-// OpenStreamQuiet opens a named stream: this writer makes none.
+// OpenStreamQuiet opens a named stream for reading.
 func (r *Reader) OpenStreamQuiet(name, stream string) (io.ReadCloser, error) {
-	return nil, perr("read stream", name+":"+stream, fs.ErrNotExist)
+	data, err := r.ReadStream(name, stream)
+	if err != nil {
+		return nil, err
+	}
+	return io.NopCloser(bytes.NewReader(data)), nil
 }
 
 var _ target.Reader = (*Reader)(nil)

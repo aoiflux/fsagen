@@ -122,7 +122,7 @@ func (r Result) AnswerKey() []ledger.Fact { return AnswerKey(r.Model, r.Ledger, 
 // ModelledTimeline is the timeline the scenario intends, with the times
 // caps cannot set left unknown.
 func ModelledTimeline(tree *model.Tree, entries []ledger.Entry, caps compile.Caps) *timeline.Timeline {
-	return timeline.Modelled(tree, entries, timeline.Controlled{Birth: caps.BirthTime, Change: caps.ChangeTime})
+	return timeline.Modelled(tree, entries, timeline.Controlled{Birth: caps.BirthTime, Change: caps.ChangeTime, FileName: caps.FilenameTimes})
 }
 
 // AnswerKey derives the answer key from the ledger and the final state of
@@ -215,7 +215,7 @@ func Execute(ctx ExecContext, ops []compile.Op) ([]ledger.Entry, error) {
 	for i, op := range ops {
 		e := newEntry(i, op, ctx.Caps)
 		if observer != nil {
-			observer.BeginOp(e.N, op.When)
+			observer.BeginOp(e.N, op.Clock())
 		}
 		if err := recordOutcome(ctx, op, &e, digests); err != nil {
 			// The entry for a failed operation is left out: the ledger says how
@@ -470,12 +470,25 @@ func sums(r io.Reader) (sha, md string, n int64, err error) {
 
 // Settle stamps every object in the tree with its final intended times,
 // files first and then directories deepest first, so that nothing done
-// afterwards inside a directory moves its times again. Nothing may create,
-// remove, rename or chmod anything under the root after this.
+// afterwards inside a directory moves its times again; and, where the
+// target sets them, every name with the times of its $FILE_NAME. Nothing
+// may create, remove, rename or chmod anything under the root after this.
 func Settle(ctx ExecContext, tree *model.Tree) error {
+	ft, _ := ctx.FS.(target.FilenameTimer)
+	if !ctx.Caps.FilenameTimes {
+		ft = nil
+	}
 	for _, o := range tree.Settle() {
 		if err := stamp(ctx, o.Path, o.Times); err != nil {
 			return err
+		}
+		if ft == nil {
+			continue
+		}
+		for _, n := range o.Names {
+			if err := ft.SetFileNameTimes(n.Path, target.Times(n.FN)); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -572,6 +585,19 @@ func Verify(ctx ExecContext, tree *model.Tree) error {
 			return err
 		}
 		bad = append(bad, mismatches(ctx, o.Path, o.Times, got)...)
+		if !ctx.Caps.FilenameTimes {
+			continue
+		}
+		for _, n := range o.Names {
+			m, err := ctx.reader().Meta(n.Path)
+			if err != nil {
+				return err
+			}
+			if m.FileName == nil {
+				return fmt.Errorf("%s: the target reports no $FILE_NAME times", n.Path)
+			}
+			bad = append(bad, fileNameMismatches(ctx, n.Path, n.FN, *m.FileName)...)
+		}
 	}
 	if len(bad) > 0 {
 		return &VerifyError{Mismatches: bad}
@@ -601,6 +627,17 @@ func mismatches(ctx ExecContext, p string, want model.Times, have target.Times) 
 			continue
 		}
 		bad = append(bad, Mismatch{p, c.field, c.want, c.got})
+	}
+	return bad
+}
+
+// fileNameMismatches lists the times of one name's $FILE_NAME that read
+// back differently from what the scenario intends.
+func fileNameMismatches(ctx ExecContext, p string, want model.Times, have target.Times) []Mismatch {
+	var bad []Mismatch
+	for _, m := range mismatches(ExecContext{Caps: compile.Caps{BirthTime: true, ChangeTime: true}, Read: ctx.reader()}, p, want, have) {
+		m.Field = "fn_" + m.Field
+		bad = append(bad, m)
 	}
 	return bad
 }
@@ -723,10 +760,19 @@ func execMace(ctx ExecContext, c compile.Op) error {
 	return applyMode(ctx.FS, c.Operation, c.Path)
 }
 
-// execTimestomp has nothing to do of its own: the times it sets are the
-// operation's stamps, and the $FILE_NAME times it states are never on a live
-// volume (pre-flight refused or dropped them).
-func execTimestomp(ExecContext, compile.Op) error { return nil }
+// execTimestomp sets the $FILE_NAME times of the name it stomps, where the
+// target can: its $STANDARD_INFORMATION times are the operation's stamps,
+// and on a live volume pre-flight refused or dropped the $FILE_NAME ones.
+func execTimestomp(ctx ExecContext, c compile.Op) error {
+	if !ctx.Caps.FilenameTimes || c.FN == (model.Times{}) {
+		return nil
+	}
+	ft, ok := ctx.FS.(target.FilenameTimer)
+	if !ok {
+		return errors.New("this target sets no $FILE_NAME times")
+	}
+	return ft.SetFileNameTimes(c.Path, target.Times(c.FN))
+}
 
 func execRename(ctx ExecContext, c compile.Op) error {
 	if err := target.MkdirParent(ctx.FS, c.NewPath); err != nil {

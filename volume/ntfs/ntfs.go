@@ -51,27 +51,46 @@ type FS struct {
 	sdsEnd          int64
 	fileSec, dirSec uint32
 	nextSec         uint32
-	res             *volume.Tracker
-	now             time.Time
+	// reparse is $Extend\$Reparse, whose $R index files every reparse
+	// point by its tag and record.
+	reparse *node
+	res     *volume.Tracker
+	now     time.Time
+	// gone are the index entries removed from directories, to look for in
+	// what their indexes leave behind once the volume is finished.
+	gone []goneEntry
 }
 
 // node is an object's record and what the driver keeps of it.
 type node struct {
-	rec    *record
-	parent *node
-	fn     fileName
-	si     times
+	rec *record
+	// names are the object's names, in the order they were made.
+	names []*name
+	si    times
 	// attrs are the file attribute flags $STANDARD_INFORMATION holds.
 	attrs uint32
 	// dir is a directory's index; nil for a file.
 	dir *dirIndex
+	// tag is a symlink's or junction's reparse tag, 0 for anything else.
+	tag uint32
 }
 
-// Caps is what an NTFS volume holds: every time to 100 ns, and names that
-// differ only in case are one name.
+// name is one name of an object: the directory it is in, and the
+// $FILE_NAME attribute that holds it.
+type name struct {
+	parent *node
+	fn     fileName
+	a      *attr
+}
+
+// Caps is what an NTFS volume holds: every time to 100 ns, each name's
+// $FILE_NAME times, streams, links and slack; names that differ only in
+// case are one name.
 func Caps(clusterSize int) target.Caps {
 	return target.Caps{
-		BirthTime: true, ChangeTime: true, Slack: target.SlackNone, ClusterSize: clusterSize,
+		NamedStreams: true, BirthTime: true, ChangeTime: true, FilenameTimes: true,
+		Hardlinks: true, Symlinks: true, Junctions: true,
+		Slack: target.SlackExact, ClusterSize: clusterSize, ResidentData: true,
 		MinTime: MinTime, MaxTime: MaxTime, FoldsCase: true, ValidName: ValidName, Reserved: systemNames,
 	}
 }
@@ -227,7 +246,7 @@ func (f *FS) format() error {
 	sdRuns, rootIdx, attrDefRuns, bitmapRuns, sdsRuns, upcaseRuns := placed[0], placed[1], placed[2], placed[3], placed[4], placed[5]
 	rootRef := uint64(recRoot) | recRoot<<48
 	extendRef := uint64(recExtend) | recExtend<<48
-	name := func(r *record, id uint16, parent uint64, alloc, size int64, flags uint32, n string) fileName {
+	named := func(r *record, id uint16, parent uint64, alloc, size int64, flags uint32, n string) fileName {
 		fn := fileName{parent: parent, t: allAt(clock), alloc: alloc, size: size, flags: flags, name: n, namespace: nsWin32DOS}
 		r.put(&attr{typ: atFileName, id: id, resident: true, indexed: true, value: fn.encode()})
 		r.links++
@@ -242,7 +261,7 @@ func (f *FS) format() error {
 	mftBytes := g.MFTRecords * recordSize
 	mft := f.sysRecord(recMFT, 1, recInUse, faSysHidden, 0x100)
 	mft.put(nonresident(atData, "", 1, mftRuns, g.mftClusters()*cs, mftBytes, mftBytes))
-	file(mft, name(mft, 2, rootRef, ((mftBytes-1)|(cs-1))+1, mftBytes, faSysHidden, "$MFT"))
+	file(mft, named(mft, 2, rootRef, ((mftBytes-1)|(cs-1))+1, mftBytes, faSysHidden, "$MFT"))
 	bitmapBytes := (ceil(g.MFTRecords, 8) + 7) &^ 7
 	mft.put(nonresident(atBitmap, "", 3, []run{{g.MFTBitmap, 1}}, cs, bitmapBytes, bitmapBytes))
 	mft.next = 4
@@ -251,16 +270,16 @@ func (f *FS) format() error {
 	mirrBytes := g.MirrorClusters * cs
 	mirr := f.sysRecord(recMFTMirr, recMFTMirr, recInUse, faSysHidden, 0x100)
 	mirr.put(nonresident(atData, "", 1, mirrRuns, mirrBytes, mirrBytes, mirrBytes))
-	file(mirr, name(mirr, 2, rootRef, mirrBytes, mirrBytes, faSysHidden, "$MFTMirr"))
+	file(mirr, named(mirr, 2, rootRef, mirrBytes, mirrBytes, faSysHidden, "$MFTMirr"))
 	mirr.next = 3
 
 	logf := f.sysRecord(recLogFile, recLogFile, recInUse, faSysHidden, 0x100)
 	logf.put(nonresident(atData, "", 1, logRuns, g.LogSize, g.LogSize, g.LogSize))
-	file(logf, name(logf, 2, rootRef, g.LogSize, g.LogSize, faSysHidden, "$LogFile"))
+	file(logf, named(logf, 2, rootRef, g.LogSize, g.LogSize, faSysHidden, "$LogFile"))
 	logf.next = 3
 
 	vol := f.sysRecord(recVolume, recVolume, recInUse, faSysHidden, 0)
-	file(vol, name(vol, 1, rootRef, 0, 0, faSysHidden, "$Volume"))
+	file(vol, named(vol, 1, rootRef, 0, 0, faSysHidden, "$Volume"))
 	vol.put(resident(atSecurity, "", 2, systemSD(recVolume)))
 	vol.put(resident(atData, "", 3, nil))
 	vol.put(resident(atVolName, "", 4, utf16le(f.o.Label)))
@@ -270,12 +289,12 @@ func (f *FS) format() error {
 	ad := f.sysRecord(recAttrDef, recAttrDef, recInUse, faSysHidden, 0)
 	adBytes := attrDefBytes()
 	ad.put(nonresident(atData, "", 1, attrDefRuns, clusters(attrDefRuns)*cs, int64(len(adBytes)), int64(len(adBytes))))
-	file(ad, name(ad, 2, rootRef, roundCluster(int64(len(adBytes))), int64(len(adBytes)), faSysHidden, "$AttrDef"))
+	file(ad, named(ad, 2, rootRef, roundCluster(int64(len(adBytes))), int64(len(adBytes)), faSysHidden, "$AttrDef"))
 	ad.put(resident(atSecurity, "", 3, systemSD(recAttrDef)))
 	ad.next = 4
 
 	root := f.sysRecord(recRoot, recRoot, recInUse|recDir, faSysHidden|faArchive, 0)
-	rootFN := name(root, 1, rootRef, 0, 0, faSysHidden|faI30Index, ".")
+	rootFN := named(root, 1, rootRef, 0, 0, faSysHidden|faI30Index, ".")
 	file(root, rootFN)
 	root.put(nonresident(atSecurity, "", 2, sdRuns, clusters(sdRuns)*cs, int64(len(sd)), int64(len(sd))))
 	root.put(resident(atIndexRoot, "$I30", 3, nil))
@@ -285,23 +304,23 @@ func (f *FS) format() error {
 
 	bm := f.sysRecord(recBitmap, recBitmap, recInUse, faSysHidden, 0x100)
 	bm.put(nonresident(atData, "", 1, bitmapRuns, clusters(bitmapRuns)*cs, g.BitmapBytes, g.BitmapBytes))
-	file(bm, name(bm, 2, rootRef, roundCluster(g.BitmapBytes), g.BitmapBytes, faSysHidden, "$Bitmap"))
+	file(bm, named(bm, 2, rootRef, roundCluster(g.BitmapBytes), g.BitmapBytes, faSysHidden, "$Bitmap"))
 	bm.next = 3
 
 	bootRec := f.sysRecord(recBoot, recBoot, recInUse, faSysHidden, 0)
 	bootRec.put(nonresident(atData, "", 1, bootRuns, g.BootClusters*cs, 8192, 8192))
-	file(bootRec, name(bootRec, 2, rootRef, roundCluster(8192), 8192, faSysHidden, "$Boot"))
+	file(bootRec, named(bootRec, 2, rootRef, roundCluster(8192), 8192, faSysHidden, "$Boot"))
 	bootRec.put(resident(atSecurity, "", 3, systemSD(recBoot)))
 	bootRec.next = 4
 
 	bad := f.sysRecord(recBadClus, recBadClus, recInUse, faSysHidden, 0x100)
 	bad.put(nonresident(atData, "$Bad", 1, []run{{-1, g.Clusters}}, g.Clusters*cs, g.Clusters*cs, 0))
 	bad.put(resident(atData, "", 2, nil))
-	file(bad, name(bad, 3, rootRef, 0, 0, faSysHidden, "$BadClus"))
+	file(bad, named(bad, 3, rootRef, 0, 0, faSysHidden, "$BadClus"))
 	bad.next = 4
 
 	sec := f.sysRecord(recSecure, recSecure, recInUse|recViewIndex, faSysHidden|faViewIndex, 0x101)
-	file(sec, name(sec, 1, rootRef, 0, 0, faSysHidden|faViewIndex, "$Secure"))
+	file(sec, named(sec, 1, rootRef, 0, 0, faSysHidden|faViewIndex, "$Secure"))
 	sds := make([]byte, 0x40000+0xFC)
 	var sdh, sii []entry
 	for _, s := range secureSDs {
@@ -324,11 +343,11 @@ func (f *FS) format() error {
 	binary.LittleEndian.PutUint32(info[0:], 32)
 	binary.LittleEndian.PutUint64(info[8:], crc64(upBytes))
 	up.put(resident(atData, "$Info", 2, info))
-	file(up, name(up, 3, rootRef, roundCluster(int64(len(upBytes))), int64(len(upBytes)), faSysHidden, "$UpCase"))
+	file(up, named(up, 3, rootRef, roundCluster(int64(len(upBytes))), int64(len(upBytes)), faSysHidden, "$UpCase"))
 	up.next = 4
 
 	ext := f.sysRecord(recExtend, recExtend, recInUse|recDir, faSysHidden, 0x101)
-	file(ext, name(ext, 1, rootRef, 0, 0, faSysHidden|faI30Index, "$Extend"))
+	file(ext, named(ext, 1, rootRef, 0, 0, faSysHidden|faI30Index, "$Extend"))
 	ext.next = 3
 
 	for i := uint32(12); i < 16; i++ {
@@ -345,7 +364,7 @@ func (f *FS) format() error {
 	var extEntries []entry
 	view := func(num uint32, n string, coll uint32, ix ...string) *record {
 		r := f.sysRecord(num, 1, recInUse|recIs4|recViewIndex, faExtendView, 0x101)
-		fn := name(r, 1, extendRef, 0, 0, faExtendView, n)
+		fn := named(r, 1, extendRef, 0, 0, faExtendView, n)
 		extEntries = append(extEntries, fileEntry(r.ref(), fn))
 		for i, x := range ix {
 			r.put(resident(atIndexRoot, x, uint16(2+i), indexRoot(0, coll, g, entries(nil, -1), false)))
@@ -357,7 +376,7 @@ func (f *FS) format() error {
 	quota.find(atIndexRoot, "$Q").value = indexRoot(0, collULong, g, entries(quotaEntries(clock), -1), false)
 	quota.find(atIndexRoot, "$O").value = indexRoot(0, collSID, g, entries([]entry{quotaOwner()}, -1), false)
 	view(recObjID, "$ObjId", collULongs, "$O")
-	view(recReparse, "$Reparse", collULongs, "$R")
+	f.reparse = &node{rec: view(recReparse, "$Reparse", collULongs, "$R"), dir: newIndex("$R", 0, collULongs, byULongs)}
 	slices.SortFunc(extEntries, func(a, b entry) int { return collate(a.name, b.name) })
 	ext.put(resident(atIndexRoot, "$I30", 2, indexRoot(atFileName, collFileName, g, entries(extEntries, -1), false)))
 	for i := uint32(systemRecords); i < uint32(g.MFTRecords); i++ {
@@ -367,12 +386,11 @@ func (f *FS) format() error {
 	}
 
 	slices.SortFunc(rootEntries, func(a, b entry) int { return collate(a.name, b.name) })
-	rootIndex := &dirIndex{
-		root:   &inode{end: 0, vcn: -1},
-		blocks: map[int64]*inode{0: {es: rootEntries, end: -1, raw: make([]byte, indexSize), usn: 2}},
-		bitmap: root.find(atBitmap, "$I30").value, dirty: map[int64]bool{0: true}, rootDirty: true,
-	}
-	f.root = &node{rec: root, fn: rootFN, si: allAt(clock), attrs: faSysHidden | faArchive, dir: rootIndex}
+	rootIndex := newDirIndex()
+	rootIndex.root.end = 0
+	rootIndex.blocks[0] = &inode{es: rootEntries, end: -1, raw: make([]byte, indexSize), usn: 2}
+	rootIndex.bitmap, rootIndex.dirty[0], rootIndex.rootDirty = root.find(atBitmap, "$I30").value, true, true
+	f.root = &node{rec: root, names: []*name{{fn: rootFN, a: root.find(atFileName, "")}}, si: allAt(clock), attrs: faSysHidden | faArchive, dir: rootIndex}
 	for _, fill := range []struct {
 		runs []run
 		data []byte
@@ -597,7 +615,7 @@ func (f *FS) writeIndex(d *node) error {
 		b.usn = nextUSN(b.usn)
 		out := slices.Clone(block)
 		protect(out, b.usn)
-		if err := f.writeRuns(d.rec.find(atIndexAlloc, "$I30").runs, f.blockPos(vcn), out); err != nil {
+		if err := f.writeRuns(d.rec.find(atIndexAlloc, ix.name).runs, f.blockPos(vcn), out); err != nil {
 			return err
 		}
 	}
@@ -606,7 +624,7 @@ func (f *FS) writeIndex(d *node) error {
 		return nil
 	}
 	ix.rootDirty = false
-	d.rec.find(atIndexRoot, "$I30").value = ix.rootValue(f.g)
+	d.rec.find(atIndexRoot, ix.name).value = ix.rootValue(f.g)
 	return f.writeRecord(d.rec)
 }
 
@@ -624,7 +642,7 @@ func (f *FS) blockPos(vcn int64) int64 {
 // with clusters after its last ones if they are free, as libntfs-3g grows
 // it when it first writes the block.
 func (f *FS) cover(d *node, vcn int64) error {
-	ia := d.rec.find(atIndexAlloc, "$I30")
+	ia := d.rec.find(atIndexAlloc, d.dir.name)
 	end := f.blockPos(vcn) + indexSize
 	if end <= ia.size {
 		return nil
@@ -720,13 +738,22 @@ func (f *FS) writeBitmaps() error {
 	return f.writeRuns(ba.runs, 0, mb)
 }
 
-// Flush writes the bitmaps.
-func (f *FS) Flush() error { return f.writeBitmaps() }
+// Flush writes the bitmaps, and records what the index entries taken out
+// left behind.
+func (f *FS) Flush() error {
+	if err := f.writeBitmaps(); err != nil {
+		return err
+	}
+	return f.leftEntries()
+}
 
 // Open reads the finished volume back.
 func (f *FS) Open() (target.Reader, error) { return Open(f.dev) }
 
 var (
-	_ volume.Driver  = (*FS)(nil)
-	_ volume.Clocked = (*FS)(nil)
+	_ volume.Driver         = (*FS)(nil)
+	_ volume.Clocked        = (*FS)(nil)
+	_ volume.LinkDriver     = (*FS)(nil)
+	_ volume.StreamDriver   = (*FS)(nil)
+	_ volume.FileNameDriver = (*FS)(nil)
 )

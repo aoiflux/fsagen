@@ -106,14 +106,17 @@ is recorded rather than silently dropped.
   beside the output
 - `fsagen diff-oracle` scores what a forensic tool reports (a Sleuth Kit
   bodyfile, Plaso's l2tcsv, dynamic CSV or JSON lines) against what the run
-  made: names, deleted entries, streams, times, digests and links, with
-  precision, recall and F1 per category and a JSON scorecard
+  made: names, deleted entries, streams, times, digests, links and NTFS
+  `$FILE_NAME` times, with precision, recall and F1 per category and a JSON
+  scorecard
 - Disk images built byte by byte, in a raw or VHD disk: FAT32 with Windows'
   short names and deleted entries left where Windows leaves them; ext4 laid
   out as mke2fs lays it out, byte for byte, with nanosecond times, links,
   and deletes that wipe what Linux wipes; NTFS laid out as mkntfs lays it
-  out, byte for byte, with 100 ns times and deleted records left whole, as
-  Windows leaves them. Every piece of residue is in the answer key. Read
+  out, byte for byte, with 100 ns times, streams, links, slack, the
+  `$FILE_NAME` times a timestomp sets, and deleted records and index entries
+  left whole, as Windows leaves them. Every piece of residue is in the
+  answer key. Read
   back by go-diskfs, go-ext4, go-ntfs, 7-Zip, `fsck.vfat`, `e2fsck`, ntfs-3g
   and The Sleuth Kit (see _Disk images_)
 - ATT&CK technique tags (`mitre:`) on any action or step, carried into the
@@ -853,6 +856,8 @@ What a tool should find is in its `stomped` fact in the answer key:
   `--on-unsupported=skip` the action sets the other times, its ledger entry
   lists the `fn_` fields as `uncontrolled`, and the run manifest records each
   one skipped (`TestFileNameTimesPreflight`, `TestTimestompOnLiveVolume`).
+  **On an NTFS image they always are**: fsagen writes them into the record and
+  the directory's index (see _Disk images_).
 - `delta`: for each time, `$STANDARD_INFORMATION` minus `$FILE_NAME`, in
   seconds, written exactly (`-258454860`, `0.75`) so a stomp decades away keeps
   its 100-nanosecond ticks (`TestSecondsBetween`).
@@ -864,7 +869,8 @@ The fact describes the file as the stomp left it. A later `rename` copies the
 stomped times into `$FILE_NAME`, as NTFS does, after which the two sets agree
 and `SI<FN` sees nothing: the double-rename trick. The model follows it
 (`TestFileNameTimeRules`), but only a `timestomp`'s own fact reports
-`$FILE_NAME` times. The ledger entry carries `fn_times` too, and so does the
+`$FILE_NAME` times; on an NTFS image, a modelled timeline lists every name's
+too. The ledger entry carries `fn_times` too, and so does the
 `--dry-run` listing (`TestDryRunListsFileNameTimes`).
 
 ## Links
@@ -987,7 +993,7 @@ and then it is up to the file system:
 | live NTFS           | best effort, `verified: false`. NTFS leaves the rest of the last cluster alone when a file shrinks; Windows may zero the rest of the sector the file ends in, which is why the canary restarts at every sector. A file of 1 KiB or less is refused, as it may live inside its MFT record with no cluster at all, and so is a `cluster_size` that is not the volume's |
 | live elsewhere      | refused: ext4 zeroes the tail of a block when a file shrinks, and tmpfs and btrfs keep no fixed cluster tail                                                                                                                                                                                                                                                         |
 | FAT32 or ext4 image | exact, `verified: true`: fsagen writes the cluster itself. `cluster_size` must be the image's (`TestImageGolden`)                                                                                                                                                                                                                                                    |
-| NTFS image          | refused for now                                                                                                                                                                                                                                                                                                                                                      |
+| NTFS image          | exact, `verified: true`, as for FAT32 and ext4. A file of 1 KiB or less is refused, as on live NTFS                                                                                                                                                                                                                                                                  |
 
 A refused slack fails the pre-flight, or with `--on-unsupported=skip` the file
 is written without it and the run manifest records the dropped `slack` field
@@ -1183,9 +1189,27 @@ Windows writes it:
   control character and none of `"*/:<>?\|`. Case is kept but does not
   count. `$MFT`, `$Extend` and NTFS's other names at the root are the file
   system's own, in any case, and are refused there.
+- **Streams** are named `$DATA` attributes, in the record while they fit
+  and in clusters once they do not; writing one replaces it. A directory
+  takes one too.
+- **Hard links** are further `$FILE_NAME` attributes of the record, in the
+  POSIX namespace (Windows gives a hard link no short name), each with an
+  entry in its own directory's index and its own `$FILE_NAME` times.
+  Removing a name leaves the record to the others.
+- **Symlinks and junctions** are reparse points, an empty file or directory
+  with the reparse data the live Windows target writes, filed in
+  `$Extend\$Reparse`'s `$R` index by tag and file reference as libntfs-3g
+  files them (`TestReparseIndexMatchesLibntfs3g`). The directory's entry
+  carries the reparse flag and tag; the record's `$FILE_NAME` does once a
+  rename writes it anew. A junction's target is a path on `C:`, the drive a
+  system volume has; an image has no drive letter of its own.
 - **Times.** All four times are kept, to 100 ns, from 1601 to 30828.
   `$FILE_NAME`'s times are set as NTFS sets them: at birth from the file's
-  own, and again when it is renamed, as the model has them.
+  own, and again when it is renamed or gets a hard link, as the model has
+  them (`TestNTFSSetsFileNameTimesAsTheModel`). A timestomp's `fn_` times
+  are written into the record and the directory's index alike.
+- **Slack** is written into the rest of the last cluster, on a file of more
+  than 1 KiB, which never stays in its record.
 - **What a write leaves behind,** as Windows leaves it:
   - A deleted object's record loses its in-use flag and its sequence number
     goes up. It keeps its attributes: its names, times and runlist, and its
@@ -1197,13 +1221,14 @@ Windows writes it:
     in the same way.
   - A freed index block is left on disk as it was last written, with every
     name it held.
+  - A deleted file's streams leave their clusters too.
 - **Allocation** is `next-fit` or `first-fit` as for FAT32, from the end of
   the MFT zone, which only `$MFT` grows into while the rest of the volume
   has room.
 
-What NTFS images cannot hold yet is refused before anything is written:
-streams, links and junctions, slack, a timestomp's `$FILE_NAME` times, a
-time before 1601, and a name Windows forbids (`TestNTFSRefusesWhatItCannotHold`).
+What an NTFS image cannot hold is refused before anything is written: slack
+on a file of 1 KiB or less, a time before 1601, and a name Windows forbids
+(`TestNTFSRefusesWhatItCannotHold`).
 
 **Residue in the answer key.** Each thing a write left behind is a `residue`
 fact, tied to the operation that left it:
@@ -1221,6 +1246,11 @@ fact, tied to the operation that left it:
   sequence number its deletion gave it as `seq`). `number` is its address as
   The Sleuth Kit numbers it, which `istat` takes, and `offset` is where it
   lies in the image file.
+- On NTFS, an entry a delete or a rename took out of a directory's index is
+  residue of its own (`ntfs_index_entry`) where its bytes are still whole in
+  one of the directory's index blocks: in the slack past a block's entries,
+  in a block the index freed, or in a deleted directory's blocks. `number`
+  and `seq` are the file reference it held.
   `overwritten` says a later write took it over, so no tool will find it.
   ext4's gives `deleted`, the time of the delete, which the inode keeps as
   its change time and, to the second, as its deletion time.
@@ -1240,23 +1270,26 @@ Slack on an image is written into the cluster itself and recorded
   Every time the run controls is compared, to the file system's resolution.
 - **Every example.** Each example a file system can hold makes an image whose
   `SHA256SUMS` and ledger are, byte for byte, those of the same run in
-  memory (`TestImagesTakeEveryExample`). On FAT32 and NTFS, the one
-  example with a hard link is refused; ext4 takes it.
+  memory (`TestImagesTakeEveryExample`). On FAT32, the one example with a
+  hard link is refused; ext4 and NTFS take it.
 - **Pinned images.** `testdata/image/fat32.yaml`, `testdata/image/ext4.yaml`
   and `testdata/image/ntfs.yaml` take each driver through every path above.
   Their images, residue and `SHA256SUMS` are pinned, the same on Windows and
   Linux (`TestImageGolden`, `TestExt4ImageGolden`, `TestNTFSImageGolden`).
   fsagen's own observed timeline of the ext4 image scores 1.0 with no time
   tolerance at all (`TestExt4ObservedTimelineToTheNanosecond`), and of the
-  NTFS image too (`TestNTFSObservedTimelineTo100ns`).
+  NTFS image too, streams, links and every name's `$FILE_NAME` times included
+  (`TestNTFSObservedTimelineTo100ns`).
 - **Independent readers.**
   - go-diskfs reads every name and byte back, bare and in a VHD
     (`TestFAT32ReadByGoDiskfs`, `TestExt4ReadByGoDiskfs`), checking ext4's
     checksums as it goes.
   - go-ext4 reads the ext4 image too (`TestExt4ReadByGoExt4`).
   - go-ntfs walks the NTFS image's indexes and reads every name, byte,
-    record number, link count and time to the 100 ns, bare and in a VHD,
-    and every deleted record the answer key names, with its sequence number
+    stream, record number, link count, reparse point, time and
+    `$FILE_NAME` time to the 100 ns, bare and in a VHD; every deleted record
+    the answer key names, with its sequence number; and every index entry
+    it names, carved from the directory's index blocks
     (`TestNTFSReadByGoNTFS`). It reads a directory whose index spans dozens
     of blocks the same way.
   - libntfs-3g runs a workload that grows directories three levels deep and
@@ -1264,9 +1297,13 @@ Slack on an image is written into the cluster itself and recorded
     (`volume/ntfs/testdata/libntfs3g`). After every phase, each directory's
     B-tree is fsagen's node for node: the same entries in each block, the
     same VCNs and the same `$BITMAP` (`TestIndexMatchesLibntfs3g`, recorded
-    in `volume/ntfs/testdata/libntfs3g-index.txt`).
+    in `volume/ntfs/testdata/libntfs3g-index.txt`). It makes symlinks too,
+    and `$R` is fsagen's after each phase (`TestReparseIndexMatchesLibntfs3g`,
+    recorded in `volume/ntfs/testdata/libntfs3g-reparse.txt`).
   - 7-Zip extracts every file of the FAT32 and NTFS images through the VHD
-    and the MBR (`TestImageReadBy7Zip`).
+    and the MBR, and on NTFS every stream, both symlinks and the junction as
+    links, and the hard link as a second name of its file
+    (`TestImageReadBy7Zip`).
   - `fsck.vfat -n` and `e2fsck -fn` find nothing to fix
     (`TestImageCheckedByFsckVfat`, `TestExt4CheckedByE2fsck`). `e2fsck` also
     checks every volume the ext4 driver's unit tests make.
@@ -1277,17 +1314,22 @@ Slack on an image is written into the cluster itself and recorded
     (`TestNTFSListedByTSK`). `fls` and ntfs-3g's `ntfsls` also read every
     volume the NTFS driver's unit tests make.
 - **Scoring.** `fsagen diff-oracle` scores TSK's bodyfile of each image at
-  1.0 for files, deleted entries and times. On ext4 it takes a deleted
-  inode's change time from the residue's `deleted`.
+  1.0 for files, deleted entries and times, and on NTFS for streams and
+  every name's `$FILE_NAME` times, given the modelled timeline as the model,
+  but for the one thing below. On ext4 it takes a deleted inode's change
+  time from the residue's `deleted`.
 
-One thing found on the way: The Sleuth Kit 4.12.1 lists **no** ext4 orphan
-at all once any directory on the volume has been deleted. Linux empties a
-deleted directory's inode, and TSK fails to open it while looking for
-orphans, so it drops them all. The ext4 fixture deletes no directory for
-that reason; deleting one is tested in the driver's own tests.
-
-On NTFS images, streams, links, `$FILE_NAME` times a timestomp sets, and
-slack come next.
+Two things found on the way about The Sleuth Kit 4.12.1:
+- It lists **no** ext4 orphan at all once any directory on the volume has
+  been deleted. Linux empties a deleted directory's inode, and TSK fails to
+  open it while looking for orphans, so it drops them all. The ext4 fixture
+  deletes no directory for that reason; deleting one is tested in the
+  driver's own tests.
+- It lists the entries of an NTFS index block the index has freed as files
+  that are there. TSK reads every block `$INDEX_ALLOCATION` maps, without
+  `$BITMAP`, and libntfs-3g leaves a freed block as it was, so the NTFS
+  fixture's one such entry is to TSK a live file, and its deletion is
+  missed (`TestNTFSListedByTSK` pins exactly that).
 
 ## Sharing values across scenarios
 
@@ -1345,8 +1387,10 @@ when the object is born (an explicit time on the create does not reach them,
 being set the way a program sets times, which leaves `$FILE_NAME` alone); a
 `rename` copies the object's times into them; writes and `mace` leave them as
 they are; and only a `timestomp`'s `fn_` times set them
-(`TestFileNameTimeRules`). No live volume lets fsagen write them, so they
-appear only in a `timestomp`'s ledger entry and answer-key fact.
+(`TestFileNameTimeRules`). No live volume lets fsagen write them, so there
+they appear only in a `timestomp`'s ledger entry and answer-key fact. An NTFS
+image keeps them, and the settle pass sets every name's, as it sets the
+other times.
 
 After each operation fsagen stamps what it touched. After the last one it
 settles the whole tree, files first and then directories deepest first, and
@@ -1491,7 +1535,8 @@ What fsagen does not control, and what can change its output after it finishes:
   `--on-unsupported=skip`, sets the other times only and records the rest).
   Windows sets them when fsagen actually writes each file, so a tool that
   compares the two sets (MFTECmd's `SI<FN`) flags every file whose scenario
-  creation time is earlier than the run, not only the stomped ones.
+  creation time is earlier than the run, not only the stomped ones. An NTFS
+  image is different: fsagen writes them there (see _Disk images_).
 - The output directory's own times are never set
   (`root_times_controlled:
   false`).
@@ -1545,8 +1590,13 @@ What fsagen does not control, and what can change its output after it finishes:
 - An NTFS image's `$LogFile` is as mkntfs left it, all `0xFF`, and no
   record carries a log sequence number: Windows starts the log afresh when
   it mounts the volume.
-  - An image has no streams, links, reparse points, slack or `$FILE_NAME`
-    times of the scenario's own yet.
+  - A hard link's name is in the POSIX namespace, taken from what `dir /x`
+    shows of one Windows made, not read from a disk Windows wrote.
+  - The reparse flag and tag reach a record's own `$FILE_NAME` only when a
+    rename writes it, as libntfs-3g writes them; a `$FILE_NAME`'s sizes
+    follow the content in the record and the index alike.
+  - Index entries are residue only where they are whole in an index block,
+    not in an `$INDEX_ROOT`'s slack in its record.
   - Clusters are placed by fsagen's allocator, and records counted from 64
     and directory indexes split and merged as libntfs-3g does it, which may
     not be how Windows does it.
@@ -2109,7 +2159,9 @@ an error, never a silent fall-back):
 - **Bodyfile** (`.bodyfile`, `.body`): The Sleuth Kit's bodyfile,
   `MD5|name|inode|mode|UID|GID|size|atime|mtime|ctime|crtime`: names from the
   output root with a leading `/` and no root entry, `name:stream` for each named
-  stream and `name (deleted)` for a deleted object (modelled only), TSK mode
+  stream, `name ($FILE_NAME)` for a name's NTFS `$FILE_NAME` (an NTFS image
+  only), `name -> target` for a link and `name (deleted)` for a deleted
+  object (modelled only), in TSK's order, TSK mode
   strings (`r/rrw-r--r--`), times in whole seconds, and `0` for an unknown time
   or an MD5 that was not computed. `mactime` reads it (`TestMactimeAccepts`, run
   on Linux with The Sleuth Kit 4.12.1); `TestBodyfileStrictParserRoundTrip`
@@ -2120,9 +2172,9 @@ an error, never a silent fall-back):
   `TestMACBSixteenCombinations` covers every combination).
 - **CSV** (`.csv`): one row per entry: path, stream, type, size, mode, UID, GID,
   inode, the four times (RFC 3339 with fractions, empty when unknown), MD5 and
-  deleted.
+  deleted. A `$FILE_NAME` entry's type is `filename`.
 - **JSON lines** (`.jsonl`): the same fields, one object per entry, with an
-  octal mode.
+  octal mode, and `"file_name": true` on a `$FILE_NAME` entry.
 - **Timesketch** (`--timeline-format timesketch`): the JSON lines Timesketch
   imports, one event per entry and known time as Plaso's file-stat parser
   emits them, so an entry with four known times is four events. Each has the
@@ -2130,7 +2182,8 @@ an error, never a silent fall-back):
   Plaso's names: Content Modification Time, Last Access Time, Metadata
   Modification Time, Creation Time), `@timestamp` for OpenSearch, `timestamp`
   in integer microseconds, and the entry's path, stream, type, size, mode,
-  inode, MD5 and `is_allocated`. Timesketch keeps microseconds, so a finer time
+  inode, MD5 and `is_allocated`, and `"attribute_name": "$FILE_NAME"` on a
+  `$FILE_NAME` entry's events, as Plaso names the attribute. Timesketch keeps microseconds, so a finer time
   is cut down to the microsecond, before 1970 too (`TestTimesketchEvents`).
 - **Text** (`.txt`): a readable listing, one block per entry.
 
@@ -2215,8 +2268,10 @@ compared without regard to case when the run wrote to a volume that does
 Plaso writes a comma in a CSV value as a space, a name with a comma matches its
 spaced form in `l2tcsv` and `dynamic`. Rows outside the output root, the
 volume's own entries (`$MFT`, `$OrphanFiles` and the other `$` names TSK lists,
-`System Volume Information`, `lost+found`, `$` streams such as `$I30`) and NTFS
-`$FILE_NAME` records are set aside and counted, never scored.
+`System Volume Information`, `lost+found`, `$` streams such as `$I30`, a
+directory's `.` and `..`), `$FILE_NAME` records of deleted entries or of
+names the run did not leave, and streams of a deleted entry found by its
+address are set aside and counted, never scored.
 
 **What is scored**, each category with its true and false positives and
 negatives, precision, recall and F1:
@@ -2229,6 +2284,7 @@ negatives, precision, recall and F1:
 | `times`   | time the run controls, of every name and deletion the tool found  | the tool's is within `--time-tolerance`: by default the format's resolution (1s for `bodyfile` and `l2tcsv`, 1us for `dynamic` and `timesketch`, 0 for `jsonl` and `csv`). A time the tool leaves unknown is missed; a different one is wrong, a false positive and a false negative at once |
 | `hashes`  | file or stream found whose digest the run knows                   | the tool's MD5 matches, or failing that its SHA-256. A digest the tool did not compute is not held against it                                                                                                                                                                              |
 | `links`   | name of a hard-linked file; symlink; junction                     | a hard-linked file's names share an inode (TSK's NTFS `entry-type-id` compared by entry) and, where the tool counts them, as many links as names; a symlink or junction points where the run made it point. A file with one name reported with more links is a false positive              |
+| `filenames` | time of a name's NTFS `$FILE_NAME` that is known: one a timestomp set on an image, or any from a `--model` | the tool's `$FILE_NAME` record of the name has it within `--time-tolerance`, as for `times`. A hard-linked file's record holds a `$FILE_NAME` per name, and a tool may give any of them for any name, as The Sleuth Kit gives one for all: a row is scored against the name it agrees with best |
 
 The report gives, per category, how many items there were, how many the tool's
 output could be judged on (a time of an entry the tool did not list cannot be,
@@ -2242,8 +2298,9 @@ each category missed, made up or got wrong, with the tool's line numbers;
 states them: never those the ledger lists as `uncontrolled` (on Linux, the
 change and creation times). Two kinds of time the ledger cannot give are left
 unscored unless a model gives them: a directory's, which every entry added to or
-taken from it moves at a time the ledger does not record, and a file's change
-time after a `rotate` renamed it or one of its hard links was deleted.
+taken from it moves at a time the ledger does not record, a file's change
+time after a `rotate` renamed it or one of its hard links was deleted, and
+the `$FILE_NAME` times of a name no timestomp set.
 `--model FILE` takes them from a modelled timeline of the same run
 (`--timeline-source modelled`, in any format above); a model that does not list
 exactly the names the run left is refused as another run's.

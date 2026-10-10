@@ -1,6 +1,7 @@
 package ntfs
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -148,13 +149,30 @@ func (r *record) add(a *attr) *attr {
 	return a
 }
 
-// put puts a in its place, keeping its ID.
+// put puts a in its place, keeping its ID: after the attributes that sort
+// before it or with it, and for a $FILE_NAME also after those whose values
+// sort before its, as libntfs-3g finds the place of an indexed attribute.
 func (r *record) put(a *attr) {
-	i, _ := slices.BinarySearchFunc(r.attrs, a, order)
-	for i < len(r.attrs) && order(r.attrs[i], a) == 0 {
+	i := 0
+	for i < len(r.attrs) && placeAfter(r.attrs[i], a) {
 		i++
 	}
 	r.attrs = slices.Insert(r.attrs, i, a)
+}
+
+func placeAfter(x, a *attr) bool {
+	switch c := order(x, a); {
+	case c != 0:
+		return c < 0
+	case a.typ == atFileName:
+		return bytes.Compare(x.value, a.value) <= 0
+	}
+	return true
+}
+
+// drop takes a out of the record.
+func (r *record) drop(a *attr) {
+	r.attrs = slices.DeleteFunc(r.attrs, func(x *attr) bool { return x == a })
 }
 
 // find is the first attribute of type typ named name, or nil.
@@ -269,8 +287,11 @@ type fileName struct {
 	t           times
 	alloc, size int64
 	flags       uint32
-	name        string
-	namespace   byte
+	// reparse is a reparse point's tag, kept where the flags say there is
+	// one.
+	reparse   uint32
+	name      string
+	namespace byte
 }
 
 func (f fileName) encode() []byte {
@@ -282,6 +303,7 @@ func (f fileName) encode() []byte {
 	le.PutUint64(b[40:], uint64(f.alloc))
 	le.PutUint64(b[48:], uint64(f.size))
 	le.PutUint32(b[56:], f.flags)
+	le.PutUint32(b[60:], f.reparse)
 	b[64] = byte(len(name) / 2)
 	b[65] = f.namespace
 	copy(b[66:], name)
@@ -295,7 +317,7 @@ func readFileName(b []byte) (fileName, error) {
 	le := binary.LittleEndian
 	return fileName{
 		parent: le.Uint64(b[0:]), t: readTimes(b[8:]), alloc: int64(le.Uint64(b[40:])), size: int64(le.Uint64(b[48:])),
-		flags: le.Uint32(b[56:]), namespace: b[65], name: fromUTF16le(b[66 : 66+2*int(b[64])]),
+		flags: le.Uint32(b[56:]), reparse: le.Uint32(b[60:]), namespace: b[65], name: fromUTF16le(b[66 : 66+2*int(b[64])]),
 	}, nil
 }
 

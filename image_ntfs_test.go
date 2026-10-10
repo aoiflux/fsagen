@@ -1,17 +1,23 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/aoiflux/fsagen/compile"
 	"github.com/aoiflux/fsagen/internal/testutil"
 	"github.com/aoiflux/fsagen/ledger"
+	"github.com/aoiflux/fsagen/libgen"
 	"github.com/aoiflux/fsagen/runinfo"
+	"github.com/aoiflux/fsagen/target"
 	"github.com/aoiflux/fsagen/volume/container"
+	imagepkg "github.com/aoiflux/fsagen/volume/image"
 )
 
 // ntfsFixture is the scenario TestNTFSImageGolden pins.
@@ -43,7 +49,7 @@ func TestNTFSImageGolden(t *testing.T) {
 			t.Fatalf("run manifest image %+v", rm.Image)
 		}
 		c := rm.Capabilities
-		if !c.BirthTime || !c.ChangeTime || c.Hardlinks || c.Symlinks || c.Junctions || c.NamedStreams || c.Slack != "none" || c.ClusterSize != 4096 {
+		if !c.BirthTime || !c.ChangeTime || !c.Hardlinks || !c.Symlinks || !c.Junctions || !c.NamedStreams || !c.FilenameTimesControlled || c.Slack != "exact" || c.ClusterSize != 4096 {
 			t.Errorf("capabilities %+v", c)
 		}
 		key, err := os.ReadFile(filepath.Join(meta, ledger.AnswerKeyFileName))
@@ -69,7 +75,7 @@ func TestNTFSImageGolden(t *testing.T) {
 		} else if got != first {
 			t.Error("a second run made a different image")
 		}
-		for _, want := range []string{`"type":"ntfs_mft_record"`, `"seq":2`, `"overwritten":true`, `"cause":"overwrite"`, `"kind":"dir"`} {
+		for _, want := range []string{`"type":"ntfs_mft_record"`, `"seq":2`, `"overwritten":true`, `"cause":"overwrite"`, `"kind":"dir"`, `"type":"ntfs_index_entry"`, `"kind":"symlink"`} {
 			if !strings.Contains(got, want) {
 				t.Errorf("the golden lacks %s:\n%s", want, got)
 			}
@@ -78,32 +84,51 @@ func TestNTFSImageGolden(t *testing.T) {
 }
 
 // diff-oracle scores fsagen's own observed timeline of an NTFS image at
-// 1.0 with no tolerance at all: every name and every time, to 100 ns, is
-// on disk as the scenario intends.
+// 1.0 with no tolerance at all: every name, stream, digest and link, and
+// every time, to 100 ns, is on disk as the scenario intends, the times of
+// every name's $FILE_NAME included, which the modelled timeline gives.
 func TestNTFSObservedTimelineTo100ns(t *testing.T) {
 	dir := t.TempDir()
-	tl := filepath.Join(dir, "observed.jsonl")
+	tl, model := filepath.Join(dir, "observed.jsonl"), filepath.Join(dir, "modelled.jsonl")
+	ntfsImage(t, "--timeline", model, "--timeline-source", "modelled")
 	img := ntfsImage(t, "--timeline", tl)
-	if code, stdout, stderr := runOracle(t, "--meta", img+metaDirSuffix, "--categories", "files,times", "--time-tolerance", "0", "--fail-under", "1", tl); code != exitOK {
+	sc := filepath.Join(dir, "scorecard.json")
+	if code, stdout, stderr := runOracle(t, "--meta", img+metaDirSuffix, "--model", model, "--scorecard", sc, "--categories", "files,streams,times,hashes,links,filenames", "--time-tolerance", "0", "--fail-under", "1", tl); code != exitOK {
 		t.Fatalf("diff-oracle exit %d:\n%s%s", code, stdout, stderr)
+	}
+	var card struct {
+		Categories []struct {
+			Name     string
+			Expected int
+		}
+	}
+	data, err := os.ReadFile(sc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &card); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range card.Categories {
+		if c.Expected == 0 {
+			t.Errorf("nothing was expected of %s", c.Name)
+		}
 	}
 	if r := readManifest(t, img+metaDirSuffix).Capabilities.TimeResolution; r == nil || *r != (runinfo.Resolution{Atime: "100ns", Mtime: "100ns", Ctime: "100ns", Crtime: "100ns"}) {
 		t.Errorf("time resolution %+v", r)
 	}
 }
 
-// What NTFS images cannot hold yet is refused before anything is written:
-// links, streams and slack, a timestomp's $FILE_NAME times, NTFS's own
-// names at the root in any case, and names Windows forbids.
+// What an NTFS image cannot hold is refused before anything is written:
+// slack on a file small enough to stay in its MFT record, a time before
+// 1601, NTFS's own names at the root in any case, and names Windows
+// forbids.
 func TestNTFSRefusesWhatItCannotHold(t *testing.T) {
 	dir := t.TempDir()
 	img := filepath.Join(dir, "x.img")
 	for _, c := range []struct{ ops, want string }{
-		{"  - action: create\n    path: a.txt\n  - action: hardlink\n    path: a.txt\n    new_path: b.txt\n", "hard link"},
-		{"  - action: symlink\n    path: l\n    target: a.txt\n    target_type: file\n", "symlink"},
-		{"  - action: create\n    path: a.txt\n  - action: ads\n    path: a.txt\n    stream: s\n    content: x\n", "alternate data stream"},
-		{"  - action: create\n    path: a.txt\n    content_len: 5000\n    slack: {kind: canary, cluster_size: 4096}\n", "FAT32 or ext4"},
-		{"  - action: create\n    path: a.txt\n  - action: timestomp\n    path: a.txt\n    fn_mtime: 2020-01-01T00:00:00Z\n", "$FILE_NAME"},
+		{"  - action: create\n    path: a.txt\n    content_len: 1000\n    slack: {kind: canary, cluster_size: 4096}\n", "inside its NTFS MFT record"},
+		{"  - action: create\n    path: a.txt\n    mtime: 1600-12-31T23:59:59Z\n", "outside what this volume can store"},
 		{"  - action: create\n    path: $mft/x.txt\n", "file system's own"},
 		{"  - action: create\n    path: \"what?.txt\"\n", "Windows name"},
 	} {
@@ -146,9 +171,14 @@ func TestNTFSListedByTSK(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The Sleuth Kit gets everything right but one thing: it reads every
+	// index block $INDEX_ALLOCATION maps, without $BITMAP, so the entry
+	// left in Cache's freed block is to it a file that is there, not one
+	// that was deleted.
+	phantom := "Cache/cached-thumbnail-0007-0123456789abcdef.tmp"
 	n := 0
 	for _, f := range readFacts(t, key) {
-		if f.Residue == nil || f.Residue.Entry == nil || f.Residue.Entry.Overwritten {
+		if f.Residue == nil || f.Residue.Entry == nil || f.Residue.Entry.Overwritten || f.Residue.Entry.Type != "ntfs_mft_record" || f.Path == phantom {
 			continue
 		}
 		e := f.Residue.Entry
@@ -168,7 +198,111 @@ func TestNTFSListedByTSK(t *testing.T) {
 	if err := os.WriteFile(body, out, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if code, stdout, stderr := runOracle(t, "--meta", img+metaDirSuffix, "--fail-under", "1", body); code != exitOK {
-		t.Errorf("diff-oracle exit %d:\n%s%s", code, stdout, stderr)
+	tskScore(t, img, body, phantom)
+	// With the modelled timeline as the model, every name's $FILE_NAME
+	// times are expected, and The Sleuth Kit's ($FILE_NAME) lines give them.
+	model := filepath.Join(filepath.Dir(body), "modelled.jsonl")
+	ntfsImage(t, "--timeline", model, "--timeline-source", "modelled")
+	if c := tskScore(t, img, body, phantom, "--model", model); c["filenames"].Checked < 100 {
+		t.Errorf("only %d $FILE_NAME times were checked", c["filenames"].Checked)
+	}
+}
+
+// scoreCategory is a category of a diff-oracle scorecard.
+type scoreCategory struct {
+	Name                string
+	Checked, TP, FP, FN int
+	Missing             []string
+	Extra               []struct{ Path string }
+}
+
+// tskScore scores The Sleuth Kit's bodyfile of img and checks every
+// category is perfect but for phantom: listed as a file there, and its
+// deletion missed.
+func tskScore(t *testing.T, img, body, phantom string, args ...string) map[string]scoreCategory {
+	t.Helper()
+	sc := filepath.Join(t.TempDir(), "scorecard.json")
+	if code, stdout, stderr := runOracle(t, append([]string{"--meta", img + metaDirSuffix, "--scorecard", sc}, append(args, body)...)...); code != exitOK {
+		t.Fatalf("diff-oracle exit %d:\n%s%s", code, stdout, stderr)
+	}
+	var card struct{ Categories []scoreCategory }
+	data, err := os.ReadFile(sc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &card); err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]scoreCategory{}
+	for _, c := range card.Categories {
+		out[c.Name] = c
+		switch {
+		case c.Name == "files" && c.FP == 1 && c.FN == 0 && len(c.Extra) == 1 && c.Extra[0].Path == phantom:
+		case c.Name == "deleted" && c.FP == 0 && c.FN == 1 && len(c.Missing) == 1 && strings.HasPrefix(c.Missing[0], phantom+" "):
+		case c.Name != "files" && c.Name != "deleted" && c.FP == 0 && c.FN == 0:
+		default:
+			t.Errorf("%s: %+v", c.Name, c)
+		}
+	}
+	return out
+}
+
+// fileNamesAsSet is an NTFS image whose settle pass does not set the
+// $FILE_NAME times: once the operations are done, each name keeps the
+// times the driver gave it, as NTFS does, and those a timestomp set.
+type fileNamesAsSet struct {
+	*imagepkg.Image
+	settling bool
+}
+
+func (f *fileNamesAsSet) BeginOp(n int, when time.Time) {
+	f.settling = n == 0
+	f.Image.BeginOp(n, when)
+}
+
+func (f *fileNamesAsSet) SetFileNameTimes(name string, t target.Times) error {
+	if f.settling {
+		return nil
+	}
+	return f.Image.SetFileNameTimes(name, t)
+}
+
+// The NTFS driver sets each name's $FILE_NAME times where the model says
+// NTFS does, in every example: with the settle pass leaving them as the
+// driver set them, every one verifies. The settle pass sets them only so
+// that a target that keeps no times of its own (the in-memory one) can
+// hold them.
+func TestNTFSSetsFileNameTimesAsTheModel(t *testing.T) {
+	for _, path := range exampleFiles(t) {
+		name := strings.TrimSuffix(filepath.Base(path), ".yaml")
+		t.Run(name, func(t *testing.T) {
+			c := &config{seed: 42, onUnsupported: onUnsupportedSkip}
+			if exampleMode(path) == compile.ModeManifest {
+				c.manifest = path
+			} else {
+				c.playbook = path
+			}
+			plan, err := imagepkg.NewPlan(imagepkg.Options{Path: filepath.Join(t.TempDir(), "x.img"), FS: "ntfs", Size: 64 << 20, Partition: container.PartitionNone, Time: libgen.DefaultStart, Seed: 42})
+			if err != nil {
+				t.Fatal(err)
+			}
+			caps := plan.Caps()
+			prog, err := compile.Load(inputMode(c), path, compile.Options{Seed: 42, FoldCase: caps.FoldsCase})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer prog.Close()
+			if err := compile.Preflight(prog, caps, true); err != nil {
+				t.Fatal(err)
+			}
+			img, err := imagepkg.Create(plan)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer img.Abort()
+			if g := runGeneration(c, &fileNamesAsSet{Image: img}, prog, caps, runinfo.New(string(inputMode(c)), c.seed), t.TempDir()); g.err != nil {
+				t.Fatal(g.err)
+			}
+		})
 	}
 }

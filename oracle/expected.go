@@ -92,13 +92,17 @@ type Expected struct {
 	// whose entries were reused.
 	entries map[string]residueRef
 	reused  int
+	// fileNames are the times of the $FILE_NAME of each name the run left,
+	// where they are known: those a timestomp set on an NTFS image, or all
+	// of them from a modelled timeline that lists them.
+	fileNames map[string]times
 }
 
 // times4 is a duration for each of the four times.
 type times4 = [4]time.Duration
 
 func newExpected() *Expected {
-	return &Expected{present: map[string]*object{}, deleted: map[string][]*object{}, history: map[string]bool{}}
+	return &Expected{present: map[string]*object{}, deleted: map[string][]*object{}, history: map[string]bool{}, fileNames: map[string]times{}}
 }
 
 // LoadExpected reads the expected state from a run's sidecar directory:
@@ -276,6 +280,10 @@ func (x *Expected) foldLedger(entries []ledger.Entry) {
 		x.ops++
 		o := obj(e.Object)
 		switch e.Action {
+		case spec.ActionTimestomp:
+			if t := fileNameTimes(e); t != (times{}) {
+				x.fileNames[e.Path] = t
+			}
 		case spec.ActionDelete:
 			x.remove(e.Path)
 			if e.Links > 0 {
@@ -328,6 +336,24 @@ func (o *object) update(e ledger.Entry) {
 	}
 }
 
+// fileNameTimes are the $FILE_NAME times a timestomp's entry records that
+// are on disk.
+func fileNameTimes(e ledger.Entry) times {
+	var t times
+	if e.FnTimes == nil {
+		return t
+	}
+	for i, s := range [4]string{e.FnTimes.Atime, e.FnTimes.Mtime, e.FnTimes.Ctime, e.FnTimes.Crtime} {
+		if s == "" || slices.Contains(e.Uncontrolled, "fn_"+timeNames[i]) {
+			continue
+		}
+		if v, err := time.Parse(time.RFC3339Nano, s); err == nil {
+			t[i] = v.UTC()
+		}
+	}
+	return t
+}
+
 // entryTimes are the times an entry records that the scenario controls.
 func entryTimes(e ledger.Entry) times {
 	var t times
@@ -373,6 +399,7 @@ func (x *Expected) remove(p string) *object {
 		return nil
 	}
 	delete(x.present, p)
+	delete(x.fileNames, p)
 	o.names = slices.DeleteFunc(o.names, func(n string) bool { return n == p })
 	return o
 }
@@ -387,11 +414,19 @@ func (x *Expected) move(oldp, newp string) {
 	}
 	slices.Sort(moved)
 	objs := make([]*object, len(moved))
+	// The names under a directory moved keep their $FILE_NAME times; the
+	// name moved gets new ones, at a time the ledger does not record.
+	fns := make([]times, len(moved))
 	for i, p := range moved {
+		fns[i] = x.fileNames[p]
 		objs[i] = x.remove(p)
 	}
 	for i, p := range moved {
-		x.add(newp+strings.TrimPrefix(p, oldp), objs[i])
+		to := newp + strings.TrimPrefix(p, oldp)
+		x.add(to, objs[i])
+		if p != oldp && fns[i] != (times{}) {
+			x.fileNames[to] = fns[i]
+		}
 	}
 }
 
@@ -464,6 +499,9 @@ func (x *Expected) UseModel(rows []Row) error {
 	listed := map[string]bool{}
 	for _, r := range rows {
 		p := strings.Join(components(r.Path), "/")
+		if r.FileName && !r.Deleted && r.Stream == "" && x.present[p] != nil {
+			x.fileNames[p] = r.Times
+		}
 		if r.FileName || r.Stream != "" || p == "" {
 			continue
 		}

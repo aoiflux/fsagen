@@ -18,10 +18,12 @@ const (
 	catTimes   = "times"
 	catHashes  = "hashes"
 	catLinks   = "links"
+	// catFileNames are the times of each name's NTFS $FILE_NAME.
+	catFileNames = "filenames"
 )
 
 // CategoryNames lists the categories in the order they are reported.
-var CategoryNames = []string{catFiles, catDeleted, catStreams, catTimes, catHashes, catLinks}
+var CategoryNames = []string{catFiles, catDeleted, catStreams, catTimes, catHashes, catLinks, catFileNames}
 
 // Category is how a tool did at one kind of finding. Expected counts what
 // there was to find; Checked counts what the tool's output could be judged
@@ -138,7 +140,8 @@ type PathReport struct {
 	OutsidePrefix int `json:"outside_prefix"`
 	// VolumeFiles are entries the file system keeps for itself.
 	VolumeFiles int `json:"volume_files"`
-	// FilenameRecords are NTFS $FILE_NAME records, not scored yet.
+	// FilenameRecords are NTFS $FILE_NAME records that are not scored: a
+	// deleted entry's, or one of a name the run did not leave.
 	FilenameRecords int `json:"filename_records"`
 	// OldNames are deleted entries under a name the run once used: real
 	// traces, though not of a deletion.
@@ -146,6 +149,9 @@ type PathReport struct {
 	// Reused are deleted objects whose entries a later write to the image
 	// reused, so that no tool could find them; they are not scored.
 	Reused int `json:"reused_entries,omitempty"`
+	// DeletedStreams are rows for a named stream of a deleted entry found
+	// by its address; the entry is scored, and its streams are not.
+	DeletedStreams int `json:"deleted_streams,omitempty"`
 }
 
 // scorer scores one tool's rows against one run.
@@ -157,6 +163,8 @@ type scorer struct {
 	// files and streams record the row that found each name and stream.
 	files   map[string]*Row
 	streams map[streamKey]*Row
+	// fileNames record the row that gave each name's $FILE_NAME.
+	fileNames map[string]*Row
 	// deletedRows are the rows reporting a deleted entry at each path the
 	// run deleted something from, and gone the row that found each object
 	// deleted.
@@ -172,7 +180,7 @@ func Score(x *Expected, rows []Row, opts Options) ([]*Category, PathReport, erro
 	s := &scorer{
 		x: x, ix: newPathIndex(x, opts.Fold, opts.Commas), tol: opts.Tolerance,
 		cats:  map[string]*Category{},
-		files: map[string]*Row{}, streams: map[streamKey]*Row{},
+		files: map[string]*Row{}, streams: map[streamKey]*Row{}, fileNames: map[string]*Row{},
 		deletedRows: map[string][]*Row{}, gone: map[*object]*Row{},
 	}
 	for _, n := range CategoryNames {
@@ -198,8 +206,12 @@ func Score(x *Expected, rows []Row, opts Options) ([]*Category, PathReport, erro
 			rep.OutsidePrefix++
 		case rel == "":
 			// The output root itself, whose times are not the run's.
+		case selfEntry(rel):
+			// A directory's own "." or ".." entry, which The Sleuth Kit
+			// lists with the directory's streams.
+			rep.VolumeFiles++
 		case r.FileName:
-			rep.FilenameRecords++
+			s.placeFileName(r, rel, &rep)
 		default:
 			s.place(r, rel, &rep)
 		}
@@ -209,6 +221,7 @@ func Score(x *Expected, rows []Row, opts Options) ([]*Category, PathReport, erro
 	s.scoreTimes()
 	s.scoreHashes()
 	s.scoreLinks()
+	s.scoreFileNames()
 	out := make([]*Category, len(CategoryNames))
 	for i, n := range CategoryNames {
 		s.cats[n].finish()
@@ -282,8 +295,28 @@ func (s *scorer) resolve(r *Row, rel string) (path, stream string, known bool) {
 	return path, stream, known
 }
 
+// placeFileName takes a row giving a $FILE_NAME of a name the run left as
+// that name's, and sets the others aside.
+func (s *scorer) placeFileName(r *Row, rel string, rep *PathReport) {
+	path, stream, known := s.resolve(r, rel)
+	switch {
+	case r.Deleted || !known || stream != "" || s.x.present[path] == nil:
+		rep.FilenameRecords++
+	case s.fileNames[path] == nil:
+		s.fileNames[path] = r
+	default:
+		c := s.cats[catFileNames]
+		c.FP++
+		c.Extra = append(c.Extra, Extra{r.Line, rel + " ($FILE_NAME)", fmt.Sprintf("listed again (first on line %d)", s.fileNames[path].Line)})
+	}
+}
+
 func (s *scorer) placeDeleted(r *Row, path, stream string, known bool, shown string, rep *PathReport) {
 	deleted := s.cats[catDeleted]
+	if _, ok := s.x.entries[inodeKey(r.Inode)]; ok && r.Inode != "" && stream != "" {
+		rep.DeletedStreams++
+		return
+	}
 	if s.byEntry(r, shown, rep) {
 		return
 	}
@@ -445,23 +478,53 @@ func (s *scorer) missing() {
 // tolerance from the expected time is wrong.
 func (s *scorer) scoreTimes() {
 	for p, o := range s.x.present {
-		s.scoreTimesOf(s.files[p], o, p)
+		s.scoreTimesOf(catTimes, s.files[p], o.times, p)
 	}
 	for p, gens := range s.x.deleted {
 		for _, g := range gens {
 			if g.reused {
 				continue
 			}
-			s.scoreTimesOf(s.gone[g], g, deletedLabel(p, g))
+			s.scoreTimesOf(catTimes, s.gone[g], g.times, deletedLabel(p, g))
 		}
 	}
 }
 
-// scoreTimesOf scores one entry's times; r is nil when the tool did not
-// find it, and then they count only as expected.
-func (s *scorer) scoreTimesOf(r *Row, o *object, label string) {
-	c := s.cats[catTimes]
-	for i, want := range o.times {
+// scoreFileNames scores the times of the $FILE_NAME of every name the run
+// left whose times are known. A hard-linked file's record holds one
+// $FILE_NAME for each of its names, and a tool may give any of them for
+// any name, as The Sleuth Kit gives one for all: a row is scored against
+// the name whose times it agrees with best, its own on a tie.
+func (s *scorer) scoreFileNames() {
+	for p, t := range s.x.fileNames {
+		o := s.x.present[p]
+		if o == nil {
+			continue
+		}
+		r := s.fileNames[p]
+		if r != nil {
+			best := s.agreeingTimes(r, t)
+			for _, n := range slices.Sorted(slices.Values(o.names)) {
+				if other, ok := s.x.fileNames[n]; ok && n != p && s.agreeingTimes(r, other) > best {
+					t, best = other, s.agreeingTimes(r, other)
+				}
+			}
+		}
+		s.scoreTimesOf(catFileNames, r, t, p+" ($FILE_NAME)")
+	}
+}
+
+// agreeingTimes counts the times of want the row reports within the
+// tolerance.
+func (s *scorer) agreeingTimes(r *Row, want times) int {
+	return s.agreeing(r, &object{times: want})
+}
+
+// scoreTimesOf scores one entry's times in category cat; r is nil when the
+// tool did not find it, and then they count only as expected.
+func (s *scorer) scoreTimesOf(cat string, r *Row, ts times, label string) {
+	c := s.cats[cat]
+	for i, want := range ts {
 		if want.IsZero() {
 			continue
 		}

@@ -53,6 +53,8 @@ type node struct {
 	target   string
 	names    int
 	children map[string]*node
+	// fn are, in a directory, the $FILE_NAME times set on its names.
+	fn map[string]target.Times
 }
 
 // Mem is a target in memory.
@@ -320,6 +322,7 @@ func (m *Mem) Remove(name string) error {
 		return pathErr("remove", name, errors.New("directory not empty"))
 	}
 	delete(d.children, leaf)
+	delete(d.fn, leaf)
 	n.names--
 	return nil
 }
@@ -351,7 +354,43 @@ func (m *Mem) Rename(oldname, newname string) error {
 		old.names--
 	}
 	delete(od.children, oleaf)
+	delete(od.fn, oleaf)
+	delete(nd.fn, nleaf)
 	nd.children[nleaf] = n
+	return nil
+}
+
+// SetFileNameTimes sets the times of name's $FILE_NAME, kept per name;
+// zero times are left alone.
+func (m *Mem) SetFileNameTimes(name string, t target.Times) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.writable(); err != nil {
+		return pathErr("set $FILE_NAME times", name, err)
+	}
+	if !m.caps.FilenameTimes {
+		return pathErr("set $FILE_NAME times", name, errors.ErrUnsupported)
+	}
+	d, leaf, err := m.parent(name)
+	if err != nil {
+		return pathErr("set $FILE_NAME times", name, err)
+	}
+	if _, ok := d.children[leaf]; !ok {
+		return pathErr("set $FILE_NAME times", name, fs.ErrNotExist)
+	}
+	if d.fn == nil {
+		d.fn = map[string]target.Times{}
+	}
+	fn := d.fn[leaf]
+	for _, s := range []struct {
+		to   *time.Time
+		from time.Time
+	}{{&fn.Atime, t.Atime}, {&fn.Mtime, t.Mtime}, {&fn.Ctime, t.Ctime}, {&fn.Btime, t.Btime}} {
+		if !s.from.IsZero() {
+			*s.to = s.from.UTC()
+		}
+	}
+	d.fn[leaf] = fn
 	return nil
 }
 
@@ -564,6 +603,10 @@ func (m *Mem) Meta(name string) (target.Meta, error) {
 		return target.Meta{}, pathErr("read metadata", name, err)
 	}
 	meta := target.Meta{Times: n.times, ID: strconv.Itoa(n.id), Links: n.names, Target: n.target}
+	if d, leaf, err := m.parent(name); err == nil && m.caps.FilenameTimes {
+		fn := d.fn[leaf]
+		meta.FileName = &fn
+	}
 	switch n.kind {
 	case symlink:
 		meta.Link = target.LinkSymlink
@@ -643,7 +686,8 @@ func (m *Mem) OpenStreamQuiet(name, stream string) (io.ReadCloser, error) {
 }
 
 var (
-	_ target.Target   = (*Mem)(nil)
-	_ target.Linker   = (*Mem)(nil)
-	_ target.Finisher = (*Mem)(nil)
+	_ target.Target        = (*Mem)(nil)
+	_ target.Linker        = (*Mem)(nil)
+	_ target.Finisher      = (*Mem)(nil)
+	_ target.FilenameTimer = (*Mem)(nil)
 )

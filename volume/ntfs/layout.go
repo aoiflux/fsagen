@@ -87,6 +87,7 @@ const (
 	atIndexRoot  = 0x90
 	atIndexAlloc = 0xA0
 	atBitmap     = 0xB0
+	atReparse    = 0xC0
 	atEnd        = 0xFFFFFFFF
 )
 
@@ -104,6 +105,7 @@ const (
 	faHidden     = 0x00000002
 	faSystem     = 0x00000004
 	faArchive    = 0x00000020
+	faReparse    = 0x00000400
 	faI30Index   = 0x10000000
 	faViewIndex  = 0x20000000
 	faSysHidden  = faHidden | faSystem
@@ -112,6 +114,7 @@ const (
 
 // $FILE_NAME namespaces.
 const (
+	nsPOSIX    = 0
 	nsWin32    = 1
 	nsWin32DOS = 3
 )

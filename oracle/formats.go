@@ -657,6 +657,7 @@ type jsonlEntry struct {
 	Deleted    bool   `json:"deleted"`
 	LinkTarget string `json:"link_target"`
 	Links      int    `json:"links"`
+	FileName   bool   `json:"file_name"`
 }
 
 // readJSONL reads fsagen's jsonl timeline: one entry per line, its path
@@ -671,7 +672,7 @@ func readJSONL(data []byte) ([]Row, error) {
 		if err := json.Unmarshal([]byte(line), &e); err != nil {
 			return err
 		}
-		r := Row{Line: n, Path: e.Path, Stream: e.Stream, Kind: dfvfsKind(e.Type), Deleted: e.Deleted, Target: e.LinkTarget, Inode: e.Inode, Links: e.Links, MD5: e.MD5}
+		r := Row{Line: n, Path: e.Path, Stream: e.Stream, Kind: dfvfsKind(e.Type), Deleted: e.Deleted, Target: e.LinkTarget, Inode: e.Inode, Links: e.Links, MD5: e.MD5, FileName: e.FileName}
 		for i, s := range [4]string{e.Atime, e.Mtime, e.Ctime, e.Crtime} {
 			t, err := rfcTime(s)
 			if err != nil {
@@ -706,7 +707,7 @@ func readCSV(data []byte) ([]Row, error) {
 			return nil, err
 		}
 		line, _ := cr.FieldPos(0)
-		r := Row{Line: line, Path: f[0], Stream: f[1], Kind: dfvfsKind(f[2]), Inode: f[7], MD5: f[12], Deleted: f[13] == "true"}
+		r := Row{Line: line, Path: f[0], Stream: f[1], Kind: dfvfsKind(f[2]), Inode: f[7], MD5: f[12], Deleted: f[13] == "true", FileName: f[2] == "filename"}
 		for i, s := range f[8:12] {
 			t, err := rfcTime(s)
 			if err != nil {

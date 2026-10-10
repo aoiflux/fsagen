@@ -102,7 +102,7 @@ func (f *FS) Caps() target.Caps {
 	}
 	return target.Caps{
 		NamedStreams: f.streams, BirthTime: tc.Birth, ChangeTime: tc.Change, Slack: slack, ClusterSize: f.cluster,
-		Hardlinks: f.links.Hard, Symlinks: f.links.Sym, Junctions: f.links.Junction,
+		ResidentData: f.SlackBestEffort(), Hardlinks: f.links.Hard, Symlinks: f.links.Sym, Junctions: f.links.Junction,
 	}
 }
 

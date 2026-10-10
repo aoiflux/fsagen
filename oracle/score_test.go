@@ -326,3 +326,60 @@ func TestUseModel(t *testing.T) {
 		t.Errorf("a model with a name the run did not leave: %v", err)
 	}
 }
+
+// The times of a name's $FILE_NAME are scored where they are known: those
+// a timestomp set on an image, kept through a move of the directory above
+// and forgotten when the name itself moves, and every name's from a
+// modelled timeline that lists them. A $FILE_NAME row of a name the run did
+// not leave, or of a deleted entry, is set aside.
+func TestFileNames(t *testing.T) {
+	stomped := "2001-02-03T04:05:06Z"
+	fn := &ledger.Times{Mtime: stomped, Crtime: stomped}
+	x := newExpected()
+	x.foldLedger([]ledger.Entry{
+		{N: 1, Outcome: ledger.Done, Action: "create", Path: "d/a.txt", Object: 1, Kind: "file"},
+		{N: 2, Outcome: ledger.Done, Action: "create", Path: "b.txt", Object: 2, Kind: "file"},
+		{N: 3, Outcome: ledger.Done, Action: "timestomp", Path: "d/a.txt", Object: 1, Kind: "file", FnTimes: fn, Uncontrolled: []string{"fn_atime", "fn_ctime"}},
+		{N: 4, Outcome: ledger.Done, Action: "timestomp", Path: "b.txt", Object: 2, Kind: "file", FnTimes: fn},
+		{N: 5, Outcome: ledger.Done, Action: "rename", Path: "d", NewPath: "e", Object: 3, Kind: "dir"},
+		{N: 6, Outcome: ledger.Done, Action: "rename", Path: "b.txt", NewPath: "c.txt", Object: 2, Kind: "file"},
+	})
+	at := must(time.Parse(time.RFC3339, stomped))
+	if got := x.fileNames["e/a.txt"]; got != (times{mtime: at, crtime: at}) || len(x.fileNames) != 1 {
+		t.Fatalf("expected $FILE_NAME times %+v", x.fileNames)
+	}
+	rows := []Row{
+		{Path: "/e/a.txt", Whole: true},
+		{Path: "/e/a.txt", Whole: true, FileName: true, Times: times{mtime: at, crtime: at.Add(time.Second)}},
+		{Path: "/c.txt", Whole: true},
+		{Path: "/c.txt", Whole: true, FileName: true, Times: times{mtime: at}},
+		{Path: "/gone.txt", Whole: true, FileName: true, Deleted: true},
+	}
+	cats, rep, err := Score(x, rows, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := category(cats, catFileNames)
+	if c.Expected != 2 || c.TP != 1 || c.FP != 1 || c.FN != 1 || len(c.Wrong) != 1 || c.Wrong[0].Field != "crtime" || rep.FilenameRecords != 1 {
+		t.Errorf("filenames %+v, %d set aside", c, rep.FilenameRecords)
+	}
+	if c := score(t, x, rows, Options{Tolerance: time.Second})[catFileNames]; c.TP != 2 || c.FP != 0 {
+		t.Errorf("within a second: %+v", c)
+	}
+
+	modelled := append(slices.Clone(rows[:4]), Row{Path: "/e", Whole: true})
+	modelled[3].Times = times{at, at, at, at}
+	if err := x.UseModel(modelled); err != nil {
+		t.Fatal(err)
+	}
+	if c := score(t, x, rows, Options{Tolerance: time.Second})[catFileNames]; c.Expected != 2+4 || c.Checked != 6 || c.TP != 3 || c.FN != 3 {
+		t.Errorf("with a model: %+v", c)
+	}
+}
+
+func must[T any](v T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return v
+}

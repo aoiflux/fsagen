@@ -194,6 +194,9 @@ formats it.
 | NTFS with 100 ns times, `$Secure`, deleted records left whole and index slack | `TestNTFSImageGolden`, `TestNTFSObservedTimelineTo100ns`, `TestDeleteAsWindows`, `TestSecureDescriptors`, `TestIndexMovesToBlock`, `TestRenameRewritesFileName` |
 | Someone else's reading of an NTFS image | `TestNTFSReadByGoNTFS`, `TestImageReadBy7Zip`, `TestNTFSListedByTSK` |
 | NTFS directory indexes split and merged as libntfs-3g does it, node for node | `TestIndexMatchesLibntfs3g`, `TestIndexGrowsAndShrinks`, `TestIndexSuccessorThatDoesNotFit` |
+| NTFS streams, hard links, symlinks and junctions, `$FILE_NAME` times, slack, and index entries left as residue | `TestStreams`, `TestHardLinks`, `TestReparsePoints`, `TestReparseIndexShrinks`, `TestFileNameTimes`, `TestSlack`, `TestIndexEntryResidue`, `TestIndexEntryResidueInFreedBlock`, `TestNTFSSetsFileNameTimesAsTheModel` |
+| `$Extend\$Reparse` filed as libntfs-3g files it | `TestReparseIndexMatchesLibntfs3g` |
+| `$FILE_NAME` times in timelines, scored by diff-oracle | `TestFileNames`, `TestNTFSObservedTimelineTo100ns`, `TestNTFSListedByTSK` |
 
 The external tools need not be installed system-wide. In WSL, run
 `apt-get download dosfstools sleuthkit libtsk19t64 libvmdk1 libvhdi1
@@ -214,7 +217,9 @@ libntfs-3g live, `apt-get download ntfs-3g-dev` and unpack it beside the
 rest. Build the harness against its static library, as the header of
 `volume/ntfs/testdata/libntfs3g/harness.c` shows. Then point
 `FSAGEN_NTFS_HARNESS` at it, with `mkntfs` on the path; `-update` re-records
-the file.
+the file. `TestReparseIndexMatchesLibntfs3g` runs the same harness, which
+makes symlinks too, and records `$Reparse`'s `$R` in
+`volume/ntfs/testdata/libntfs3g-reparse.txt`.
 
 The Sleuth Kit 4.12.1 lists no ext4 orphan inode at all on a volume where a
 directory was deleted: it fails to open the emptied directory while looking

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"slices"
@@ -35,12 +36,17 @@ const (
 // Node is one object of the tree as the scenario sees it. A file with hard
 // links is one node under several names.
 type Node struct {
-	ID     int
-	Kind   Kind
-	Mode   fs.FileMode
-	Data   []byte
-	Times  target.Times
-	Target string
+	ID    int
+	Kind  Kind
+	Mode  fs.FileMode
+	Data  []byte
+	Times target.Times
+	// Target is what a symlink or junction points at, and LinkDir says a
+	// symlink points at a directory.
+	Target  string
+	LinkDir bool
+	// Streams are a file's or directory's named streams, by name.
+	Streams map[string][]byte
 	// Names is how many names the node has.
 	Names int
 	// Sys is the driver's own record of the node: where it is on disk.
@@ -97,6 +103,22 @@ type LinkDriver interface {
 	// Link gives the file n the further name name in parent; n.Names is
 	// what it had before.
 	Link(parent *Node, name string, n *Node) error
+}
+
+// StreamDriver is a driver that keeps named streams. One whose Caps claim
+// them must implement it.
+type StreamDriver interface {
+	// WriteStream stores n.Streams[stream], new or replacing what the
+	// stream held.
+	WriteStream(n *Node, stream string) error
+}
+
+// FileNameDriver is a driver that sets the times of a name's $FILE_NAME.
+// One whose Caps claim FilenameTimes must implement it.
+type FileNameDriver interface {
+	// SetFileNameTimes stores t's non-zero times in the $FILE_NAME of n's
+	// name in parent.
+	SetFileNameTimes(parent *Node, name string, n *Node, t target.Times) error
 }
 
 // Clocked is a driver that stamps times of its own, such as ext4's
@@ -499,9 +521,49 @@ func (v *Volume) Chmod(name string, mode fs.FileMode) error {
 	})
 }
 
-// WriteStream creates or replaces a named stream.
+// WriteStream creates or replaces a named stream of a file or directory,
+// on a volume whose Caps claim streams.
 func (v *Volume) WriteStream(name, stream string, data []byte) error {
-	return pathErr("write stream", name, errors.ErrUnsupported)
+	sd, ok := v.d.(StreamDriver)
+	if !ok || !v.caps.NamedStreams {
+		return pathErr("write stream", name, errors.ErrUnsupported)
+	}
+	return v.change("write stream", name, func(n *Node) error {
+		if n.Kind != File && n.Kind != Dir {
+			return errors.New("a link has no streams of its own")
+		}
+		if n.Streams == nil {
+			n.Streams = map[string][]byte{}
+		}
+		n.Streams[stream] = slices.Clone(data)
+		return sd.WriteStream(n, stream)
+	})
+}
+
+// SetFileNameTimes sets the times of name's $FILE_NAME, on a volume whose
+// Caps claim them; zero times are left alone.
+func (v *Volume) SetFileNameTimes(name string, t target.Times) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if err := v.writable(name); err != nil {
+		return pathErr("set $FILE_NAME times", name, err)
+	}
+	fd, ok := v.d.(FileNameDriver)
+	if !ok || !v.caps.FilenameTimes {
+		return pathErr("set $FILE_NAME times", name, errors.ErrUnsupported)
+	}
+	d, leaf, err := v.parent(name)
+	if err != nil {
+		return pathErr("set $FILE_NAME times", name, err)
+	}
+	ch, ok := d.children[v.key(leaf)]
+	if !ok {
+		return pathErr("set $FILE_NAME times", name, fs.ErrNotExist)
+	}
+	if err := fd.SetFileNameTimes(d, ch.name, ch.n, t); err != nil {
+		return pathErr("set $FILE_NAME times", name, err)
+	}
+	return nil
 }
 
 // SetTimes sets name's times; zero times are left alone.
@@ -602,7 +664,7 @@ func (v *Volume) free(name string) (*Node, string, error) {
 
 // Symlink makes name a symlink to to, on a volume whose Caps claim them.
 // The link is stored as given and never followed.
-func (v *Volume) Symlink(name, to string, _ bool) error {
+func (v *Volume) Symlink(name, to string, dir bool) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if err := v.writable(name); err != nil {
@@ -616,17 +678,34 @@ func (v *Volume) Symlink(name, to string, _ bool) error {
 		return pathErr("symlink", name, err)
 	}
 	n := v.newNode(Symlink, 0o777)
-	n.Target = to
+	n.Target, n.LinkDir = to, dir
 	if err := v.add(d, leaf, n); err != nil {
 		return pathErr("symlink", name, err)
 	}
 	return nil
 }
 
-// Junction is refused: no image file system has junctions yet, and
-// pre-flight never asks a volume whose Caps do not claim them.
+// Junction makes name a junction to to, a directory in the output, on a
+// volume whose Caps claim them.
 func (v *Volume) Junction(name, to string) error {
-	return pathErr("junction", name, errors.ErrUnsupported)
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if err := v.writable(name); err != nil {
+		return pathErr("junction", name, err)
+	}
+	if !v.caps.Junctions {
+		return pathErr("junction", name, errors.ErrUnsupported)
+	}
+	d, leaf, err := v.free(name)
+	if err != nil {
+		return pathErr("junction", name, err)
+	}
+	n := v.newNode(Junction, 0o777)
+	n.Target, n.LinkDir = to, true
+	if err := v.add(d, leaf, n); err != nil {
+		return pathErr("junction", name, err)
+	}
+	return nil
 }
 
 // entry is a directory entry and its file information at once.
@@ -781,29 +860,51 @@ func (v *Volume) OpenQuiet(name string) (io.ReadCloser, error) {
 	return io.NopCloser(bytes.NewReader(data)), nil
 }
 
-// Streams lists an object's named streams: none yet.
+// Streams lists an object's named streams, sorted by name.
 func (v *Volume) Streams(name string) ([]target.Stream, error) {
-	if _, err := v.Meta(name); err != nil {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	n, err := v.lookup(name)
+	if err != nil {
+		return nil, pathErr("list streams", name, err)
+	}
+	var out []target.Stream
+	for _, s := range slices.Sorted(maps.Keys(n.Streams)) {
+		out = append(out, target.Stream{Name: s, Size: int64(len(n.Streams[s]))})
+	}
+	return out, nil
+}
+
+// ReadStream reads a named stream whole.
+func (v *Volume) ReadStream(name, stream string) ([]byte, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	n, err := v.lookup(name)
+	if err != nil {
+		return nil, pathErr("read stream", name+":"+stream, err)
+	}
+	data, ok := n.Streams[stream]
+	if !ok {
+		return nil, pathErr("read stream", name+":"+stream, fs.ErrNotExist)
+	}
+	return slices.Clone(data), nil
+}
+
+// OpenStreamQuiet opens a named stream for reading.
+func (v *Volume) OpenStreamQuiet(name, stream string) (io.ReadCloser, error) {
+	data, err := v.ReadStream(name, stream)
+	if err != nil {
 		return nil, err
 	}
-	return nil, nil
-}
-
-// ReadStream reads a named stream; there are none yet.
-func (v *Volume) ReadStream(name, stream string) ([]byte, error) {
-	return nil, pathErr("read stream", name+":"+stream, fs.ErrNotExist)
-}
-
-// OpenStreamQuiet opens a named stream; there are none yet.
-func (v *Volume) OpenStreamQuiet(name, stream string) (io.ReadCloser, error) {
-	return nil, pathErr("read stream", name+":"+stream, fs.ErrNotExist)
+	return io.NopCloser(bytes.NewReader(data)), nil
 }
 
 var (
-	_ target.Target     = (*Volume)(nil)
-	_ target.Linker     = (*Volume)(nil)
-	_ target.Slacker    = (*Volume)(nil)
-	_ target.Finisher   = (*Volume)(nil)
-	_ target.OpObserver = (*Volume)(nil)
-	_ target.Forensic   = (*Volume)(nil)
+	_ target.Target        = (*Volume)(nil)
+	_ target.Linker        = (*Volume)(nil)
+	_ target.Slacker       = (*Volume)(nil)
+	_ target.Finisher      = (*Volume)(nil)
+	_ target.OpObserver    = (*Volume)(nil)
+	_ target.Forensic      = (*Volume)(nil)
+	_ target.FilenameTimer = (*Volume)(nil)
 )

@@ -5,7 +5,11 @@
 # namespaces and in the Win32 one alone, Unicode names, deletes that leave
 # their records, runlists and index slack behind, a record a later file
 # takes back, renames within and between directories, an update, an append,
-# a truncate and a copy, a read-only file, a timestomp, and times to 100 ns.
+# a truncate and a copy, a read-only file, a timestomp, and times to 100 ns;
+# streams resident and not, on a file and a directory; hard links, one of
+# which loses a name; symlinks to a file and a directory and a junction, one
+# deleted; $FILE_NAME times a timestomp sets; slack; a stream deleted with
+# its file; and a directory whose index block is freed with an entry in it.
 # TestNTFSImageGolden pins the image it makes, byte for byte.
 start: "2023-03-01T09:00:00Z"
 operations:
@@ -195,6 +199,107 @@ operations:
     mtime: "2019-07-04T12:00:00Z"
     crtime: "2019-07-04T12:00:00Z"
 
+  - action: timestomp
+    path: Documents/UPPER.TXT
+    mtime: "2018-01-01T00:00:00Z"
+    crtime: "2018-01-01T00:00:00Z"
+    fn_mtime: "2018-01-01T00:00:00Z"
+    fn_crtime: "2018-01-01T00:00:00Z"
+
+  - action: ads
+    path: Documents/ReadMe.txt
+    stream: Zone.Identifier
+    content: "[ZoneTransfer]
+ZoneId=3
+"
+
+  - action: ads
+    path: Documents/report.bin
+    stream: payload
+    content_len: 9000
+
+  - action: ads
+    path: Documents
+    stream: dirnote
+    content: "A stream on a directory."
+
+  - action: hardlink
+    path: Documents/locked.txt
+    new_path: Archive/locked-link.txt
+
+  - action: create
+    path: Logs/twice.log
+    content_len: 2000
+
+  - action: hardlink
+    path: Logs/twice.log
+    new_path: Logs/twice-again.log
+
+  - action: symlink
+    path: Archive/readme-link.txt
+    target: ../Documents/ReadMe.txt
+    target_type: file
+
+  - action: symlink
+    path: Archive/logs-link
+    target: ../Logs
+    target_type: dir
+
+  - action: junction
+    path: Archive/docs-junction
+    target: Documents
+
+  - action: symlink
+    path: Logs/stale-link
+    target: application-event-002.log
+    target_type: file
+
+  - action: create
+    path: Documents/with-slack.bin
+    content_len: 5000
+    slack: {kind: canary, cluster_size: 4096}
+
+  - action: create
+    path: Documents/streamed.bin
+    content_len: 3000
+
+  - action: ads
+    path: Documents/streamed.bin
+    stream: hidden
+    content_len: 6000
+
+  - action: create
+    path: Cache/cached-thumbnail-0000-0123456789abcdef.tmp
+    content_len: 100
+
+  - action: create
+    path: Cache/cached-thumbnail-0001-0123456789abcdef.tmp
+    content_len: 101
+
+  - action: create
+    path: Cache/cached-thumbnail-0002-0123456789abcdef.tmp
+    content_len: 102
+
+  - action: create
+    path: Cache/cached-thumbnail-0003-0123456789abcdef.tmp
+    content_len: 103
+
+  - action: create
+    path: Cache/cached-thumbnail-0004-0123456789abcdef.tmp
+    content_len: 104
+
+  - action: create
+    path: Cache/cached-thumbnail-0005-0123456789abcdef.tmp
+    content_len: 105
+
+  - action: create
+    path: Cache/cached-thumbnail-0006-0123456789abcdef.tmp
+    content_len: 106
+
+  - action: create
+    path: Cache/cached-thumbnail-0007-0123456789abcdef.tmp
+    content_len: 107
+
   - action: delete
     path: Logs/application-event-000.log
     mtime: "2023-03-02T09:00:00Z"
@@ -218,6 +323,39 @@ operations:
   - action: delete
     path: Documents/Temp/
     mtime: "2023-03-02T09:00:40Z"
+
+  - action: delete
+    path: Logs/twice.log
+
+  - action: delete
+    path: Logs/stale-link
+
+  - action: delete
+    path: Documents/streamed.bin
+
+  - action: delete
+    path: Cache/cached-thumbnail-0000-0123456789abcdef.tmp
+
+  - action: delete
+    path: Cache/cached-thumbnail-0001-0123456789abcdef.tmp
+
+  - action: delete
+    path: Cache/cached-thumbnail-0002-0123456789abcdef.tmp
+
+  - action: delete
+    path: Cache/cached-thumbnail-0003-0123456789abcdef.tmp
+
+  - action: delete
+    path: Cache/cached-thumbnail-0004-0123456789abcdef.tmp
+
+  - action: delete
+    path: Cache/cached-thumbnail-0005-0123456789abcdef.tmp
+
+  - action: delete
+    path: Cache/cached-thumbnail-0006-0123456789abcdef.tmp
+
+  - action: delete
+    path: Cache/cached-thumbnail-0007-0123456789abcdef.tmp
 
   - action: create
     path: Logs/after-the-deletes.log

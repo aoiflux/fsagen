@@ -1,0 +1,12 @@
+== phase 1
+$R: bitmap 0100000000000000, 4096 bytes of blocks
+  root, room 24: 0 entries 00000000, children [0]
+  block 0: 70 entries 889e5965 from "a000000c/65/"
+s/link-00: attributes 0x10 0x30 0x80 0xc0, flags 0x420, reparse point 0c0000a01000000002000200000002000100000074007400, $FILE_NAME flags 0x20 tag 0x0, in the index 0x420 tag 0xa000000c
+== phase 2
+$R: bitmap 0100000000000000, 4096 bytes of blocks
+  root, room 24: 0 entries 00000000, children [0]
+  block 0: 35 entries 5a6036d0 from "a000000c/65/"
+== phase 3
+$R: bitmap 0000000000000000, 4096 bytes of blocks
+  root, room 16: 0 entries 00000000

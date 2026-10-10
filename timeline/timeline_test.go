@@ -237,7 +237,8 @@ func TestBodyfileCrtimeNotCtime(t *testing.T) {
 	}
 }
 
-// sample is a timeline with one of everything a bodyfile has to express.
+// sample is a timeline with one of everything a bodyfile has to express,
+// $FILE_NAME records of a file and a link among them.
 func sample() *Timeline {
 	at := func(s int) time.Time { return time.Date(2021, 3, 1, 9, 0, s, 0, time.UTC) }
 	return &Timeline{Source: SourceModelled, Entries: []Entry{
@@ -246,7 +247,9 @@ func sample() *Timeline {
 		{Path: "docs/a.txt", Stream: "quill", Type: TypeStream, Mode: 0o644, Size: 7, Inode: "3", MD5: "321c3cf486ed509164edec1e1981fec8", Atime: at(1), Mtime: at(2), Ctime: at(3), Btime: at(1)},
 		{Path: "docs/gone.txt", Type: TypeFile, Mode: 0o600, Size: 0, Inode: "4", MD5: "d41d8cd98f00b204e9800998ecf8427e", Mtime: at(3), Deleted: true},
 		{Path: "docs/big.bin", Type: TypeFile, Mode: 0o444, Size: 1 << 40, Inode: "5", UID: 1000, GID: 100, Mtime: at(5), Atime: at(5)},
-		{Path: "link", Type: TypeLink, Mode: 0o777, Inode: "6"},
+		{Path: "link", Type: TypeLink, Mode: 0o777, Inode: "6", LinkTarget: "docs"},
+		{Path: "docs/a.txt", Type: TypeFile, Mode: 0o644, Size: 5, Inode: "3", Atime: at(0), Mtime: at(0), Ctime: at(0), Btime: at(0), FileName: true},
+		{Path: "link", Type: TypeLink, Mode: 0o777, Inode: "6", LinkTarget: "docs", Atime: at(6), Mtime: at(6), Ctime: at(6), Btime: at(6), FileName: true},
 	}}
 }
 

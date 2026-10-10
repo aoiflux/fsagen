@@ -13,7 +13,7 @@
     "rows": 21,
     "outside_prefix": 1,
     "volume_files": 2,
-    "filename_records": 3,
+    "filename_records": 1,
     "old_names": 0
   },
   "categories": [
@@ -124,6 +124,17 @@
       "precision": 1.0000,
       "recall": 1.0000,
       "f1": 1.0000
+    },
+    {
+      "name": "filenames",
+      "expected": 0,
+      "checked": 0,
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "precision": null,
+      "recall": null,
+      "f1": null
     }
   ],
   "overall": {

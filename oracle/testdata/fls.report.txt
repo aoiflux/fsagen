@@ -1,6 +1,6 @@
 tool output  testdata/fls.body (bodyfile, 21 entries)
 expected     testdata/macro-phish.fsagen (5 operations, 4 SHA256SUMS lines)
-paths        output root C: (detected); outside it 1, volume files 2, $FILE_NAME records 3 (not scored), old names 0
+paths        output root C: (detected); outside it 1, volume files 2, $FILE_NAME records 1 (not scored), old names 0
 matching     times within 1s, names ignoring case
 
 category   expected  checked      tp      fp      fn precision  recall      f1
@@ -10,6 +10,7 @@ streams           0        0       0       1       0    0.0000       -  0.0000
 times            16       12      11       1       1    0.9167  0.9167  0.9167
 hashes            4        3       2       1       1    0.6667  0.6667  0.6667
 links             2        2       2       0       0    1.0000  1.0000  1.0000
+filenames         0        0       0       0       0         -       -       -
 overall                           27       5       3    0.8438  0.9000  0.8710
 
 files missing (1):

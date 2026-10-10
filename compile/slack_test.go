@@ -58,7 +58,8 @@ func TestSlackPreflight(t *testing.T) {
 	}
 	big := "  - { action: create, path: a, content_len: 5000, slack: {} }\n"
 	small := "  - { action: create, path: a, content_len: 1000, slack: {} }\n"
-	ntfs := Caps{Slack: SlackBestEffort, ClusterSize: 4096}
+	ntfs := Caps{Slack: SlackBestEffort, ClusterSize: 4096, ResidentData: true}
+	ntfsImage := Caps{Slack: SlackExact, ClusterSize: 4096, ResidentData: true}
 
 	for _, tc := range []struct {
 		name string
@@ -70,6 +71,7 @@ func TestSlackPreflight(t *testing.T) {
 		{"unset", big, Caps{}, "slack needs a target that keeps bytes"},
 		{"cluster mismatch", big, Caps{Slack: SlackBestEffort, ClusterSize: 65536}, "this volume's are 65536 bytes"},
 		{"resident", small, ntfs, "inside its NTFS MFT record"},
+		{"resident on an image", small, ntfsImage, "inside its NTFS MFT record"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := Preflight(load(tc.body), tc.caps, false)
@@ -91,6 +93,7 @@ func TestSlackPreflight(t *testing.T) {
 		"unknown cluster": {Slack: SlackBestEffort},
 		"image":           {Slack: SlackExact, ClusterSize: 4096},
 		"image small":     {Slack: SlackExact},
+		"ntfs image":      ntfsImage,
 	} {
 		p := load(big)
 		if name == "image small" {

@@ -47,6 +47,10 @@ import (
 // times when a hard link gives it a new name, copied from the object's times
 // when it is renamed, and otherwise moved only by a timestomp's fn_ times.
 
+// Clock is the time the operation happens, which the model stamps what it
+// creates or changes with: When, or an email's Date.
+func (op *Op) Clock() time.Time { return opTime(op) }
+
 // opTime is the time the operation happens.
 func opTime(op *Op) time.Time {
 	if op.Action == spec.ActionEmail && op.Email != nil {

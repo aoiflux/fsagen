@@ -85,6 +85,9 @@ type Entry struct {
 	// Links is the number of names the object has, when it has more than
 	// one: each name of a hard-linked file is an entry of its own.
 	Links int
+	// FileName marks the entry for the NTFS $FILE_NAME attribute of the name
+	// at Path, whose times it carries, rather than the object.
+	FileName bool
 	// alias marks, in a modelled timeline, an entry for a name other than
 	// its object's first.
 	alias bool
@@ -148,6 +151,8 @@ type walker struct {
 	fsys    target.Reader
 	opts    Options
 	entries []Entry
+	// fileNames are the $FILE_NAME entries of the object being read.
+	fileNames []Entry
 }
 
 // walk records every entry in dir and then descends into its directories.
@@ -180,6 +185,8 @@ func (w *walker) record(name string, d fs.DirEntry) (Entry, error) {
 		return Entry{}, err
 	}
 	w.entries = append(w.entries, e)
+	w.entries = append(w.entries, w.fileNames...)
+	w.fileNames = nil
 	if e.Type != TypeFile && e.Type != TypeDir {
 		return e, nil
 	}
@@ -219,6 +226,12 @@ func (w *walker) entryFor(name string, d fs.DirEntry) (Entry, error) {
 	}
 	if meta.Links > 1 {
 		e.Links = meta.Links
+	}
+	if fn := meta.FileName; fn != nil {
+		f := e
+		f.FileName = true
+		f.Atime, f.Mtime, f.Ctime, f.Btime = fn.Atime, fn.Mtime, fn.Ctime, fn.Btime
+		w.fileNames = append(w.fileNames, f)
 	}
 	if e.Type != TypeFile || !hashable(e.Size, w.opts) {
 		return e, nil
@@ -319,17 +332,24 @@ func sortEntries(entries []Entry) {
 		if a.Path != b.Path {
 			return a.Path < b.Path
 		}
-		return a.Stream < b.Stream
+		if a.Stream != b.Stream {
+			return a.Stream < b.Stream
+		}
+		return !a.FileName && b.FileName
 	})
 }
 
 // Name is the entry's name as The Sleuth Kit writes it: a leading slash,
-// ":stream" for a stream, " -> target" for a link, and " (deleted)" for a
-// deleted object, in that order.
+// ":stream" for a stream, " ($FILE_NAME)" for a name's $FILE_NAME, " ->
+// target" for a link, and " (deleted)" for a deleted object, in that
+// order.
 func (e Entry) Name() string {
 	n := "/" + e.Path
 	if e.Type == TypeStream {
 		n += ":" + e.Stream
+	}
+	if e.FileName {
+		n += " ($FILE_NAME)"
 	}
 	if e.Type == TypeLink && e.LinkTarget != "" {
 		n += " -> " + e.LinkTarget
