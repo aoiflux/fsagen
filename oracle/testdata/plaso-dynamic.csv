@@ -1,0 +1,54 @@
+datetime,timestamp_desc,source,source_long,message,parser,display_name,tag
+2019-03-07T10:12:44.000000+00:00,Content Modification Time,FILE,File stat,NTFS:\Users\Public\Libraries\cache.dat Type: file Mode: 0o777 Number of links: 2,filestat,NTFS:\Users\Public\Libraries\cache.dat,-
+2019-03-07T10:12:44.000000+00:00,Last Access Time,FILE,File stat,NTFS:\Users\Public\Libraries\cache.dat Type: file Mode: 0o777 Number of links: 2,filestat,NTFS:\Users\Public\Libraries\cache.dat,-
+2026-02-03T10:20:00.000000+00:00,Metadata Modification Time,FILE,File stat,NTFS:\Users\Public\Libraries\cache.dat Type: file Mode: 0o777 Number of links: 2,filestat,NTFS:\Users\Public\Libraries\cache.dat,-
+2026-02-03T10:18:00.000000+00:00,Creation Time,FILE,File stat,NTFS:\Users\Public\Libraries\cache.dat Type: file Mode: 0o777 Number of links: 2,filestat,NTFS:\Users\Public\Libraries\cache.dat,-
+2019-03-07T10:12:44.000000+00:00,Content Modification Time,FILE,File stat,NTFS:\Users\victim\AppData\Local\Temp\wupdmgr32.exe Type: file Mode: 0o777 Number of links: 2,filestat,NTFS:\Users\victim\AppData\Local\Temp\wupdmgr32.exe,-
+2019-03-07T10:12:44.000000+00:00,Last Access Time,FILE,File stat,NTFS:\Users\victim\AppData\Local\Temp\wupdmgr32.exe Type: file Mode: 0o777 Number of links: 2,filestat,NTFS:\Users\victim\AppData\Local\Temp\wupdmgr32.exe,-
+2026-02-03T10:20:00.000000+00:00,Metadata Modification Time,FILE,File stat,NTFS:\Users\victim\AppData\Local\Temp\wupdmgr32.exe Type: file Mode: 0o777 Number of links: 2,filestat,NTFS:\Users\victim\AppData\Local\Temp\wupdmgr32.exe,-
+2026-02-03T10:18:00.000000+00:00,Creation Time,FILE,File stat,NTFS:\Users\victim\AppData\Local\Temp\wupdmgr32.exe Type: file Mode: 0o777 Number of links: 2,filestat,NTFS:\Users\victim\AppData\Local\Temp\wupdmgr32.exe,-
+2026-02-03T10:15:00.000000+00:00,Content Modification Time,FILE,File stat,NTFS:\Users\victim\Downloads Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim\Downloads,-
+2026-02-03T10:15:00.000000+00:00,Last Access Time,FILE,File stat,NTFS:\Users\victim\Downloads Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim\Downloads,-
+2026-02-03T10:15:00.000000+00:00,Metadata Modification Time,FILE,File stat,NTFS:\Users\victim\Downloads Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim\Downloads,-
+2026-02-03T10:15:00.000000+00:00,Creation Time,FILE,File stat,NTFS:\Users\victim\Downloads Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim\Downloads,-
+2026-02-03T10:15:00.000000+00:00,Content Modification Time,FILE,File stat,NTFS:\Users\victim\Downloads\Invoice_4471.docm Type: file Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim\Downloads\Invoice_4471.docm,-
+2026-02-03T10:15:00.000000+00:00,Last Access Time,FILE,File stat,NTFS:\Users\victim\Downloads\Invoice_4471.docm Type: file Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim\Downloads\Invoice_4471.docm,-
+2026-02-03T10:15:00.000000+00:00,Metadata Modification Time,FILE,File stat,NTFS:\Users\victim\Downloads\Invoice_4471.docm Type: file Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim\Downloads\Invoice_4471.docm,-
+2026-02-03T10:15:00.000000+00:00,Creation Time,FILE,File stat,NTFS:\Users\victim\Downloads\Invoice_4471.docm Type: file Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim\Downloads\Invoice_4471.docm,-
+2026-02-03T10:18:00.000000+00:00,Content Modification Time,FILE,File stat,NTFS:\Users\victim\AppData Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim\AppData,-
+2026-02-03T10:18:00.000000+00:00,Last Access Time,FILE,File stat,NTFS:\Users\victim\AppData Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim\AppData,-
+2026-02-03T10:18:00.000000+00:00,Metadata Modification Time,FILE,File stat,NTFS:\Users\victim\AppData Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim\AppData,-
+2026-02-03T10:18:00.000000+00:00,Creation Time,FILE,File stat,NTFS:\Users\victim\AppData Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim\AppData,-
+2026-02-03T10:18:00.000000+00:00,Content Modification Time,FILE,File stat,NTFS:\Users\victim\AppData\Local Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim\AppData\Local,-
+2026-02-03T10:18:00.000000+00:00,Last Access Time,FILE,File stat,NTFS:\Users\victim\AppData\Local Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim\AppData\Local,-
+2026-02-03T10:18:00.000000+00:00,Metadata Modification Time,FILE,File stat,NTFS:\Users\victim\AppData\Local Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim\AppData\Local,-
+2026-02-03T10:18:00.000000+00:00,Creation Time,FILE,File stat,NTFS:\Users\victim\AppData\Local Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim\AppData\Local,-
+2026-02-03T10:18:00.000000+00:00,Content Modification Time,FILE,File stat,NTFS:\Users\victim\AppData\Local\Temp Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim\AppData\Local\Temp,-
+2026-02-03T10:18:00.000000+00:00,Last Access Time,FILE,File stat,NTFS:\Users\victim\AppData\Local\Temp Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim\AppData\Local\Temp,-
+2026-02-03T10:18:00.000000+00:00,Metadata Modification Time,FILE,File stat,NTFS:\Users\victim\AppData\Local\Temp Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim\AppData\Local\Temp,-
+2026-02-03T10:18:00.000000+00:00,Creation Time,FILE,File stat,NTFS:\Users\victim\AppData\Local\Temp Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim\AppData\Local\Temp,-
+2026-02-03T10:20:00.000000+00:00,Content Modification Time,FILE,File stat,NTFS:\Users Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users,-
+2026-02-03T10:15:00.000000+00:00,Last Access Time,FILE,File stat,NTFS:\Users Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users,-
+2026-02-03T10:20:00.000000+00:00,Metadata Modification Time,FILE,File stat,NTFS:\Users Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users,-
+2026-02-03T10:15:00.000000+00:00,Creation Time,FILE,File stat,NTFS:\Users Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users,-
+2026-02-03T10:20:00.000000+00:00,Content Modification Time,FILE,File stat,NTFS:\Users\Public Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\Public,-
+2026-02-03T10:20:00.000000+00:00,Last Access Time,FILE,File stat,NTFS:\Users\Public Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\Public,-
+2026-02-03T10:20:00.000000+00:00,Metadata Modification Time,FILE,File stat,NTFS:\Users\Public Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\Public,-
+2026-02-03T10:20:00.000000+00:00,Creation Time,FILE,File stat,NTFS:\Users\Public Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\Public,-
+2026-02-03T10:20:00.000000+00:00,Content Modification Time,FILE,File stat,NTFS:\Users\Public\Libraries Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\Public\Libraries,-
+2026-02-03T10:20:00.000000+00:00,Last Access Time,FILE,File stat,NTFS:\Users\Public\Libraries Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\Public\Libraries,-
+2026-02-03T10:20:00.000000+00:00,Metadata Modification Time,FILE,File stat,NTFS:\Users\Public\Libraries Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\Public\Libraries,-
+2026-02-03T10:20:00.000000+00:00,Creation Time,FILE,File stat,NTFS:\Users\Public\Libraries Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\Public\Libraries,-
+2026-02-03T10:24:00.000000+00:00,Content Modification Time,FILE,File stat,NTFS:\Users\victim Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim,-
+2026-02-03T10:15:00.000000+00:00,Last Access Time,FILE,File stat,NTFS:\Users\victim Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim,-
+2026-02-03T10:24:00.000000+00:00,Metadata Modification Time,FILE,File stat,NTFS:\Users\victim Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim,-
+2026-02-03T10:15:00.000000+00:00,Creation Time,FILE,File stat,NTFS:\Users\victim Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim,-
+2026-02-03T10:24:00.000000+00:00,Content Modification Time,FILE,File stat,NTFS:\Users\victim\Documents Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim\Documents,-
+2026-02-03T10:24:00.000000+00:00,Last Access Time,FILE,File stat,NTFS:\Users\victim\Documents Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim\Documents,-
+2026-02-03T10:24:00.000000+00:00,Metadata Modification Time,FILE,File stat,NTFS:\Users\victim\Documents Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim\Documents,-
+2026-02-03T10:24:00.000000+00:00,Creation Time,FILE,File stat,NTFS:\Users\victim\Documents Type: directory Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim\Documents,-
+2026-02-03T10:24:00.000000+00:00,Content Modification Time,FILE,File stat,NTFS:\Users\victim\Documents\budget-2026.xlsx Type: file Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim\Documents\budget-2026.xlsx,-
+2026-02-03T10:24:00.000000+00:00,Last Access Time,FILE,File stat,NTFS:\Users\victim\Documents\budget-2026.xlsx Type: file Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim\Documents\budget-2026.xlsx,-
+2026-02-03T10:24:00.000000+00:00,Metadata Modification Time,FILE,File stat,NTFS:\Users\victim\Documents\budget-2026.xlsx Type: file Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim\Documents\budget-2026.xlsx,-
+2026-02-03T10:24:00.000000+00:00,Creation Time,FILE,File stat,NTFS:\Users\victim\Documents\budget-2026.xlsx Type: file Mode: 0o777 Number of links: 1,filestat,NTFS:\Users\victim\Documents\budget-2026.xlsx,-
+2026-02-03T10:14:12.000000+00:00,Creation Time,OLECF,OLECF Summary Info,Title: Invoice 4471,olecf/olecf_summary,NTFS:\Users\victim\Downloads\Invoice_4471.docm,-

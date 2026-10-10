@@ -28,6 +28,7 @@ import (
 	libgenpkg "github.com/aoiflux/fsagen/libgen"
 	manifestpkg "github.com/aoiflux/fsagen/manifest"
 	"github.com/aoiflux/fsagen/model"
+	"github.com/aoiflux/fsagen/oracle"
 	"github.com/aoiflux/fsagen/render"
 	"github.com/aoiflux/fsagen/runinfo"
 	"github.com/aoiflux/fsagen/sandbox"
@@ -93,10 +94,18 @@ type config struct {
 	capsFor func(*sandbox.FS) compile.Caps
 }
 
-// run is the whole command, separated from main so tests can drive it.
+// run is the whole command, separated from main so tests can drive it. Its
+// one subcommand, diff-oracle, is its first argument; an output directory
+// of that name is written ./diff-oracle.
 func run(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == diffOracle {
+		return oracle.Main(args[1:], os.Stdin, stdout, stderr)
+	}
 	return runWithCaps(args, stdout, stderr, manifestpkg.Caps)
 }
+
+// diffOracle names the subcommand that scores a tool's report of a run.
+const diffOracle = "diff-oracle"
 
 // runWithCaps is run with capability detection injected, so a test can exercise
 // a platform it is not running on without a package-level switch.
@@ -915,8 +924,10 @@ func printVersion(w io.Writer) {
 
 func printUsage(w io.Writer) {
 	fmt.Fprintf(w, `Usage: fsagen [OPTIONS] <output-path>
+       fsagen diff-oracle --meta DIR [OPTIONS] <tool-output>
 
-Generate deterministic filesystem artifacts for forensic testing.
+Generate deterministic filesystem artifacts for forensic testing, and score
+what a forensic tool reports about them (fsagen diff-oracle -h).
 
 Input (give one):
   --manifest FILE           YAML manifest of operations
@@ -971,6 +982,7 @@ Examples:
   fsagen --playbook adversary.yaml --dry-run
   fsagen --seed 7 --bulk 3 --depth 2 ./quick-bulk
   fsagen --timeline existing.csv ./existing-artifacts
+  fsagen diff-oracle --meta ./scene.fsagen fls.bodyfile
 `, strings.Join(timelinepkg.Formats, ", "), strings.Join(timelinepkg.Extensions(), " "))
 }
 

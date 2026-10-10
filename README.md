@@ -39,6 +39,7 @@ synthetic corpus with no YAML at all.
 **What it guarantees** · [Timestamps](#timestamps) ·
 [Determinism contract](#determinism-contract) ·
 [Forensic timelines](#forensic-timelines) ·
+[Scoring a tool](#scoring-a-tool-diff-oracle) ·
 [Platform support](#platform-support) · [Limits](#limits)
 
 **Project** · [Development](#development) · [Dependencies](#dependencies) ·
@@ -103,6 +104,10 @@ is recorded rather than silently dropped.
   files included, byte-identical on every run)
 - A ledger of every operation and an answer key of what a tool should find,
   beside the output
+- `fsagen diff-oracle` scores what a forensic tool reports (a Sleuth Kit
+  bodyfile, Plaso's l2tcsv, dynamic CSV or JSON lines) against what the run
+  made: names, deleted entries, streams, times, digests and links, with
+  precision, recall and F1 per category and a JSON scorecard
 - ATT&CK technique tags (`mitre:`) on any action or step, carried into the
   ledger and answer key and written as an ATT&CK Navigator layer; tagging an
   action never changes a byte it writes
@@ -187,9 +192,13 @@ fsagen --seed 42 --playbook examples/playbook-basic.yaml \
 # 3. Confirm the corpus is intact, and see what a tool should find
 cd crime-scene && sha256sum -c ../crime-scene.fsagen/SHA256SUMS
 cat ../crime-scene.fsagen/answer-key.jsonl
+
+# 4. Score what a tool found (here The Sleuth Kit, on an image of the scene)
+fls -r -m / scene.img > fls.body
+fsagen diff-oracle --meta ../crime-scene.fsagen fls.body
 ```
 
-Fifteen worked examples ship in `examples/`, from a two-file scenario up to
+Sixteen worked examples ship in `examples/`, from a two-file scenario up to
 ransomware, insider exfiltration and malware lifecycle playbooks.
 
 ## Usage
@@ -248,6 +257,11 @@ fsagen [OPTIONS] <output-path>
 
 **Exit status:** 0 success, 1 generation failed, 2 command-line error.
 Diagnostics go to stderr.
+
+`fsagen diff-oracle --meta DIR [OPTIONS] <tool-output>` scores a forensic
+tool's report of the output instead of generating; see _Scoring a tool_. It is
+a subcommand only as the first argument, so an output directory named
+`diff-oracle` is written `./diff-oracle`.
 
 **Output directory:** must be a directory or not exist. A non-empty one is
 refused unless `--clean` or `--into-existing` is given.
@@ -1833,6 +1847,104 @@ mactime -b evidence.body -d > detailed-timeline.txt
 ```
 
 See `examples/TIMELINE_EXAMPLES.md` for more.
+
+## Scoring a tool: diff-oracle
+
+`fsagen diff-oracle` scores what a forensic tool reports about a generated
+tree against what fsagen made there:
+
+```sh
+fls -r -m / scene.img > fls.body
+fsagen diff-oracle --meta ./scene.fsagen fls.body
+fsagen diff-oracle --meta ./scene.fsagen --scorecard score.json --fail-under 0.95 plaso.csv
+```
+
+**What it knows.** The run's sidecar directory (`--meta`, required) holds the
+answer: the ledger, folded operation by operation into the state the run left
+(every name and the object it names, content digests, streams, links, the
+times the run controls, and every object it deleted), and `SHA256SUMS`, which
+adds the files no operation made (those `--into-existing` found, and every file
+of a bulk corpus) and must agree with the ledger about the rest. A run that did
+not complete is refused, and so is a ledger that disagrees with `SHA256SUMS`:
+the two are then from different runs.
+
+**What it reads.** The tool's output (a file, or `-` for standard input), in a
+format detected from its first line or named with `--format`:
+
+| `--format`   | Written by                                                    | Read                                                                                                                                                                                                                                                                       |
+| ------------ | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bodyfile`   | `fls -r -m`, `tsk_gettimes`, fsagen                           | `:stream`, ` ($FILE_NAME)`, ` -> target`, ` (deleted)` and ` (deleted-realloc)` as The Sleuth Kit appends them; a name may hold `\|`; the digest column as an MD5 (or a SHA-256 where a tool puts one there)                                                                  |
+| `l2tcsv`     | `psort -o l2tcsv`                                             | file-stat lines only (source `FILE`), in UTC; the lines of one entry fold back into one; type, link count and `(unallocated)` from the description; `md5_hash` and `sha256_hash` from the extra column when Plaso's hashers ran                                            |
+| `dynamic`    | `psort` (its default output)                                  | the default fields, plus `filename`, `inode`, `is_allocated`, `md5_hash`, `sha256_hash` and `number_of_links` when added (`--additional_fields`); display names lose their `OS:`, `TSK:` or `NTFS:` prefix                                                                 |
+| `timesketch` | fsagen `--timeline-format timesketch`, `psort -o json_line`  | one event per time, `fs:stat` events only, microseconds from `timestamp`; an MFT `$FILE_NAME` event is recognised as one                                                                                                                                                  |
+| `jsonl`      | fsagen                                                        | everything fsagen writes, link targets and counts included                                                                                                                                                                                                                 |
+| `csv`        | fsagen                                                        | everything fsagen writes                                                                                                                                                                                                                                                   |
+
+**How paths are matched.** The tool's paths are read relative to the output
+root, which is detected as the leading part that, taken off, leaves the most
+paths naming something in the run (`--strip-prefix` gives it instead).
+Backslashes are separators unless the scenario's own names hold one. Names are
+compared without regard to case when the run wrote to a volume that does
+(NTFS, ReFS, FAT, exFAT, APFS; `--case exact|fold` overrides), and because
+Plaso writes a comma in a CSV value as a space, a name with a comma matches its
+spaced form in `l2tcsv` and `dynamic`. Rows outside the output root, the
+volume's own entries (`$MFT`, `$OrphanFiles` and the other `$` names TSK lists,
+`System Volume Information`, `lost+found`, `$` streams such as `$I30`) and NTFS
+`$FILE_NAME` records are set aside and counted, never scored.
+
+**What is scored**, each category with its true and false positives and
+negatives, precision, recall and F1:
+
+| Category  | One item per                                                      | Found when                                                                                                                                                                                                                                                                                   |
+| --------- | ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `files`   | name the run left: file, directory or link, each hard link's name | the tool lists it. A name listed twice, or one where the run left nothing, is a false positive                                                                                                                                                                                              |
+| `deleted` | object the run deleted                                            | the tool lists a deleted entry at its path. Several objects deleted from one path are each an item, and each deleted row is credited to the one whose times it matches best. A deleted entry under a name the run once used (a renamed file's old one) is a real trace, counted as an old name; one anywhere else is a false positive |
+| `streams` | named stream on a name the run left                               | the tool lists it                                                                                                                                                                                                                                                                            |
+| `times`   | time the run controls, of every name and deletion the tool found  | the tool's is within `--time-tolerance`: by default the format's resolution (1s for `bodyfile` and `l2tcsv`, 1us for `dynamic` and `timesketch`, 0 for `jsonl` and `csv`). A time the tool leaves unknown is missed; a different one is wrong, a false positive and a false negative at once |
+| `hashes`  | file or stream found whose digest the run knows                   | the tool's MD5 matches, or failing that its SHA-256. A digest the tool did not compute is not held against it                                                                                                                                                                              |
+| `links`   | name of a hard-linked file; symlink; junction                     | a hard-linked file's names share an inode (TSK's NTFS `entry-type-id` compared by entry) and, where the tool counts them, as many links as names; a symlink or junction points where the run made it point. A file with one name reported with more links is a false positive              |
+
+The report gives, per category, how many items there were, how many the tool's
+output could be judged on (a time of an entry the tool did not list cannot be,
+nor a digest it did not compute), and the counts and ratios; `overall` sums the
+categories scored, which `--categories` picks. Then it lists up to 20 of what
+each category missed, made up or got wrong, with the tool's line numbers;
+`--scorecard FILE` writes all of it as JSON (`scorecard_version: 1`).
+`--fail-under X` exits 3 when the overall F1 is below X.
+
+**Which times are scored.** Only the times the run controls, as the ledger
+states them: never those the ledger lists as `uncontrolled` (on Linux, the
+change and creation times). Two kinds of time the ledger cannot give are left
+unscored unless a model gives them: a directory's, which every entry added to or
+taken from it moves at a time the ledger does not record, and a file's change
+time after a `rotate` renamed it or one of its hard links was deleted.
+`--model FILE` takes them from a modelled timeline of the same run
+(`--timeline-source modelled`, in any format above); a model that does not list
+exactly the names the run left is refused as another run's.
+
+**What a live volume can show.** A tool reading a live directory finds no
+deleted entries, so `deleted` scores 0 there by design: score that category
+against an image of the volume, or leave it out with `--categories`.
+
+**How it is checked.** Every example's modelled bodyfile scores 1 in every
+category against its ledger, on both platforms, with no tolerance
+(`TestModelledBodyfilesScoreOne`): the check that the ledger, folded, is the
+model it stands in for. A real run's modelled timeline scores 1 everywhere,
+directory times included, and its observed timeline read back from disk scores
+1 on everything a live volume keeps (`TestDiffOracleScoresFsagenTimelines`). A
+dropped row lowers recall, a time a second off fails with no tolerance and
+passes with a second's, and a row the run never made lowers precision
+(`TestPerturbations`). An `fls`-shaped listing of an NTFS image of
+`playbook-macro-phish`, with a mistake of every kind, has its report and
+scorecard recorded (`TestGoldenReport`), and fsagen's own timelines read back
+in every format (`TestFsagenTimelinesReadBack`). **Not run here: Plaso.** The
+`l2tcsv`, `dynamic` and `json_line` readers follow Plaso's output modules as its
+source writes them (`l2t_csv.py`, `dynamic.py`, `shared_dsv.py`,
+`formatting_helper.py`), and their fixtures (`TestPlasoOutputsScoreOne`) were
+written to that shape, not produced by Plaso.
+
+**Exit status:** 0 scored, 1 error, 2 command-line error, 3 below
+`--fail-under`.
 
 ## Bulk generation
 

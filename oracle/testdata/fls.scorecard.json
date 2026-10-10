@@ -1,0 +1,137 @@
+{
+  "scorecard_version": 1,
+  "tool_output": "testdata/fls.body",
+  "format": "bodyfile",
+  "meta": "testdata/macro-phish.fsagen",
+  "operations": 5,
+  "sha256sums_lines": 4,
+  "time_tolerance": "1s",
+  "case": "fold",
+  "paths": {
+    "prefix": "C:",
+    "prefix_detected": true,
+    "rows": 21,
+    "outside_prefix": 1,
+    "volume_files": 2,
+    "filename_records": 3,
+    "old_names": 0
+  },
+  "categories": [
+    {
+      "name": "files",
+      "expected": 13,
+      "checked": 13,
+      "tp": 12,
+      "fp": 1,
+      "fn": 1,
+      "precision": 0.9231,
+      "recall": 0.9231,
+      "f1": 0.9231,
+      "missing": [
+        "Users/victim/Documents/budget-2026.xlsx"
+      ],
+      "extra": [
+        {
+          "line": 15,
+          "path": "Users/victim/Desktop",
+          "reason": "the run made nothing there"
+        }
+      ]
+    },
+    {
+      "name": "deleted",
+      "expected": 0,
+      "checked": 0,
+      "tp": 0,
+      "fp": 1,
+      "fn": 0,
+      "precision": 0.0000,
+      "recall": null,
+      "f1": 0.0000,
+      "extra": [
+        {
+          "line": 17,
+          "path": "Users/victim/Documents/~$budget-2026.xlsx",
+          "reason": "the run deleted nothing there"
+        }
+      ]
+    },
+    {
+      "name": "streams",
+      "expected": 0,
+      "checked": 0,
+      "tp": 0,
+      "fp": 1,
+      "fn": 0,
+      "precision": 0.0000,
+      "recall": null,
+      "f1": 0.0000,
+      "extra": [
+        {
+          "line": 20,
+          "path": "Users/victim/downloads/Invoice_4471.docm:Zone.Identifier",
+          "reason": "the run wrote no such stream"
+        }
+      ]
+    },
+    {
+      "name": "times",
+      "expected": 16,
+      "checked": 12,
+      "tp": 11,
+      "fp": 1,
+      "fn": 1,
+      "precision": 0.9167,
+      "recall": 0.9167,
+      "f1": 0.9167,
+      "wrong": [
+        {
+          "line": 19,
+          "path": "Users/victim/Downloads/Invoice_4471.docm",
+          "field": "mtime",
+          "expected": "2026-02-03T10:15:00Z",
+          "found": "2026-02-03T10:16:00Z"
+        }
+      ]
+    },
+    {
+      "name": "hashes",
+      "expected": 4,
+      "checked": 3,
+      "tp": 2,
+      "fp": 1,
+      "fn": 1,
+      "precision": 0.6667,
+      "recall": 0.6667,
+      "f1": 0.6667,
+      "wrong": [
+        {
+          "line": 8,
+          "path": "Users/Public/Libraries/cache.dat",
+          "field": "md5",
+          "expected": "ad6fd8ebed05d988ccd6d0f3653b4a05",
+          "found": "00000000000000000000000000000000"
+        }
+      ]
+    },
+    {
+      "name": "links",
+      "expected": 2,
+      "checked": 2,
+      "tp": 2,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0000,
+      "recall": 1.0000,
+      "f1": 1.0000
+    }
+  ],
+  "overall": {
+    "tp": 27,
+    "fp": 5,
+    "fn": 3,
+    "precision": 0.8438,
+    "recall": 0.9000,
+    "f1": 0.8710
+  }
+}

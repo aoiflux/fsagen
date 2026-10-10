@@ -1,0 +1,31 @@
+tool output  testdata/fls.body (bodyfile, 21 entries)
+expected     testdata/macro-phish.fsagen (5 operations, 4 SHA256SUMS lines)
+paths        output root C: (detected); outside it 1, volume files 2, $FILE_NAME records 3 (not scored), old names 0
+matching     times within 1s, names ignoring case
+
+category   expected  checked      tp      fp      fn precision  recall      f1
+files            13       13      12       1       1    0.9231  0.9231  0.9231
+deleted           0        0       0       1       0    0.0000       -  0.0000
+streams           0        0       0       1       0    0.0000       -  0.0000
+times            16       12      11       1       1    0.9167  0.9167  0.9167
+hashes            4        3       2       1       1    0.6667  0.6667  0.6667
+links             2        2       2       0       0    1.0000  1.0000  1.0000
+overall                           27       5       3    0.8438  0.9000  0.8710
+
+files missing (1):
+  Users/victim/Documents/budget-2026.xlsx
+
+files extra (1):
+  line 15: Users/victim/Desktop: the run made nothing there
+
+deleted extra (1):
+  line 17: Users/victim/Documents/~$budget-2026.xlsx: the run deleted nothing there
+
+streams extra (1):
+  line 20: Users/victim/downloads/Invoice_4471.docm:Zone.Identifier: the run wrote no such stream
+
+times wrong (1):
+  line 19: Users/victim/Downloads/Invoice_4471.docm mtime: expected 2026-02-03T10:15:00Z, found 2026-02-03T10:16:00Z
+
+hashes wrong (1):
+  line 8: Users/Public/Libraries/cache.dat md5: expected ad6fd8ebed05d988ccd6d0f3653b4a05, found 00000000000000000000000000000000
