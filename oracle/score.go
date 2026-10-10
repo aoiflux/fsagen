@@ -143,6 +143,9 @@ type PathReport struct {
 	// OldNames are deleted entries under a name the run once used: real
 	// traces, though not of a deletion.
 	OldNames int `json:"old_names"`
+	// Reused are deleted objects whose entries a later write to the image
+	// reused, so that no tool could find them; they are not scored.
+	Reused int `json:"reused_entries,omitempty"`
 }
 
 // scorer scores one tool's rows against one run.
@@ -175,7 +178,7 @@ func Score(x *Expected, rows []Row, opts Options) ([]*Category, PathReport, erro
 	for _, n := range CategoryNames {
 		s.cats[n] = &Category{Name: n}
 	}
-	rep := PathReport{Rows: len(rows)}
+	rep := PathReport{Rows: len(rows), Reused: x.reused}
 	var pre prefix
 	if opts.PrefixSet {
 		pre = parsePrefix(opts.Prefix, backslashes)
@@ -281,6 +284,9 @@ func (s *scorer) resolve(r *Row, rel string) (path, stream string, known bool) {
 
 func (s *scorer) placeDeleted(r *Row, path, stream string, known bool, shown string, rep *PathReport) {
 	deleted := s.cats[catDeleted]
+	if s.byEntry(r, shown, rep) {
+		return
+	}
 	switch {
 	case known && stream == "" && s.x.deleted[path] != nil:
 		s.deletedRows[path] = append(s.deletedRows[path], r)
@@ -327,6 +333,30 @@ func (s *scorer) expectedStream(path, stream string) (streamKey, bool) {
 	return streamKey{}, false
 }
 
+// byEntry places a deleted entry by the address the tool gives it, where
+// the run was written into an image and the answer key says what entry is
+// there. A tool reading a deleted entry often shows its name damaged, as
+// FAT's 0xE5 over the first character leaves it, but the address is exact.
+func (s *scorer) byEntry(r *Row, shown string, rep *PathReport) bool {
+	ref, ok := s.x.entries[inodeKey(r.Inode)]
+	if !ok || r.Inode == "" {
+		return false
+	}
+	g := s.x.deletedBy(ref.path, ref.op)
+	switch {
+	case ref.cause != "delete" || g == nil:
+		rep.OldNames++
+	case s.gone[g] == nil:
+		s.gone[g] = r
+		s.cats[catDeleted].TP++
+	default:
+		deleted := s.cats[catDeleted]
+		deleted.FP++
+		deleted.Extra = append(deleted.Extra, Extra{r.Line, shown, fmt.Sprintf("listed again (first on line %d)", s.gone[g].Line)})
+	}
+	return true
+}
+
 // assignDeleted pairs the deleted entries the tool found with the objects
 // the run deleted. Several objects can have been deleted from one path, and
 // a tool can find any of them: each row goes to the one, not yet found,
@@ -359,11 +389,18 @@ func (s *scorer) assignDeleted(rep *PathReport) {
 func (s *scorer) agreeing(r *Row, o *object) int {
 	n := 0
 	for i, want := range o.times {
-		if !want.IsZero() && !r.Times[i].IsZero() && abs(r.Times[i].Sub(want)) <= s.tol {
+		if !want.IsZero() && !r.Times[i].IsZero() && abs(r.Times[i].Sub(want)) <= s.tolerance(i) {
 			n++
 		}
 	}
 	return n
+}
+
+// tolerance is how far time i may be off: the tolerance asked for, or the
+// volume's resolution for that time if it is coarser, as FAT keeps only
+// the date of the last access.
+func (s *scorer) tolerance(i int) time.Duration {
+	return max(s.tol, s.x.resolution[i])
 }
 
 // deletedLabel names one object deleted from p in the report.
@@ -390,6 +427,9 @@ func (s *scorer) missing() {
 	}
 	for p, gens := range s.x.deleted {
 		for _, g := range gens {
+			if g.reused {
+				continue
+			}
 			deleted.Expected++
 			if s.gone[g] == nil {
 				deleted.FN++
@@ -409,6 +449,9 @@ func (s *scorer) scoreTimes() {
 	}
 	for p, gens := range s.x.deleted {
 		for _, g := range gens {
+			if g.reused {
+				continue
+			}
 			s.scoreTimesOf(s.gone[g], g, deletedLabel(p, g))
 		}
 	}
@@ -432,7 +475,7 @@ func (s *scorer) scoreTimesOf(r *Row, o *object, label string) {
 		case got.IsZero():
 			c.FN++
 			c.Wrong = append(c.Wrong, Wrong{Line: r.Line, Path: label, Field: timeNames[i], Expected: stamp(want)})
-		case abs(got.Sub(want)) <= s.tol:
+		case abs(got.Sub(want)) <= s.tolerance(i):
 			c.TP++
 		default:
 			c.wrong(r, label, timeNames[i], stamp(want), stamp(got))

@@ -1,0 +1,66 @@
+# input-sha256 79d16bdb6f7909957702643818d5e198d1a4ba927758571ef50b474c37a81b00
+image_sha256 8351fab4f667b21fd3d70e3bdc745111c8aac3e099004c7cdddf40986f36b23b
+{"event":"slack","n":55,"object":56,"kind":"file","path":"Logs/carrier.bin","slack":{"kind":"canary","cluster_size":512,"offset":1000,"length":24,"sha256":"926272a27859e5801ed5e7941c5fd868c444b77b07b87615863c4ee87a7e531b","verified":true}}
+{"event":"residue","n":56,"object":55,"kind":"file","path":"Logs/application-event-039.log","residue":{"cause":"overwrite","extents":[{"offset":1751040,"length":1444}],"size":1444,"sha256":"72886a0590681799af8b9e69accca885cf8efd54a3ca3707f21aedeb82e03c49","recoverable":"full"}}
+{"event":"residue","n":57,"object":54,"kind":"file","path":"Logs/application-event-038.log","residue":{"cause":"overwrite","extents":[{"offset":1749504,"length":1407}],"size":1407,"sha256":"70693fd431b22eeb6a73c15ded84c034106e33968d7639c9b6fba276f88d2645","recoverable":"full"}}
+{"event":"residue","n":58,"object":16,"kind":"file","path":"Logs/application-event-000.log","residue":{"cause":"delete","entry":{"type":"fat_dirent","number":311,"offset":1708672,"length":32,"overwritten":true},"extents":[{"offset":1709056,"length":1}],"size":1,"sha256":"fcb5f40df9be6bae66c1d77a6c15968866a9e6cbd7314ca432b019d17392f6f4","recoverable":"full"}}
+{"event":"residue","n":59,"object":19,"kind":"file","path":"Logs/application-event-003.log","residue":{"cause":"delete","entry":{"type":"fat_dirent","number":320,"offset":1708960,"length":32},"extents":[{"offset":1710592,"length":112}],"size":112,"sha256":"8f6112979dd472fc66f86ecb140625ac0f95314d2fe5711c1de5b606a5e5314b","recoverable":"full"}}
+{"event":"residue","n":60,"object":22,"kind":"file","path":"Logs/application-event-006.log","residue":{"cause":"delete","entry":{"type":"fat_dirent","number":393,"offset":1711296,"length":32},"extents":[{"offset":1712640,"length":223}],"size":223,"sha256":"1b04bab3e91e281482232a5a198b83229ff85592d2023b1f50268662ae4b00dc","recoverable":"full"}}
+{"event":"residue","n":61,"object":25,"kind":"file","path":"Logs/application-event-009.log","residue":{"cause":"delete","entry":{"type":"fat_dirent","number":402,"offset":1711584,"length":32},"extents":[{"offset":1714176,"length":334}],"size":334,"sha256":"33605cf2996bf8d2709ac9b32b8f24befc9629a29f4fa644e807982873e69f67","recoverable":"full"}}
+{"event":"residue","n":62,"object":28,"kind":"file","path":"Logs/application-event-012.log","residue":{"cause":"delete","entry":{"type":"fat_dirent","number":507,"offset":1714944,"length":32},"extents":[{"offset":1716224,"length":445}],"size":445,"sha256":"ca5bc29dfbfc6a48df03e2fd6aad6ad301dc445bb27f26511f26272d2a0e037e","recoverable":"full"}}
+{"event":"residue","n":63,"object":31,"kind":"file","path":"Logs/application-event-015.log","residue":{"cause":"delete","entry":{"type":"fat_dirent","number":612,"offset":1718304,"length":32},"extents":[{"offset":1718784,"length":556}],"size":556,"sha256":"b618e53d75ca09e8414f43a186f336169e6bbc386498f8ea16dced1fb66224df","recoverable":"full"}}
+{"event":"residue","n":64,"object":34,"kind":"file","path":"Logs/application-event-018.log","residue":{"cause":"delete","entry":{"type":"fat_dirent","number":621,"offset":1718592,"length":32},"extents":[{"offset":1721856,"length":667}],"size":667,"sha256":"85556499bcb077f0a25ad412485a3d1b7cc6a98be547f1e5486e7c66609c0917","recoverable":"full"}}
+{"event":"residue","n":65,"object":37,"kind":"file","path":"Logs/application-event-021.log","residue":{"cause":"delete","entry":{"type":"fat_dirent","number":790,"offset":1724000,"length":32},"extents":[{"offset":1725440,"length":778}],"size":778,"sha256":"7d84768702afc1638503eec435412162ccb69ea9c5f5c48fe59cf1abc6c0c68b","recoverable":"full"}}
+{"event":"residue","n":66,"object":40,"kind":"file","path":"Logs/application-event-024.log","residue":{"cause":"delete","entry":{"type":"fat_dirent","number":799,"offset":1724288,"length":32},"extents":[{"offset":1728512,"length":889}],"size":889,"sha256":"d89b356073ad57541411f9b6f3ca80c8262de41d8cfa4b9da652ce654f27b067","recoverable":"full"}}
+{"event":"residue","n":67,"object":43,"kind":"file","path":"Logs/application-event-027.log","residue":{"cause":"delete","entry":{"type":"fat_dirent","number":1000,"offset":1730720,"length":32},"extents":[{"offset":1732096,"length":1000}],"size":1000,"sha256":"4cb9bde2be69108fc5eb2accea20f4d2e96dc9c5d30d87694f47307ae515d44e","recoverable":"full"}}
+{"event":"residue","n":68,"object":46,"kind":"file","path":"Logs/application-event-030.log","residue":{"cause":"delete","entry":{"type":"fat_dirent","number":1009,"offset":1731008,"length":32},"extents":[{"offset":1736192,"length":1111}],"size":1111,"sha256":"a2d96ca30d53c80777e93c48b7727ca82d4e11808ee6d691829f9cb9a8a043cc","recoverable":"full"}}
+{"event":"residue","n":69,"object":49,"kind":"file","path":"Logs/application-event-033.log","residue":{"cause":"delete","entry":{"type":"fat_dirent","number":1226,"offset":1737952,"length":32},"extents":[{"offset":1741312,"length":1222}],"size":1222,"sha256":"83efe519710dcd5b539d9c9e02558fa49bfec489f89cc2c8566c50bf8cbe9525","recoverable":"full"}}
+{"event":"residue","n":70,"object":52,"kind":"file","path":"Logs/application-event-036.log","residue":{"cause":"delete","entry":{"type":"fat_dirent","number":1475,"offset":1745920,"length":32},"extents":[{"offset":1746432,"length":1333}],"size":1333,"sha256":"418cf80f628cb45300c54b232ee4ba781211bd7fab2d7837087c7a1e4bf7bcf2","recoverable":"full"}}
+{"event":"residue","n":71,"object":55,"kind":"file","path":"Logs/application-event-039.log","residue":{"cause":"delete","entry":{"type":"fat_dirent","number":1484,"offset":1746208,"length":32},"extents":[{"offset":1753600,"length":3000}],"size":3000,"sha256":"072b8ae021414eb08689ab0e9af30c2457407d6f060cb808378a17422ff3cfa3","recoverable":"full"}}
+{"event":"residue","n":73,"object":3,"kind":"file","path":"Documents/Long File Name Number2.text","residue":{"cause":"rename","entry":{"type":"fat_dirent","number":28,"offset":1699616,"length":32}}}
+{"event":"residue","n":74,"object":10,"kind":"file","path":"Documents/notes.txt","residue":{"cause":"rename","entry":{"type":"fat_dirent","number":211,"offset":1705472,"length":32}}}
+{"event":"residue","n":77,"object":61,"kind":"file","path":"Scratch/one.tmp","residue":{"cause":"delete","entry":{"type":"fat_dirent","number":2005,"offset":1762880,"length":32},"extents":[{"offset":1763328,"length":700}],"size":700,"sha256":"bf28c54ab0f579897448b0836ea6c0e2653935194f896a0d81dfa9bf01ffec3e","recoverable":"full"}}
+{"event":"residue","n":78,"object":62,"kind":"file","path":"Scratch/two.tmp","residue":{"cause":"delete","entry":{"type":"fat_dirent","number":2006,"offset":1762912,"length":32},"extents":[{"offset":1764352,"length":1700}],"size":1700,"sha256":"56c660c41ddd4fc10b235cd1dfb8b387284c51c6a14a674bd3798a10a397ce44","recoverable":"full"}}
+{"event":"residue","n":79,"object":60,"kind":"dir","path":"Scratch","residue":{"cause":"delete","entry":{"type":"fat_dirent","number":11,"offset":1699072,"length":32},"extents":[{"offset":1762816,"length":512}],"size":512,"sha256":"43b3986d10678d520e0a89ea535880b9522de638215044bad836e3d1e451021f","recoverable":"full"}}
+{"event":"residue","n":80,"object":58,"kind":"dir","path":"Archive","residue":{"cause":"rename","entry":{"type":"fat_dirent","number":9,"offset":1699008,"length":32}}}
+13516c8176cc5716b1b40690b5cd3ace879ec70f971871146a6364d05e080b73  Documents/.hidden
+3093031585a741e48a25f1fa7d3fc505208b09733e129ca7da1dba8db62173f3  Documents/Archive/2023/notes.txt
+12220f309e0f6e84ddf428eafea011e046ef63380faa74213212e35277fdd034  Documents/Long File Name Number1.text
+59894da071092710de09f275f530a08bd42adf76a767dc4eaf9b93f710ae9add  Documents/Long File Name Number3.text
+85f30af340b14bedff7b682ba102e158e72b5eb9d075beb0eb9bb6b3fd28eab7  Documents/Long File Name Number4.text
+6d728c80e810cc090648247527f67536e4814064c130e96e8d1b6a88c3ad9b28  Documents/Long File Name Number5.text
+797fe33a74d3a818b86851295f68d9a500e7b53234396474f78d4e79f78a34dd  Documents/Long File Name Number6.text
+cb1544eee489828690507ba642f21aff394282837749f78d5f812923f6ad3a92  Documents/Long File Name Number7.text
+656658ed8516f2b87a5a29a4c1b61c10fbb2a64f5ec6a818ad1421c3ed0e9c3c  Documents/ReadMe.txt
+bc86171c1e9119e3a4bc300cdb16fdcdedbccc1785643d1b381a5ec182921820  Documents/Renamed In Place.text
+ba6b1b76c212115b07e41dabb6a75aa5b79cbc2122a72a1e3d706dc12818679f  Documents/UPPER.TXT
+46af960fbdf3ec49337da9a4c7ae0776de6f159ec512bb2781e16d73fc2d9ac6  Documents/a+b=c[1].txt
+8af93cba3a5dc4f57754f19d74d447081dec357aa0446d7efda8b0c0ce42e6c1  Documents/x y.txt
+aed96f6c761701f2b85a5c0383b1da47f4572b85477764043fa5bd86b274a7da  Logs/after-the-deletes.log
+85a0dcbe564200c6eff4f1c7106440c632b3ab02a46370e76a4198abeb8db981  Logs/application-event-001.log
+1ae42a1e4accb6861a3fd8f511e2deca4ae25a98b6e34c6470784c8fb0ba3f46  Logs/application-event-002.log
+e8caf396a8964e9f820cda2095845300f13e4e92922ebd65b37512a312a20912  Logs/application-event-004.log
+0bb848895116874ca6f9c566458b1fff48212ee1f50b8883f787894e84ef4952  Logs/application-event-005.log
+a2258d6ee4c7a7ba5b1c02a62edfd88a0045d0138ac802a4a87cb0bfd1a25465  Logs/application-event-007.log
+62696a1cb0d7dd1c6d095d695dced017e6b64125bba88978b8cf9018da8623ca  Logs/application-event-008.log
+03411f5d7f0ff637820c580b0b2941193a324c8ee23e459595e676f5b91c4579  Logs/application-event-010.log
+5d15674e63f370a0feb281279cf4cf305d2b7bb0fd3daca1765cec346bc3b416  Logs/application-event-011.log
+89eb3257a23a411d2006cb56d5a0e6f3b04c6fc434095fbb55874ba575d8d7d0  Logs/application-event-013.log
+f7731288e624b457d3e0c8c13a4f16ac4627e349234f2229b8a42f46cf307a4c  Logs/application-event-014.log
+a7e4b3b4a6aff1434f4c6192def1587e3bb0169e59bcc859192f566d8617be3a  Logs/application-event-016.log
+8d429e717111a2a0045471b085f4a491e2ca7ff5c7848f90fc6a24332c25a05a  Logs/application-event-017.log
+eab5444ff6143b7de9bc33efaea29febd925a39f90fb43d5b6edaee144ffb768  Logs/application-event-019.log
+8131b08d5844132b96fd2d602127476e546dbd45aaeec3a6394a9115d8aa8c1f  Logs/application-event-020.log
+115aedb394b0c7c5c314424259397925c8afb2b7a85a2f510a1f7d3f5f892e75  Logs/application-event-022.log
+7aabcb491bc5d9be767a376058b3631659d10c7f3e5faf6513e747555c0a6536  Logs/application-event-023.log
+8423a4a61dc81d11fbcb46a54c3da524f23b2ce563de64fd5cc3cebe4add4c54  Logs/application-event-025.log
+aba470bc37cdd00adea5430feedd8305d0d42dbab90f2ff049fcbbcde3e97ed2  Logs/application-event-026.log
+ae56d254ef5683b916251ba8376fd03b6521bfe5b5dc8a7aea5624c2bf257a82  Logs/application-event-028.log
+e721503f24acbed17702fa963c85a149f4c20ccd186202176e8c6357ae83857a  Logs/application-event-029.log
+c0b9b09a9ea98baadbb08f644872a5e553d5248b9f33446f9c7037d7436c946d  Logs/application-event-031.log
+01d6cb06da4e08de4518e2823251d64afa08853737275712bee8ac10c2508624  Logs/application-event-032.log
+189893658b4de91d4b7bac58a6305ae87d7add52dcaf795a49d417f978d47d9e  Logs/application-event-034.log
+03b05b077f184a89472736ec8a5ea0649c5283198284ccfb3019fcf6d46a09fa  Logs/application-event-035.log
+2bea4c5591a0a6fbfde9b97efc559b31250bea3628d484e7de4dd336c898bc91  Logs/application-event-037.log
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  Logs/application-event-038.log
+456c2482c79136ab7dc0b52d1ed8ecbf6241cdfe38efda38f95095621d364e4a  Logs/carrier.bin

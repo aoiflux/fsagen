@@ -126,9 +126,10 @@ func ModelledTimeline(tree *model.Tree, entries []ledger.Entry, caps compile.Cap
 }
 
 // AnswerKey derives the answer key from the ledger and the final state of
-// the model.
-func AnswerKey(tree *model.Tree, entries []ledger.Entry, caps compile.Caps) []ledger.Fact {
-	return ledger.AnswerKey(entries, ModelledTimeline(tree, entries, caps).Finals())
+// the model, followed by the residue an image's writes left, if any.
+func AnswerKey(tree *model.Tree, entries []ledger.Entry, caps compile.Caps, residue ...target.Residue) []ledger.Fact {
+	facts := ledger.AnswerKey(entries, ModelledTimeline(tree, entries, caps).Finals())
+	return append(facts, ledger.ResidueFacts(entries, residue)...)
 }
 
 // ExecuteFile compiles a manifest or playbook, applies it under root,
@@ -207,8 +208,15 @@ func Caps(t target.Target) compile.Caps { return t.Caps() }
 func Execute(ctx ExecContext, ops []compile.Op) ([]ledger.Entry, error) {
 	digests := map[int]string{} // object serial -> content digest
 	entries := make([]ledger.Entry, 0, len(ops))
+	observer, _ := ctx.FS.(target.OpObserver)
+	if observer != nil {
+		defer observer.BeginOp(0)
+	}
 	for i, op := range ops {
 		e := newEntry(i, op, ctx.Caps)
+		if observer != nil {
+			observer.BeginOp(e.N)
+		}
 		if err := recordOutcome(ctx, op, &e, digests); err != nil {
 			// The entry for a failed operation is left out: the ledger says how
 			// far the run got, and a half-finished operation did not get there.

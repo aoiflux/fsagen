@@ -35,6 +35,9 @@ import (
 	schemapkg "github.com/aoiflux/fsagen/schema"
 	"github.com/aoiflux/fsagen/target"
 	timelinepkg "github.com/aoiflux/fsagen/timeline"
+	"github.com/aoiflux/fsagen/volume"
+	"github.com/aoiflux/fsagen/volume/container"
+	imagepkg "github.com/aoiflux/fsagen/volume/image"
 )
 
 // Exit codes.
@@ -89,6 +92,16 @@ type config struct {
 	allowExternal  bool
 	meta           string
 	out            string
+	// image and the flags after it describe a disk image to write instead
+	// of a directory.
+	image       string
+	imageFS     string
+	imageSize   string
+	clusterSize int
+	partition   string
+	imageLabel  string
+	imageTime   string
+	alloc       string
 	// capsFor reports what the volume under a root can do. The command uses the
 	// real detection; a test injects a fixed set to exercise a platform it is
 	// not running on.
@@ -162,6 +175,14 @@ func parseFlags(args []string) (*config, error) {
 	fl.BoolVar(&c.allowNonport, "allow-nonportable", false, "allow paths that only work on some platforms")
 	fl.BoolVar(&c.allowExternal, "allow-external-sources", false, "allow content_file and friends outside the YAML file's directory")
 	fl.StringVar(&c.meta, "meta", "", "directory for the run manifest (default: <output>.fsagen)")
+	fl.StringVar(&c.image, "image", "", "write into a new disk image file (.raw, .dd, .img or .vhd) instead of an output directory")
+	fl.StringVar(&c.imageFS, "image-fs", "", "image file system: "+strings.Join(imagepkg.FileSystems, ", "))
+	fl.StringVar(&c.imageSize, "image-size", "", "image size in bytes, or with K, M, G or T (powers of 1024)")
+	fl.IntVar(&c.clusterSize, "cluster-size", 0, "image cluster size in bytes (default: what Windows formats that size with)")
+	fl.StringVar(&c.partition, "partition", container.PartitionMBR, "image partitioning: mbr (one partition 1 MiB in) or none (the file system alone)")
+	fl.StringVar(&c.imageLabel, "image-label", "", "image volume label")
+	fl.StringVar(&c.imageTime, "image-time", "", "RFC 3339 time the image's own structures are stamped with (default "+libgenpkg.DefaultStart.Format(time.RFC3339)+")")
+	fl.StringVar(&c.alloc, "alloc", volume.NextFit, "image cluster allocation: next-fit (as Windows does) or first-fit")
 
 	if err := fl.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -269,7 +290,7 @@ func validateFlags(c *config) error {
 			return usagef("--bulk-start %q is not an RFC 3339 time", c.bulkStart)
 		}
 	}
-	return nil
+	return validateImageFlags(c)
 }
 
 // timelineRequestFrom settles which timeline to write, if any.
@@ -291,6 +312,9 @@ func timelineRequestFrom(c *config) (*timelineRequest, error) {
 // writeOutput generates a tree, or, when no input was given, describes one that
 // is already there.
 func writeOutput(c *config, tl *timelineRequest, vars map[string]string, varsInput *sandbox.Input, stdout io.Writer) error {
+	if c.image != "" {
+		return generateImage(c, vars, varsInput, tl, stdout)
+	}
 	if c.out == "" {
 		if inputModes(c) == 0 && c.timeline == "" {
 			return usagef("nothing to do: give --manifest, --playbook or --bulk and an output path (or --timeline alone for timeline-only mode)")
@@ -332,6 +356,14 @@ func scanExisting(absOut string, tl *timelineRequest, stdout io.Writer) error {
 func check(c *config, vars map[string]string, stdout io.Writer) error {
 	opts := compile.Options{Vars: vars, Seed: c.seed, AllowExternalSources: c.allowExternal, AllowNonportable: c.allowNonport}
 	caps := compile.DefaultCaps()
+	if c.image != "" {
+		plan, err := imagePlan(c)
+		if err != nil {
+			return err
+		}
+		caps = plan.Caps()
+		opts.FoldCase = caps.FoldsCase
+	}
 	if c.out != "" && c.intoExisting {
 		fsys, err := sandbox.Open(c.out)
 		if err != nil {
@@ -398,7 +430,9 @@ func generate(c *config, absOut string, vars map[string]string, varsInput *sandb
 	if err != nil {
 		return err
 	}
-	rm, rinfo := newRecords(c, varsInput, caps, probe, absOut)
+	rm, rinfo := newRecords(c, varsInput, caps, absOut)
+	rinfo.Filesystem = probe.FilesystemName()
+	rinfo.LastAccess = runinfo.LastAccessPolicy()
 
 	var prog *compile.Program
 	if c.bulkMode() {
@@ -525,7 +559,7 @@ func runMode(c *config) string {
 
 // newRecords starts the two records kept beside the output: what the run was
 // asked to do, and the environment it ran in.
-func newRecords(c *config, varsInput *sandbox.Input, caps compile.Caps, probe *sandbox.FS, absOut string) (*runinfo.Manifest, *runinfo.Info) {
+func newRecords(c *config, varsInput *sandbox.Input, caps compile.Caps, absOut string) (*runinfo.Manifest, *runinfo.Info) {
 	rm := runinfo.New(runMode(c), c.seed)
 	rm.VarsFile = varsInput
 	rm.CLIVarsSHA256 = cliVarsHash(c.vars)
@@ -546,8 +580,6 @@ func newRecords(c *config, varsInput *sandbox.Input, caps compile.Caps, probe *s
 	rm.Reproducible = !c.intoExisting
 
 	rinfo := runinfo.NewInfo()
-	rinfo.Filesystem = probe.FilesystemName()
-	rinfo.LastAccess = runinfo.LastAccessPolicy()
 	rinfo.Output = absOut
 	rinfo.Started = time.Now().UTC().Format(time.RFC3339Nano)
 	return rm, rinfo
@@ -556,7 +588,7 @@ func newRecords(c *config, varsInput *sandbox.Input, caps compile.Caps, probe *s
 // compileInput loads the input and checks it against this platform, so a run
 // that cannot be performed here fails before it writes anything.
 func compileInput(c *config, vars map[string]string, existing *model.Tree, caps compile.Caps) (*compile.Program, error) {
-	opts := compile.Options{Vars: vars, Seed: c.seed, AllowExternalSources: c.allowExternal, AllowNonportable: c.allowNonport, Existing: existing}
+	opts := compile.Options{Vars: vars, Seed: c.seed, AllowExternalSources: c.allowExternal, AllowNonportable: c.allowNonport, FoldCase: caps.FoldsCase, Existing: existing}
 	prog, err := compile.Load(inputMode(c), inputFile(c), opts)
 	if err != nil {
 		return nil, err
@@ -640,10 +672,12 @@ func writeRecords(metaDir string, rm *runinfo.Manifest, rinfo *runinfo.Info) err
 }
 
 // generated is what one generating pass produced: its ledger, the context it
-// ran in, and the first failure if there was one.
+// ran in, what the finished output reads back through, and the first failure
+// if there was one.
 type generated struct {
 	entries []ledger.Entry
 	ectx    manifestpkg.ExecContext
+	read    target.Reader
 	err     error
 }
 
@@ -667,12 +701,16 @@ func runGeneration(c *config, fsys target.Target, prog *compile.Program, caps co
 		ledgerSum = sum
 	}
 	if g.err == nil {
-		g.err = finishOutput(g.ectx, prog, rm, metaDir, ledgerSum)
+		g.read, g.err = finishOutput(g.ectx, prog, rm, metaDir, ledgerSum)
 	}
 	// The answer key describes a finished scenario, so a failed run has
 	// none; the ledger says how far it got.
 	if g.err == nil && !c.bulkMode() {
-		g.err = writeAnswerKey(metaDir, prog, g.entries, caps, rm)
+		var residue []target.Residue
+		if f, ok := fsys.(target.Forensic); ok {
+			residue = f.Residue()
+		}
+		g.err = writeAnswerKey(metaDir, prog, g.entries, caps, residue, rm)
 	}
 	if g.err == nil && !c.bulkMode() {
 		g.err = writeLayer(metaDir, inputFile(c), c.seed, g.entries, rm)
@@ -685,8 +723,9 @@ func runGeneration(c *config, fsys target.Target, prog *compile.Program, caps co
 // digested first, and the settle pass then puts back any access time the
 // reads moved. One built in one go (an image) is settled, finished and
 // verified first, and digested as it was finished. A bulk corpus has no
-// model, so nothing in it is settled.
-func finishOutput(ectx manifestpkg.ExecContext, prog *compile.Program, rm *runinfo.Manifest, metaDir, ledgerSum string) error {
+// model, so nothing in it is settled. It returns what the finished output
+// reads back through.
+func finishOutput(ectx manifestpkg.ExecContext, prog *compile.Program, rm *runinfo.Manifest, metaDir, ledgerSum string) (target.Reader, error) {
 	var tree *model.Tree
 	if prog != nil {
 		tree = prog.Model
@@ -694,15 +733,14 @@ func finishOutput(ectx manifestpkg.ExecContext, prog *compile.Program, rm *runin
 	if _, oneGo := ectx.FS.(target.Finisher); oneGo {
 		read, err := manifestpkg.Finish(ectx, tree)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		return writeSums(metaDir, read, rm, ledgerSum)
+		return read, writeSums(metaDir, read, rm, ledgerSum)
 	}
 	if err := writeSums(metaDir, ectx.FS, rm, ledgerSum); err != nil {
-		return err
+		return nil, err
 	}
-	_, err := manifestpkg.Finish(ectx, tree)
-	return err
+	return manifestpkg.Finish(ectx, tree)
 }
 
 // writeSums records the digest of every file in the output, and the ledger's.
@@ -717,8 +755,8 @@ func writeSums(metaDir string, fsys target.Reader, rm *runinfo.Manifest, ledgerS
 }
 
 // writeAnswerKey records what a tool reading the finished output should find.
-func writeAnswerKey(metaDir string, prog *compile.Program, entries []ledger.Entry, caps compile.Caps, rm *runinfo.Manifest) error {
-	sum, err := runinfo.WriteAnswerKey(metaDir, manifestpkg.AnswerKey(prog.Model, entries, caps))
+func writeAnswerKey(metaDir string, prog *compile.Program, entries []ledger.Entry, caps compile.Caps, residue []target.Residue, rm *runinfo.Manifest) error {
+	sum, err := runinfo.WriteAnswerKey(metaDir, manifestpkg.AnswerKey(prog.Model, entries, caps, residue...))
 	if err != nil {
 		return fmt.Errorf("write %s: %w", ledger.AnswerKeyFileName, err)
 	}
@@ -775,11 +813,11 @@ func recordSuccess(metaDir string, rm *runinfo.Manifest, stdout io.Writer) error
 // writeTimeline writes the timeline, if one was asked for. It comes after the
 // run is recorded complete: the output is finished whether or not the timeline
 // can be written.
-func writeTimeline(tl *timelineRequest, modelled *timelinepkg.Timeline, rm *runinfo.Manifest, metaDir, absOut string, stdout io.Writer) error {
+func writeTimeline(tl *timelineRequest, built *timelinepkg.Timeline, rm *runinfo.Manifest, metaDir, absOut string, stdout io.Writer) error {
 	if tl == nil {
 		return nil
 	}
-	rec, err := tl.write(stdout, absOut, modelled)
+	rec, err := tl.write(stdout, absOut, built)
 	if err != nil {
 		return fmt.Errorf("%w (the output in %s is complete; only the timeline is missing)", err, absOut)
 	}
@@ -904,12 +942,13 @@ type timelineRequest struct {
 	hashLimit            int64
 }
 
-// write writes the timeline: modelled when one is given, else observed
-// from root. The whole timeline is built before the file is created, so a
-// failure leaves no partial timeline behind.
-func (r *timelineRequest) write(stdout io.Writer, root string, modelled *timelinepkg.Timeline) (*runinfo.Timeline, error) {
+// write writes the timeline: built when it is given (a modelled one, or an
+// image's observed one, read before the image was closed), else observed
+// from the directory root. The whole timeline is built before the file is
+// created, so a failure leaves no partial timeline behind.
+func (r *timelineRequest) write(stdout io.Writer, root string, built *timelinepkg.Timeline) (*runinfo.Timeline, error) {
 	fmt.Fprintf(stdout, "\nGenerating %s timeline...\n", r.source)
-	tl := modelled
+	tl := built
 	if tl == nil {
 		var err error
 		if tl, err = timelinepkg.Generate(root, timelinepkg.Options{HashLimit: r.hashLimit}); err != nil {
@@ -945,6 +984,7 @@ func printVersion(w io.Writer) {
 
 func printUsage(w io.Writer) {
 	fmt.Fprintf(w, `Usage: fsagen [OPTIONS] <output-path>
+       fsagen [OPTIONS] --image FILE --image-fs FS --image-size SIZE
        fsagen diff-oracle --meta DIR [OPTIONS] <tool-output>
 
 Generate deterministic filesystem artifacts for forensic testing, and score
@@ -970,6 +1010,20 @@ Generation:
   --meta DIR                where to write run-manifest.json, SHA256SUMS,
                             ledger.jsonl, answer-key.jsonl and run-info.json
                             (default: <output-path>.fsagen, beside the output)
+
+Disk image (instead of <output-path>):
+  --image FILE              write a new disk image: FILE.raw, .dd or .img (raw)
+                            or .vhd (fixed VHD); written beside FILE and given
+                            its name only once the run succeeds
+  --image-fs FS             %s
+  --image-size SIZE         bytes, or with K, M, G or T (powers of 1024)
+  --cluster-size N          cluster size in bytes (default: Windows' for the size)
+  --partition P             mbr (default: one partition 1 MiB in) or none
+  --image-label L           volume label
+  --image-time T            RFC 3339 time the image's own structures are
+                            stamped with (default 2021-01-01T00:00:00Z)
+  --alloc A                 next-fit (default, as Windows allocates) or
+                            first-fit (freed clusters are reused at once)
 
 Checking without writing:
   --validate                check the input and exit
@@ -1002,9 +1056,10 @@ Examples:
   fsagen --seed 100 --playbook adversary.yaml --timeline case.bodyfile ./scene
   fsagen --playbook adversary.yaml --dry-run
   fsagen --seed 7 --bulk 3 --depth 2 ./quick-bulk
+  fsagen --playbook adversary.yaml --image case.vhd --image-fs fat32 --image-size 512M
   fsagen --timeline existing.csv ./existing-artifacts
   fsagen diff-oracle --meta ./scene.fsagen fls.bodyfile
-`, strings.Join(timelinepkg.Formats, ", "), strings.Join(timelinepkg.Extensions(), " "))
+`, strings.Join(imagepkg.FileSystems, ", "), strings.Join(timelinepkg.Formats, ", "), strings.Join(timelinepkg.Extensions(), " "))
 }
 
 func writeInputSchemas(outputDir string) (string, string, error) {

@@ -32,7 +32,7 @@ synthetic corpus with no YAML at all.
 **Writing scenarios** · [Manifest schema](#manifest-schema) ·
 [Playbook schema](#playbook-schema) ·
 [Email, PDF and Ansible vault](#email-pdf-and-ansible-vault) ·
-[ATT&CK tags](#attck-tags) · [Slack](#slack) ·
+[ATT&CK tags](#attck-tags) · [Slack](#slack) · [Disk images](#disk-images) ·
 [Sharing values](#sharing-values-across-scenarios) ·
 [File formats](#file-formats)
 
@@ -108,6 +108,10 @@ is recorded rather than silently dropped.
   bodyfile, Plaso's l2tcsv, dynamic CSV or JSON lines) against what the run
   made: names, deleted entries, streams, times, digests and links, with
   precision, recall and F1 per category and a JSON scorecard
+- Disk images built byte by byte: FAT32 in a raw or VHD disk, with Windows'
+  short names, deleted entries and freed clusters left where Windows leaves
+  them, and every piece of that residue in the answer key, read back by
+  go-diskfs, 7-Zip, `fsck.vfat` and The Sleuth Kit (see _Disk images_)
 - ATT&CK technique tags (`mitre:`) on any action or step, carried into the
   ledger and answer key and written as an ATT&CK Navigator layer; tagging an
   action never changes a byte it writes
@@ -978,12 +982,139 @@ and then it is up to the file system:
 | --------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | live NTFS       | best effort, `verified: false`. NTFS leaves the rest of the last cluster alone when a file shrinks; Windows may zero the rest of the sector the file ends in, which is why the canary restarts at every sector. A file of 1 KiB or less is refused, as it may live inside its MFT record with no cluster at all, and so is a `cluster_size` that is not the volume's |
 | live elsewhere  | refused: ext4 zeroes the tail of a block when a file shrinks, and tmpfs and btrfs keep no fixed cluster tail                            |
+| disk image      | exact, `verified: true`: fsagen writes the cluster itself. `cluster_size` must be the image's (`TestImageGolden`)                         |
 
 A refused slack fails the pre-flight, or with `--on-unsupported=skip` the file
 is written without it and the run manifest records the dropped `slack` field
 (`TestSlackPreflight`). `TestSlackSurvivesOnRawNTFS`, in the conformance
 suite, reads the volume raw as an administrator through the file's own data
 runs and finds the canary in the cluster.
+
+## Disk images
+
+Instead of an output directory, a run can write a **disk image** that fsagen
+builds byte by byte, with no operating system in between:
+
+```sh
+fsagen --seed 42 --playbook adversary.yaml \
+  --image case.vhd --image-fs fat32 --image-size 512M
+```
+
+Every byte of the image is fsagen's, so the same seed and input give the same
+image on every platform, and what a delete or an overwrite leaves behind is
+part of the answer key.
+
+**The image.**
+- `--image` names the file. `.raw`, `.dd` and `.img` are raw disks; `.vhd`
+  is a fixed VHD, a raw disk followed by a 512-byte footer that Windows,
+  Hyper-V, 7-Zip and qemu read.
+- `--partition mbr` (the default) puts the file system in one partition 1
+  MiB in, type `0x0C`, as Windows' disk tools align it. `--partition none`
+  writes the file system alone.
+- `--image-size` takes bytes or `K`, `M`, `G`, `T` (powers of 1024). A VHD's
+  disk is rounded down to a whole number of its cylinders, so the footer's
+  size and its geometry agree.
+- `--image-label` sets the volume label.
+- The volume serial, the disk signature and the VHD's ID are drawn from the
+  seed. Nothing else in the run draws from that key, so writing into an image
+  changes no file's bytes.
+- `--image-time` (default `2021-01-01T00:00:00Z`) stamps what the file
+  system creates before the scenario sets its times: the label, the `.` and
+  `..` entries, and the VHD footer.
+- The image is written to a temporary file beside it and takes its name only
+  once the run has succeeded. An existing image is replaced only with
+  `--clean`, and only then. `--into-existing` is refused.
+- The run's records go to `<image>.fsagen`. `run-manifest.json` says
+  `"target": "image"`, describes the image (`fs`, `format`, `partition`,
+  `partition_offset`, `size`, `cluster_size`, `serial`, `alloc`) and gives
+  its `image_sha256`.
+
+**FAT32** (`--image-fs fat32`) is laid out as Windows formats and writes it:
+- **Format.** A 32-sector reserved area holds the boot sector, FSInfo and
+  their backups at sectors 6 and 7. Two FATs follow, sized by Microsoft's
+  formula, then the root directory in cluster 2. Clusters default to Windows'
+  size for the volume: 512 bytes up to 64 MiB, 4 KiB from 256 MiB to 8 GiB.
+  `--cluster-size` overrides the default. A volume with fewer than 65,525
+  clusters is refused, as FAT32 must have that many.
+- **Names.** Every name that needs a long name gets one, and its short name
+  is what Windows would generate: up to six characters, then `~1` to `~4`;
+  from the fifth on, two characters, a four-digit checksum of the long name
+  and `~1`. The checksum was checked against names Windows 11 generated
+  itself (`TestShortNamesMatchWindows`). A name that is already 8.3 keeps
+  its case in the entry's NTRes bits when each part is all one case, and
+  takes a long name only when a part mixes cases.
+- **Times** are in UTC. FAT stores the creation time to 10 ms, the write
+  time to 2 seconds, the access date to the day, and no change time.
+- **What a write leaves behind.**
+  - A deleted name's entries are marked `0xE5` over their first byte; the
+    rest, including the start cluster and size, stays. Its FAT chain is
+    freed, and its content stays in the clusters.
+  - A new name reuses the first run of free entries in its directory,
+    deleted ones included, as Windows does.
+  - A renamed object gets new entries, and its old ones are left deleted.
+  - A file rewritten after it was truncated gets new clusters, and the old
+    ones keep its old content.
+  - The rest of the sector a file ends in is zeroed. The rest of its last
+    cluster keeps whatever it held, which is how a previous file's bytes
+    turn up in another file's slack.
+- **Allocation.** `--alloc next-fit` (the default) searches on from the last
+  allocation, as Windows does, so freed clusters survive until the volume
+  wraps round. `--alloc first-fit` reuses them at once.
+
+What FAT cannot hold is refused before anything is written
+(`TestImageValidate`):
+- streams, links and change times;
+- a time before 1980 or after 2107;
+- a name with a character Windows forbids in it;
+- two names that differ only in case, even with `--allow-nonportable`.
+
+**Residue in the answer key.** Each thing a write left behind is a `residue`
+fact, tied to the operation that left it:
+
+```json
+{"event":"residue","n":58,"object":16,"kind":"file","path":"Logs/application-event-000.log",
+ "residue":{"cause":"delete",
+  "entry":{"type":"fat_dirent","number":311,"offset":676480,"length":32,"overwritten":true},
+  "extents":[{"offset":676864,"length":1}],"size":1,"sha256":"fcb5…","recoverable":"full"}}
+```
+
+- `cause` is `delete`, `rename` or `overwrite`.
+- `entry` is the deleted short entry. `number` is its address as The Sleuth
+  Kit numbers it, which `istat` takes, and `offset` is where it lies in the
+  image file. `overwritten` says a later name took it over, so no tool will
+  find it.
+- `extents` are where the freed content lies in the image file, in order,
+  and `sha256` its digest then.
+- `recoverable` is `full`, `partial` or `none`, depending on how much of
+  that content the finished image still holds. `overwritten` ranges say
+  which bytes later writes changed.
+
+Slack on an image is written into the cluster itself and recorded
+`verified: true` (see _Slack_).
+
+**How it is checked.**
+- **During the run.** Every run is verified and digested through fsagen's own
+  FAT parser, which reads the finished image and knows nothing of how it was
+  written. Every time the run controls is compared, to FAT's resolution.
+- **Every example.** Each example FAT can hold makes an image whose
+  `SHA256SUMS` and ledger are, byte for byte, those of the same run in
+  memory (`TestImagesTakeEveryExample`). The one example with a hard link is
+  refused.
+- **One pinned image.** `testdata/image/fat32.yaml` takes the driver through
+  every path above. Its image, residue and `SHA256SUMS` are pinned, the same
+  on Windows and Linux (`TestImageGolden`).
+- **Independent readers.**
+  - go-diskfs reads every name and byte back, bare and in a VHD
+    (`TestFAT32ReadByGoDiskfs`).
+  - 7-Zip extracts every file through the VHD and the MBR
+    (`TestImageReadBy7Zip`).
+  - `fsck.vfat -n` finds nothing to fix (`TestImageCheckedByFsckVfat`).
+  - The Sleuth Kit's `fls` lists every file, and every deleted entry at the
+    address the answer key gives (`TestImageListedByTSK`).
+- **Scoring.** `fsagen diff-oracle` scores TSK's bodyfile of the image at
+  1.0 for files, deleted entries and times.
+
+ext4 and NTFS images come next.
 
 ## Sharing values across scenarios
 
@@ -1227,10 +1358,11 @@ What fsagen does not control, and what can change its output after it finishes:
 - A generated PE is a container for a parser, not a program: its sections hold
   filler, its entry point is inside that filler, and running one does nothing.
   fsagen has no way to produce, and no intention of producing, working code.
-- Not generated at all: `$Recycle.Bin`, SRUM, Amcache, ESE databases, and disk
-  images. fsagen writes into a directory on a live file system; making a FAT or
-  NTFS image, with `$FILE_NAME` times and deleted-entry residue under fsagen's
-  control, is a separate piece of work.
+- Not generated at all: `$Recycle.Bin`, SRUM, Amcache, ESE databases, and
+  ext4 or NTFS images (FAT32 images are; see _Disk images_). On a FAT32
+  image, a deleted entry keeps the high word of its start cluster, which
+  some Windows versions clear, and the `.` and `..` entries keep the times
+  their directory was made with.
 
 ## File formats
 
@@ -1998,8 +2130,11 @@ tree rather than what fsagen writes into one; check that the new fixture is a
 permutation of the old before believing it.
 
 Everything a run writes and reads back goes through the interfaces in
-`target/`: a live directory (`sandbox`) is one target, and the file-system
-images to come are others. `internal/memtarget` is a target held in memory;
+`target/`: a live directory (`sandbox`) is one target, and a disk image
+(`volume/`) is another. A `volume.Volume` keeps the tree as the scenario sees
+it and hands every change to a driver (`volume/fat`), which writes it through
+to the image as its file system would and, once finished, reads the image
+back with its own parser. `internal/memtarget` is a target held in memory;
 `TestOneGoTargetReproducesWindowsGoldens` replays every example through it with
 the capabilities of a Windows NTFS volume and checks the Windows goldens, byte
 for byte, on any platform.
@@ -2059,6 +2194,7 @@ these is a dependency of fsagen and none is in its `go.mod`:
 | `www.velocidex.com/golang/regparser`   | `regf`                                                           | Apache-2.0 |
 | `github.com/richardlehane/mscfb`       | the compound file inside `docm` and `xlsm` (the VBA project)     | Apache-2.0 |
 | `www.velocidex.com/golang/go-ntfs`     | a live NTFS volume, raw, to read slack back (administrator only) | Apache-2.0 |
+| `github.com/diskfs/go-diskfs`          | FAT32 images, bare and inside an MBR-partitioned VHD             | MIT        |
 
 ## Citation
 

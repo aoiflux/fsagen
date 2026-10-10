@@ -112,6 +112,15 @@ type Caps struct {
 	// for --validate with no output volume).
 	Slack       SlackSupport
 	ClusterSize int
+	// MinTime and MaxTime bound the times the volume can store; zero is no
+	// bound. FAT keeps none before 1980 or after 2107.
+	MinTime, MaxTime time.Time
+	// FoldsCase: names differing only in case are one name, whatever
+	// --allow-nonportable says (FAT and NTFS images).
+	FoldsCase bool
+	// ValidName refuses a name the volume cannot store; nil accepts any
+	// name pathpolicy does.
+	ValidName func(name string) error
 }
 
 // File is an open file in a target: read, written, or both, as it was
@@ -212,6 +221,79 @@ type Slacker interface {
 // back through itself.
 type Finisher interface {
 	Finish() (Reader, error)
+}
+
+// OpObserver is a target told which operation is running, so what it
+// records itself, such as residue, can name the ledger entry that left it.
+type OpObserver interface {
+	// BeginOp is called before operation n (the ledger's n) runs, and with 0
+	// once the operations are done.
+	BeginOp(n int)
+}
+
+// Forensic is a target that knows what its writes left behind beyond the
+// tree: deleted entries and the bytes they pointed at. Residue is complete
+// once Finish has run.
+type Forensic interface {
+	Residue() []Residue
+}
+
+// The causes of residue.
+const (
+	ResidueDelete    = "delete"
+	ResidueRename    = "rename"
+	ResidueOverwrite = "overwrite"
+)
+
+// How much of residue's content is still on the volume.
+const (
+	RecoverableFull    = "full"
+	RecoverablePartial = "partial"
+	RecoverableNone    = "none"
+)
+
+// Residue is something a write left on the volume that no name reaches any
+// more: the entry a delete or rename left behind, and the clusters a delete
+// or overwrite freed with their bytes still in them.
+type Residue struct {
+	// N is the ledger entry of the operation that left it, and Path the
+	// name it was under.
+	N    int    `json:"-"`
+	Path string `json:"-"`
+	// Cause is ResidueDelete, ResidueRename or ResidueOverwrite.
+	Cause string `json:"cause"`
+	// Entry is the directory entry or record left behind, if any.
+	Entry *ResidueEntry `json:"entry,omitempty"`
+	// Extents are where the freed content was, as byte ranges of the image
+	// file, in the content's order, and SHA256 its digest then.
+	Extents []Extent `json:"extents,omitempty"`
+	Size    int64    `json:"size,omitempty"`
+	SHA256  string   `json:"sha256,omitempty"`
+	// Recoverable says how much of that content the finished image still
+	// holds, and Overwritten which ranges of it later writes changed.
+	Recoverable string   `json:"recoverable,omitempty"`
+	Overwritten []Extent `json:"overwritten,omitempty"`
+}
+
+// ResidueEntry is a deleted directory entry or record.
+type ResidueEntry struct {
+	// Type names the structure, such as "fat_dirent".
+	Type string `json:"type"`
+	// Number is its address as The Sleuth Kit numbers it, and Seq its
+	// sequence number where the file system keeps one.
+	Number int64 `json:"number"`
+	Seq    int   `json:"seq,omitempty"`
+	// Offset and Length are where it lies in the image file.
+	Offset int64 `json:"offset"`
+	Length int   `json:"length"`
+	// Overwritten: a later write reused it, so no tool will find it.
+	Overwritten bool `json:"overwritten,omitempty"`
+}
+
+// Extent is a byte range of the image file.
+type Extent struct {
+	Offset int64 `json:"offset"`
+	Length int64 `json:"length"`
 }
 
 // MkdirParent creates the directory that will hold name.

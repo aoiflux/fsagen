@@ -129,6 +129,10 @@ type Options struct {
 	// AllowNonportable waives the portability checks (reserved device names,
 	// case collisions, path length budget).
 	AllowNonportable bool
+	// FoldCase makes names that differ only in case one name even with
+	// AllowNonportable, for a volume that cannot tell them apart (an image
+	// whose capabilities say FoldsCase).
+	FoldCase bool
 	// Existing seeds the model with a tree that is already on disk
 	// (--into-existing).
 	Existing *model.Tree
@@ -229,7 +233,7 @@ func Load(mode Mode, file string, opts Options) (*Program, error) {
 	if tree == nil {
 		tree = model.New()
 	}
-	if !opts.AllowNonportable {
+	if !opts.AllowNonportable || opts.FoldCase {
 		tree.SetFold(pathpolicy.FoldKey)
 	}
 	prog.Model = tree

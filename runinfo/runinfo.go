@@ -28,6 +28,7 @@ import (
 	"runtime/debug"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/aoiflux/fsagen/constant"
 	"github.com/aoiflux/fsagen/ledger"
@@ -64,12 +65,16 @@ type Manifest struct {
 	VarsFile         *sandbox.Input  `json:"vars_file,omitempty"`
 	CLIVarsSHA256    string          `json:"cli_vars_sha256,omitempty"`
 	Options          Options         `json:"options"`
-	Capabilities     Capabilities    `json:"capabilities"`
-	Operations       int             `json:"operations"`
-	Skipped          []Skipped       `json:"skipped,omitempty"`
-	Outputs          *Outputs        `json:"outputs,omitempty"`
-	Timeline         *Timeline       `json:"timeline,omitempty"`
-	Failure          string          `json:"failure,omitempty"`
+	// Target is "image" for a run written into a disk image, and left out
+	// for one written into a directory.
+	Target       string       `json:"target,omitempty"`
+	Image        *Image       `json:"image,omitempty"`
+	Capabilities Capabilities `json:"capabilities"`
+	Operations   int          `json:"operations"`
+	Skipped      []Skipped    `json:"skipped,omitempty"`
+	Outputs      *Outputs     `json:"outputs,omitempty"`
+	Timeline     *Timeline    `json:"timeline,omitempty"`
+	Failure      string       `json:"failure,omitempty"`
 }
 
 // Timeline records the timeline written after a complete run. Its digest
@@ -81,6 +86,68 @@ type Timeline struct {
 	File      string `json:"file"`
 	HashLimit int64  `json:"hash_limit,omitempty"`
 	SHA256    string `json:"sha256,omitempty"`
+}
+
+// TargetImage marks a run written into a disk image.
+const TargetImage = "image"
+
+// Image describes the disk image a run was written into.
+type Image struct {
+	FS        string `json:"fs"`
+	Format    string `json:"format"`
+	Partition string `json:"partition"`
+	// PartitionOffset is where the file system starts in the image file.
+	PartitionOffset int64  `json:"partition_offset"`
+	Size            int64  `json:"size"`
+	ClusterSize     int    `json:"cluster_size"`
+	Serial          string `json:"serial"`
+	Label           string `json:"label,omitempty"`
+	// Time is the image clock: what the file system stamps before the
+	// scenario sets its times.
+	Time  string `json:"time"`
+	Alloc string `json:"alloc"`
+	// TimeZone is the zone FAT's local times are written in.
+	TimeZone string `json:"fat_time_zone,omitempty"`
+}
+
+// Resolution is how finely each time is kept, as Go durations ("24h",
+// "2s", "10ms"); a time not kept is left out.
+type Resolution struct {
+	Atime  string `json:"atime,omitempty"`
+	Mtime  string `json:"mtime,omitempty"`
+	Ctime  string `json:"ctime,omitempty"`
+	Crtime string `json:"crtime,omitempty"`
+}
+
+// ResolutionOf writes a target's granularity down.
+func ResolutionOf(g target.Granularity) *Resolution {
+	text := func(d time.Duration) string {
+		if d == 0 {
+			return ""
+		}
+		// "24h0m0s" reads better as "24h", and parses the same.
+		return strings.Replace(strings.Replace(d.String(), "m0s", "m", 1), "h0m", "h", 1)
+	}
+	return &Resolution{Atime: text(g.Atime), Mtime: text(g.Mtime), Ctime: text(g.Ctime), Crtime: text(g.Btime)}
+}
+
+// Durations reads a Resolution back, in atime, mtime, ctime, crtime order.
+func (r *Resolution) Durations() ([4]time.Duration, error) {
+	var out [4]time.Duration
+	if r == nil {
+		return out, nil
+	}
+	for i, s := range [4]string{r.Atime, r.Mtime, r.Ctime, r.Crtime} {
+		if s == "" {
+			continue
+		}
+		d, err := time.ParseDuration(s)
+		if err != nil {
+			return out, fmt.Errorf("time_resolution: %w", err)
+		}
+		out[i] = d
+	}
+	return out, nil
 }
 
 // Options are the flags that change what is generated.
@@ -114,6 +181,9 @@ type Capabilities struct {
 	// best_effort or exact), and ClusterSize its clusters' size when known.
 	Slack       string `json:"slack"`
 	ClusterSize int    `json:"cluster_size,omitempty"`
+	// TimeResolution is, for an image, how finely its file system keeps
+	// each time, which a reader comparing times has to allow for.
+	TimeResolution *Resolution `json:"time_resolution,omitempty"`
 	// Hardlinks, Symlinks and Junctions: the volume stores them and this
 	// process may make them.
 	Hardlinks bool `json:"hardlinks"`
@@ -146,6 +216,7 @@ type Outputs struct {
 	Ledger     string `json:"ledger_sha256,omitempty"`      // SHA-256 of ledger.jsonl
 	AnswerKey  string `json:"answer_key_sha256,omitempty"`  // SHA-256 of answer-key.jsonl
 	MitreLayer string `json:"mitre_layer_sha256,omitempty"` // SHA-256 of mitre-layer.json, when the run wrote one
+	Image      string `json:"image_sha256,omitempty"`       // SHA-256 of the image file, for a run written into one
 }
 
 // New starts a run manifest.

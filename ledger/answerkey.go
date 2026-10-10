@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/aoiflux/fsagen/spec"
+	"github.com/aoiflux/fsagen/target"
 )
 
 // AnswerKeyFileName is the answer key's name in the sidecar directory.
@@ -41,6 +42,9 @@ const (
 	// SlackWritten: bytes were left past the end of a file, in the rest of
 	// its last cluster.
 	SlackWritten = "slack"
+	// ResidueLeft: a write to a disk image left something no name reaches:
+	// a deleted entry, freed clusters still holding their bytes.
+	ResidueLeft = "residue"
 	// MtimeBeforeCrtime: an object ends (or was deleted) with a
 	// modification time earlier than its creation time. A copy has one
 	// without being stomped, as copies do in the wild.
@@ -99,6 +103,9 @@ type Fact struct {
 	Mitre []string `json:"mitre,omitempty"`
 	// Slack is, for a slack fact, where the bytes are and what they hash to.
 	Slack *Slack `json:"slack,omitempty"`
+	// Residue is, for a residue fact, what was left and how much of it the
+	// finished image still holds.
+	Residue *target.Residue `json:"residue,omitempty"`
 }
 
 // Delta is, per time, the $STANDARD_INFORMATION time minus the $FILE_NAME
@@ -140,6 +147,26 @@ func AnswerKey(entries []Entry, finals []Final) []Fact {
 		seen[e.Object] = true
 	}
 	return append(facts, impossibleTimeFacts(finals)...)
+}
+
+// ResidueFacts are the residue facts, in the order the residue was left,
+// each tied to the operation that left it.
+func ResidueFacts(entries []Entry, residue []target.Residue) []Fact {
+	byN := make(map[int]Entry, len(entries))
+	for _, e := range entries {
+		byN[e.N] = e
+	}
+	facts := make([]Fact, 0, len(residue))
+	for _, r := range residue {
+		e := byN[r.N]
+		f := Fact{Event: ResidueLeft, N: r.N, At: e.At, Object: e.Object, Kind: e.Kind, Path: r.Path, Mitre: e.Mitre}
+		if e.Action == spec.ActionRotate && r.Path == e.Path {
+			f.Object = e.Moved
+		}
+		f.Residue = &r
+		facts = append(facts, f)
+	}
+	return facts
 }
 
 // actionFacts is what one finished operation left for a tool to find: what the

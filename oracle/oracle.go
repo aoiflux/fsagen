@@ -223,7 +223,7 @@ func (c *config) run() error {
 	}
 	sc := &Scorecard{
 		Version: ScorecardVersion, ToolOutput: c.tool, Format: f.name, Meta: c.meta, Model: c.model,
-		Tolerance: durationText(c.tolerance), Case: caseExact, Paths: paths,
+		Tolerance: durationText(c.tolerance), Resolution: resolutionText(x.resolution), Case: caseExact, Paths: paths,
 		Ops: x.ops, SumsLines: x.sums,
 	}
 	if fold {
@@ -285,6 +285,18 @@ func (c *config) useModel(x *Expected) error {
 	return nil
 }
 
+// resolutionText says how finely the volume keeps each time it keeps
+// coarser than to the second, or "" for a volume that says nothing.
+func resolutionText(r times4) string {
+	var parts []string
+	for i, d := range r {
+		if d > time.Second {
+			parts = append(parts, timeNames[i]+" "+strings.Replace(strings.Replace(d.String(), "m0s", "m", 1), "h0m", "h", 1))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
 // durationText writes a tolerance as Go does, but with "us" for
 // microseconds, as --time-tolerance takes it, so the report stays ASCII.
 func durationText(d time.Duration) string {
@@ -300,9 +312,12 @@ type Scorecard struct {
 	Model      string `json:"model,omitempty"`
 	// Ops and SumsLines say what the expected state was built from: the
 	// ledger's finished operations and SHA256SUMS's lines.
-	Ops        int         `json:"operations"`
-	SumsLines  int         `json:"sha256sums_lines"`
-	Tolerance  string      `json:"time_tolerance"`
+	Ops       int    `json:"operations"`
+	SumsLines int    `json:"sha256sums_lines"`
+	Tolerance string `json:"time_tolerance"`
+	// Resolution is how finely the volume keeps the times it keeps coarser
+	// than to the second, which the matching allows for too.
+	Resolution string      `json:"time_resolution,omitempty"`
 	Case       string      `json:"case"`
 	Paths      PathReport  `json:"paths"`
 	Categories []*Category `json:"categories"`
@@ -352,11 +367,18 @@ func (sc *Scorecard) WriteText(w io.Writer) {
 	}
 	fmt.Fprintf(w, "paths        output root %s (%s); outside it %d, volume files %d, $FILE_NAME records %d (not scored), old names %d\n",
 		p.Prefix, how, p.OutsidePrefix, p.VolumeFiles, p.FilenameRecords, p.OldNames)
+	if p.Reused > 0 {
+		fmt.Fprintf(w, "residue      %d deleted entries a later write reused (not scored)\n", p.Reused)
+	}
 	names := "exactly"
 	if sc.Case == caseFold {
 		names = "ignoring case"
 	}
-	fmt.Fprintf(w, "matching     times within %s, names %s\n\n", sc.Tolerance, names)
+	within := sc.Tolerance
+	if sc.Resolution != "" {
+		within += ", or the volume's resolution (" + sc.Resolution + ")"
+	}
+	fmt.Fprintf(w, "matching     times within %s, names %s\n\n", within, names)
 
 	fmt.Fprintf(w, "%-10s %8s %8s %7s %7s %7s %9s %7s %7s\n", "category", "expected", "checked", "tp", "fp", "fn", "precision", "recall", "f1")
 	for _, c := range sc.Categories {

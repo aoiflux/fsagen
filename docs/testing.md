@@ -172,6 +172,27 @@ recovered from the line again.
 | F-DOC-2 | Shipped examples are broken | `TestExamples`; every shipped example runs through the command line and meets an assertion written for it |
 | F-DOC-3 | ${UUID} and ${IP} are not what their names suggest | `TestIPStaysInCIDR` |
 
+## Image output (D-7, P6)
+
+The brief left image output as a follow-on (D-7), with NTFS to be made on a
+scratch volume and its times patched in place through aoiflux/libntfs. The
+roadmap that took it up supersedes that. Every image is built byte by byte
+in pure Go, NTFS included, so there is no scratch volume and no libntfs
+dependency. FAT32 is the first file system.
+
+| What | Verified by |
+|---|---|
+| FAT32 with controlled times, long names, `0xE5` deleted entries and slack | `TestImageGolden`, `TestImagesTakeEveryExample`, `TestDeleteLeavesEntryAndContent`, `TestSlackIsOnDisk`, `TestTimesKeepFATResolution` |
+| The short names Windows would give | `TestShortNamesMatchWindows`, against names Windows 11 generated |
+| Someone else's reading of the image | `TestFAT32ReadByGoDiskfs`, `TestImageReadBy7Zip`, `TestImageCheckedByFsckVfat`, `TestImageListedByTSK` |
+| A tool's report of an image scored against the run | `TestImageScoredByOracle`, and `TestImageListedByTSK` with `--fail-under 1` |
+
+The external tools need not be installed system-wide. In WSL, run
+`apt-get download dosfstools sleuthkit libtsk19t64 libvmdk1 libvhdi1
+libafflib0t64 libbfio1` and `dpkg -x` each package into a directory you own.
+Then put that directory's `usr/bin` and `usr/sbin` on `PATH`, and its
+`usr/lib/x86_64-linux-gnu` on `LD_LIBRARY_PATH`. None of this needs root.
+
 ## Found while re-verifying the brief
 
 Nine things the re-verification turned up that the brief itself did not

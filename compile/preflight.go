@@ -3,7 +3,9 @@ package compile
 import (
 	"fmt"
 	"runtime"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/aoiflux/fsagen/sandbox"
 	"github.com/aoiflux/fsagen/spec"
@@ -44,6 +46,52 @@ func unsettable(op *Op, caps Caps) []string {
 		}
 	}
 	return out
+}
+
+// outOfRange lists the times op stamps that the volume cannot store, such
+// as a FAT date before 1980. Only the times caps can set are stamped, so
+// only they are checked; none can be skipped, since the settle pass sets
+// every one of them again.
+func outOfRange(op *Op, caps Caps) []string {
+	if caps.MinTime.IsZero() && caps.MaxTime.IsZero() {
+		return nil
+	}
+	var out []string
+	for _, s := range append(slices.Clip(op.Pre), op.Stamps...) {
+		check := []struct {
+			field string
+			t     time.Time
+			can   bool
+		}{
+			{"atime", s.Times.Atime, true},
+			{"mtime", s.Times.Mtime, true},
+			{"ctime", s.Times.Ctime, caps.ChangeTime},
+			{"crtime", s.Times.Btime, caps.BirthTime},
+		}
+		for _, c := range check {
+			if !c.can || c.t.IsZero() {
+				continue
+			}
+			if !caps.MinTime.IsZero() && c.t.Before(caps.MinTime) || !caps.MaxTime.IsZero() && c.t.After(caps.MaxTime) {
+				out = append(out, fmt.Sprintf("%s %s of %s is outside what this volume can store (%s to %s)",
+					c.field, c.t.Format(time.RFC3339Nano), s.Path, caps.MinTime.Format(time.RFC3339), caps.MaxTime.Format(time.RFC3339)))
+			}
+		}
+	}
+	return out
+}
+
+// validNames refuses a path with a name the volume cannot store.
+func validNames(p string, caps Caps) error {
+	if p == "" || caps.ValidName == nil {
+		return nil
+	}
+	for c := range strings.SplitSeq(p, "/") {
+		if err := caps.ValidName(c); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // unsupported explains why caps cannot perform op, or returns "".
@@ -127,6 +175,14 @@ func preflightOp(op *Op, caps Caps, skip bool, errs *ErrorList) {
 		op.Skip = reason
 	default:
 		r.whole("%s (pass --on-unsupported=skip to generate the rest and record the skip)", reason)
+	}
+	for _, msg := range outOfRange(op, caps) {
+		r.whole("%s", msg)
+	}
+	for _, p := range []string{op.Path, op.NewPath} {
+		if err := validNames(p, caps); err != nil {
+			r.whole("%s", err)
+		}
 	}
 	switch reason := slackUnsupported(op, caps); {
 	case reason == "":

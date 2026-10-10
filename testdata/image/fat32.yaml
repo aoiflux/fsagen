@@ -1,0 +1,377 @@
+# A scenario that takes a FAT32 image through everything its driver does:
+# long names and the short names Windows gives them (~1 to ~4, then the
+# checksum form), names kept by case bits alone, a directory grown past its
+# first cluster, deletes and renames that leave entries behind, an update
+# and a truncate that free clusters, and slack. TestImageGolden pins the
+# image it makes, byte for byte.
+start: "2023-03-01T09:00:00Z"
+operations:
+  - action: create
+    type: dir
+    path: Documents/
+    mtime: "2023-03-01T00:00:00Z"
+    atime: "2023-03-01T00:00:00Z"
+
+  - action: create
+    path: "Documents/Long File Name Number1.text"
+    content_len: 100
+    mtime: "2023-03-01T01:07:13Z"
+
+  - action: create
+    path: "Documents/Long File Name Number2.text"
+    content_len: 200
+    mtime: "2023-03-01T02:14:26Z"
+
+  - action: create
+    path: "Documents/Long File Name Number3.text"
+    content_len: 300
+    mtime: "2023-03-01T03:21:39Z"
+
+  - action: create
+    path: "Documents/Long File Name Number4.text"
+    content_len: 400
+    mtime: "2023-03-01T04:28:52Z"
+
+  - action: create
+    path: "Documents/Long File Name Number5.text"
+    content_len: 500
+    mtime: "2023-03-01T05:35:05Z"
+
+  - action: create
+    path: "Documents/Long File Name Number6.text"
+    content_len: 600
+    mtime: "2023-03-01T06:42:18Z"
+
+  - action: create
+    path: "Documents/Long File Name Number7.text"
+    content_len: 700
+    mtime: "2023-03-01T07:49:31Z"
+
+  - action: create
+    path: Documents/ReadMe.txt
+    content: "Mixed case, an 8.3 name: README.TXT and a long name."
+    mtime: "2023-03-01T08:56:44Z"
+
+  - action: create
+    path: Documents/notes.txt
+    content: "All lower case: one entry and the NTRes bits."
+    mtime: "2023-03-01T09:03:57Z"
+
+  - action: create
+    path: Documents/UPPER.TXT
+    content: "All upper case: one entry."
+    mtime: "2023-03-01T10:10:10Z"
+
+  - action: create
+    path: "Documents/a+b=c[1].txt"
+    content: "Punctuation a short name cannot hold."
+    mtime: "2023-03-01T11:17:23Z"
+
+  - action: create
+    path: "Documents/x y.txt"
+    content: "A space, and a base of two characters."
+    mtime: "2023-03-01T12:24:36Z"
+
+  - action: create
+    path: Documents/.hidden
+    content: "A leading dot."
+    mtime: "2023-03-01T13:31:49Z"
+
+  - action: create
+    path: Logs/application-event-000.log
+    content_len: 1
+    mtime: "2023-03-01T14:38:02Z"
+
+  - action: create
+    path: Logs/application-event-001.log
+    content_len: 38
+    mtime: "2023-03-01T15:45:15Z"
+
+  - action: create
+    path: Logs/application-event-002.log
+    content_len: 75
+    mtime: "2023-03-01T16:52:28Z"
+
+  - action: create
+    path: Logs/application-event-003.log
+    content_len: 112
+    mtime: "2023-03-01T17:59:41Z"
+
+  - action: create
+    path: Logs/application-event-004.log
+    content_len: 149
+    mtime: "2023-03-01T18:06:54Z"
+
+  - action: create
+    path: Logs/application-event-005.log
+    content_len: 186
+    mtime: "2023-03-01T19:13:07Z"
+
+  - action: create
+    path: Logs/application-event-006.log
+    content_len: 223
+    mtime: "2023-03-01T20:20:20Z"
+
+  - action: create
+    path: Logs/application-event-007.log
+    content_len: 260
+    mtime: "2023-03-01T21:27:33Z"
+
+  - action: create
+    path: Logs/application-event-008.log
+    content_len: 297
+    mtime: "2023-03-01T22:34:46Z"
+
+  - action: create
+    path: Logs/application-event-009.log
+    content_len: 334
+    mtime: "2023-03-01T23:41:59Z"
+
+  - action: create
+    path: Logs/application-event-010.log
+    content_len: 371
+    mtime: "2023-03-01T14:38:02Z"
+
+  - action: create
+    path: Logs/application-event-011.log
+    content_len: 408
+    mtime: "2023-03-01T15:45:15Z"
+
+  - action: create
+    path: Logs/application-event-012.log
+    content_len: 445
+    mtime: "2023-03-01T16:52:28Z"
+
+  - action: create
+    path: Logs/application-event-013.log
+    content_len: 482
+    mtime: "2023-03-01T17:59:41Z"
+
+  - action: create
+    path: Logs/application-event-014.log
+    content_len: 519
+    mtime: "2023-03-01T18:06:54Z"
+
+  - action: create
+    path: Logs/application-event-015.log
+    content_len: 556
+    mtime: "2023-03-01T19:13:07Z"
+
+  - action: create
+    path: Logs/application-event-016.log
+    content_len: 593
+    mtime: "2023-03-01T20:20:20Z"
+
+  - action: create
+    path: Logs/application-event-017.log
+    content_len: 630
+    mtime: "2023-03-01T21:27:33Z"
+
+  - action: create
+    path: Logs/application-event-018.log
+    content_len: 667
+    mtime: "2023-03-01T22:34:46Z"
+
+  - action: create
+    path: Logs/application-event-019.log
+    content_len: 704
+    mtime: "2023-03-01T23:41:59Z"
+
+  - action: create
+    path: Logs/application-event-020.log
+    content_len: 741
+    mtime: "2023-03-01T14:38:02Z"
+
+  - action: create
+    path: Logs/application-event-021.log
+    content_len: 778
+    mtime: "2023-03-01T15:45:15Z"
+
+  - action: create
+    path: Logs/application-event-022.log
+    content_len: 815
+    mtime: "2023-03-01T16:52:28Z"
+
+  - action: create
+    path: Logs/application-event-023.log
+    content_len: 852
+    mtime: "2023-03-01T17:59:41Z"
+
+  - action: create
+    path: Logs/application-event-024.log
+    content_len: 889
+    mtime: "2023-03-01T18:06:54Z"
+
+  - action: create
+    path: Logs/application-event-025.log
+    content_len: 926
+    mtime: "2023-03-01T19:13:07Z"
+
+  - action: create
+    path: Logs/application-event-026.log
+    content_len: 963
+    mtime: "2023-03-01T20:20:20Z"
+
+  - action: create
+    path: Logs/application-event-027.log
+    content_len: 1000
+    mtime: "2023-03-01T21:27:33Z"
+
+  - action: create
+    path: Logs/application-event-028.log
+    content_len: 1037
+    mtime: "2023-03-01T22:34:46Z"
+
+  - action: create
+    path: Logs/application-event-029.log
+    content_len: 1074
+    mtime: "2023-03-01T23:41:59Z"
+
+  - action: create
+    path: Logs/application-event-030.log
+    content_len: 1111
+    mtime: "2023-03-01T14:38:02Z"
+
+  - action: create
+    path: Logs/application-event-031.log
+    content_len: 1148
+    mtime: "2023-03-01T15:45:15Z"
+
+  - action: create
+    path: Logs/application-event-032.log
+    content_len: 1185
+    mtime: "2023-03-01T16:52:28Z"
+
+  - action: create
+    path: Logs/application-event-033.log
+    content_len: 1222
+    mtime: "2023-03-01T17:59:41Z"
+
+  - action: create
+    path: Logs/application-event-034.log
+    content_len: 1259
+    mtime: "2023-03-01T18:06:54Z"
+
+  - action: create
+    path: Logs/application-event-035.log
+    content_len: 1296
+    mtime: "2023-03-01T19:13:07Z"
+
+  - action: create
+    path: Logs/application-event-036.log
+    content_len: 1333
+    mtime: "2023-03-01T20:20:20Z"
+
+  - action: create
+    path: Logs/application-event-037.log
+    content_len: 1370
+    mtime: "2023-03-01T21:27:33Z"
+
+  - action: create
+    path: Logs/application-event-038.log
+    content_len: 1407
+    mtime: "2023-03-01T22:34:46Z"
+
+  - action: create
+    path: Logs/application-event-039.log
+    content_len: 1444
+    mtime: "2023-03-01T23:41:59Z"
+
+  - action: create
+    path: Logs/carrier.bin
+    content_len: 1000
+    slack: {kind: canary, cluster_size: 512}
+    mtime: "2023-03-02T06:30:30Z"
+
+  - action: update
+    path: Logs/application-event-039.log
+    content_len: 3000
+    mtime: "2023-03-02T07:37:43Z"
+
+  - action: truncate
+    path: Logs/application-event-038.log
+    mtime: "2023-03-02T08:44:56Z"
+
+  - action: delete
+    path: Logs/application-event-000.log
+
+  - action: delete
+    path: Logs/application-event-003.log
+
+  - action: delete
+    path: Logs/application-event-006.log
+
+  - action: delete
+    path: Logs/application-event-009.log
+
+  - action: delete
+    path: Logs/application-event-012.log
+
+  - action: delete
+    path: Logs/application-event-015.log
+
+  - action: delete
+    path: Logs/application-event-018.log
+
+  - action: delete
+    path: Logs/application-event-021.log
+
+  - action: delete
+    path: Logs/application-event-024.log
+
+  - action: delete
+    path: Logs/application-event-027.log
+
+  - action: delete
+    path: Logs/application-event-030.log
+
+  - action: delete
+    path: Logs/application-event-033.log
+
+  - action: delete
+    path: Logs/application-event-036.log
+
+  - action: delete
+    path: Logs/application-event-039.log
+
+  - action: create
+    path: Logs/after-the-deletes.log
+    content_len: 5000
+    mtime: "2023-03-02T09:51:09Z"
+
+  - action: rename
+    path: "Documents/Long File Name Number2.text"
+    new_path: "Documents/Renamed In Place.text"
+
+  - action: rename
+    path: Documents/notes.txt
+    new_path: Archive/2023/notes.txt
+
+  - action: create
+    path: Scratch/one.tmp
+    content_len: 700
+    mtime: "2023-03-02T10:58:22Z"
+
+  - action: create
+    path: Scratch/two.tmp
+    content_len: 1700
+    mtime: "2023-03-02T11:05:35Z"
+
+  - action: delete
+    path: Scratch/one.tmp
+
+  - action: delete
+    path: Scratch/two.tmp
+
+  - action: delete
+    path: Scratch
+
+  - action: rename
+    path: Archive
+    new_path: Documents/Archive
+
+  - action: mace
+    path: Documents/UPPER.TXT
+    atime: "2023-03-05T00:00:00Z"
+    mtime: "2023-03-04T12:34:56Z"
+    crtime: "2023-03-01T00:00:01.23Z"

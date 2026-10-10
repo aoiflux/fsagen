@@ -55,6 +55,16 @@ type object struct {
 	target      string
 	// op is, for an object deleted, the ledger entry that deleted it.
 	op int
+	// reused says a later write took over the entry an object deleted from
+	// an image left, so no tool can find it.
+	reused bool
+}
+
+// residueRef is a deleted entry an image keeps, as the answer key gives
+// it: what left it, from which path, and which operation.
+type residueRef struct {
+	cause, path string
+	op          int
 }
 
 // Expected is what a tool examining a run's output should find there.
@@ -74,7 +84,18 @@ type Expected struct {
 	namedStreams bool
 	// ops and sums count what the state was built from, for the report.
 	ops, sums int
+	// resolution is how finely the volume keeps each time; a time is
+	// matched within it as well as within the tolerance.
+	resolution times4
+	// entries are the deleted entries an image keeps, by the address a
+	// tool reports as the inode, and reused counts the deleted objects
+	// whose entries were reused.
+	entries map[string]residueRef
+	reused  int
 }
+
+// times4 is a duration for each of the four times.
+type times4 = [4]time.Duration
 
 func newExpected() *Expected {
 	return &Expected{present: map[string]*object{}, deleted: map[string][]*object{}, history: map[string]bool{}}
@@ -98,14 +119,23 @@ func LoadExpected(meta string) (*Expected, error) {
 		return nil, err
 	}
 	x := newExpected()
-	x.fold = caseInsensitive(info.Filesystem, info.OS)
+	x.fold = caseInsensitive(info.Filesystem, info.OS) || rm.Image != nil && caseInsensitive(rm.Image.FS, "")
 	x.namedStreams = rm.Capabilities.NamedStreams
+	var err error
+	if x.resolution, err = rm.Capabilities.TimeResolution.Durations(); err != nil {
+		return nil, err
+	}
 
 	entries, err := readLedger(filepath.Join(meta, ledger.FileName))
 	if err != nil && !(errors.Is(err, fs.ErrNotExist) && rm.Mode == "bulk") {
 		return nil, err
 	}
 	x.foldLedger(entries)
+	if rm.Target == runinfo.TargetImage {
+		if err := x.addResidue(filepath.Join(meta, ledger.AnswerKeyFileName)); err != nil {
+			return nil, err
+		}
+	}
 	sums, err := os.ReadFile(filepath.Join(meta, runinfo.SumsFileName))
 	if err != nil {
 		return nil, err
@@ -154,6 +184,54 @@ func parseLedger(data []byte) ([]ledger.Entry, error) {
 		out = append(out, e)
 	}
 	return out, sc.Err()
+}
+
+// addResidue reads what an image's writes left behind from the answer key:
+// every deleted entry still there, by its address, and every object whose
+// entry a later write reused, which no tool can be expected to find.
+func (x *Expected) addResidue(name string) error {
+	data, err := os.ReadFile(name)
+	if err != nil {
+		return err
+	}
+	x.entries = map[string]residueRef{}
+	sc := bufio.NewScanner(bytes.NewReader(data))
+	sc.Buffer(nil, maxLine)
+	for n := 1; sc.Scan(); n++ {
+		line := bytes.TrimSpace(sc.Bytes())
+		if len(line) == 0 || line[0] == '#' || !bytes.Contains(line, []byte(`"event":"residue"`)) {
+			continue
+		}
+		var f ledger.Fact
+		if err := json.Unmarshal(line, &f); err != nil {
+			return fmt.Errorf("%s line %d: %w", ledger.AnswerKeyFileName, n, err)
+		}
+		e := f.Residue.Entry
+		if e == nil {
+			continue
+		}
+		if !e.Overwritten {
+			x.entries[fmt.Sprint(e.Number)] = residueRef{f.Residue.Cause, f.Path, f.N}
+			continue
+		}
+		if f.Residue.Cause == "delete" {
+			if g := x.deletedBy(f.Path, f.N); g != nil && !g.reused {
+				g.reused = true
+				x.reused++
+			}
+		}
+	}
+	return sc.Err()
+}
+
+// deletedBy is the object operation op deleted from p.
+func (x *Expected) deletedBy(p string, op int) *object {
+	for _, g := range x.deleted[p] {
+		if g.op == op {
+			return g
+		}
+	}
+	return nil
 }
 
 // caseInsensitive says whether names on the volume a run wrote to are
