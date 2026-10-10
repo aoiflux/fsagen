@@ -28,7 +28,8 @@
                   "jpeg",
                   "mp4",
                   "chrome_history",
-                  "firefox_places"
+                  "firefox_places",
+                  "lnk"
                 ]
               }
             },
@@ -48,6 +49,8 @@
                 "format",
                 "history",
                 "id",
+                "lnk",
+                "mitre",
                 "mode",
                 "mtime",
                 "offset",
@@ -55,6 +58,7 @@
                 "pdf",
                 "pe",
                 "render",
+                "slack",
                 "template",
                 "type"
               ]
@@ -101,7 +105,8 @@
                   "jpeg",
                   "mp4",
                   "chrome_history",
-                  "firefox_places"
+                  "firefox_places",
+                  "lnk"
                 ]
               }
             },
@@ -119,6 +124,8 @@
                 "docx",
                 "format",
                 "history",
+                "lnk",
+                "mitre",
                 "mode",
                 "mtime",
                 "offset",
@@ -127,6 +134,7 @@
                 "pe",
                 "ref",
                 "render",
+                "slack",
                 "template"
               ]
             }
@@ -168,6 +176,7 @@
                 "crtime",
                 "ctime",
                 "id",
+                "mitre",
                 "mode",
                 "mtime",
                 "offset",
@@ -216,6 +225,7 @@
                 "crtime",
                 "ctime",
                 "edit",
+                "mitre",
                 "mode",
                 "mtime",
                 "offset",
@@ -264,6 +274,7 @@
                 "atime",
                 "condition",
                 "missing_ok",
+                "mitre",
                 "mtime",
                 "offset",
                 "path",
@@ -331,6 +342,7 @@
                 "condition",
                 "crtime",
                 "ctime",
+                "mitre",
                 "mode",
                 "mtime",
                 "offset",
@@ -370,6 +382,7 @@
                 "action",
                 "condition",
                 "id",
+                "mitre",
                 "new_path",
                 "offset",
                 "path",
@@ -413,6 +426,7 @@
                 "crtime",
                 "ctime",
                 "id",
+                "mitre",
                 "mode",
                 "mtime",
                 "new_path",
@@ -462,6 +476,7 @@
                 "condition",
                 "crtime",
                 "ctime",
+                "mitre",
                 "mode",
                 "mtime",
                 "offset",
@@ -501,6 +516,7 @@
                 "action",
                 "atime",
                 "condition",
+                "mitre",
                 "mode",
                 "mtime",
                 "new_path",
@@ -535,6 +551,7 @@
                 "crtime",
                 "ctime",
                 "id",
+                "mitre",
                 "mode",
                 "mtime",
                 "offset",
@@ -577,6 +594,7 @@
                 "email",
                 "format",
                 "id",
+                "mitre",
                 "mode",
                 "mtime",
                 "offset",
@@ -611,6 +629,7 @@
                 "crtime",
                 "ctime",
                 "id",
+                "mitre",
                 "mode",
                 "mtime",
                 "offset",
@@ -663,6 +682,7 @@
                 "content_file",
                 "content_kind",
                 "content_len",
+                "mitre",
                 "mtime",
                 "offset",
                 "path",
@@ -712,6 +732,7 @@
                 "atime",
                 "condition",
                 "host_url",
+                "mitre",
                 "mtime",
                 "offset",
                 "path",
@@ -824,6 +845,7 @@
             "mp4",
             "chrome_history",
             "firefox_places",
+            "lnk",
             "eml",
             "mbox"
           ],
@@ -839,9 +861,15 @@
           "description": "Names what this action creates or renames, for later ref/refs.",
           "type": "string"
         },
+        "lnk": {
+          "$ref": "#/$defs/LnkSpec"
+        },
         "missing_ok": {
           "description": "delete: a missing path is a recorded no-op.",
           "type": "boolean"
+        },
+        "mitre": {
+          "$ref": "#/$defs/Mitre"
         },
         "mode": {
           "description": "Octal file permissions, for example 0600",
@@ -879,6 +907,9 @@
         },
         "render": {
           "type": "boolean"
+        },
+        "slack": {
+          "$ref": "#/$defs/SlackSpec"
         },
         "stream": {
           "type": "string"
@@ -1314,6 +1345,110 @@
       ],
       "type": "object"
     },
+    "LnkSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "arguments": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "drive_type": {
+          "enum": [
+            "fixed",
+            "removable",
+            "cdrom",
+            "ramdisk"
+          ],
+          "type": "string"
+        },
+        "icon": {
+          "type": "string"
+        },
+        "icon_index": {
+          "type": "integer"
+        },
+        "machine_id": {
+          "maxLength": 15,
+          "type": "string"
+        },
+        "relative_path": {
+          "type": "string"
+        },
+        "show_command": {
+          "enum": [
+            "normal",
+            "maximized",
+            "minimized"
+          ],
+          "type": "string"
+        },
+        "target": {
+          "description": "The Windows path the link points at, on a drive letter: C:\\Users\\Public\\tool.exe.",
+          "pattern": "^[A-Za-z]:\\\\",
+          "type": "string"
+        },
+        "target_atime": {
+          "$ref": "#/$defs/Rfc3339Time"
+        },
+        "target_attributes": {
+          "items": {
+            "enum": [
+              "readonly",
+              "hidden",
+              "system",
+              "archive"
+            ],
+            "type": "string"
+          },
+          "type": "array",
+          "uniqueItems": true
+        },
+        "target_crtime": {
+          "$ref": "#/$defs/Rfc3339Time"
+        },
+        "target_mtime": {
+          "$ref": "#/$defs/Rfc3339Time"
+        },
+        "target_size": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "target_type": {
+          "enum": [
+            "file",
+            "dir"
+          ],
+          "type": "string"
+        },
+        "volume_label": {
+          "maxLength": 32,
+          "type": "string"
+        },
+        "volume_serial": {
+          "pattern": "^[0-9A-Fa-f]{4}-?[0-9A-Fa-f]{4}$",
+          "type": "string"
+        },
+        "working_dir": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "type": "object"
+    },
+    "Mitre": {
+      "description": "MITRE technique IDs (T1234 or T1234.001) the action exhibits. Annotation only: it changes no byte written. The shape is checked, not the MITRE catalogue.",
+      "items": {
+        "pattern": "^T\\d{4}(\\.\\d{3})?$",
+        "type": "string"
+      },
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true
+    },
     "OperationAction": {
       "enum": [
         "create",
@@ -1486,6 +1621,37 @@
       "format": "date-time",
       "type": "string"
     },
+    "SlackSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "cluster_size": {
+          "description": "The cluster size the slack is planned for; 4096 by default. On a live volume it must be the volume's own.",
+          "enum": [
+            512,
+            1024,
+            2048,
+            4096,
+            8192,
+            16384,
+            32768,
+            65536
+          ],
+          "type": "integer"
+        },
+        "fragment_of": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "canary",
+            "pattern",
+            "fragment"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "Step": {
       "additionalProperties": false,
       "allOf": [
@@ -1527,6 +1693,10 @@
         },
         "every": {
           "$ref": "#/$defs/Duration"
+        },
+        "mitre": {
+          "$ref": "#/$defs/Mitre",
+          "description": "MITRE technique IDs every action in the step exhibits, on top of its own."
         },
         "offset": {
           "$ref": "#/$defs/Duration"

@@ -158,6 +158,8 @@ func TestNestedDefsRefineRealFields(t *testing.T) {
 		"Attachment":      spec.Attachment{},
 		"VaultSpec":       spec.VaultSpec{},
 		"PeSpec":          spec.PeSpec{},
+		"LnkSpec":         spec.LnkSpec{},
+		"SlackSpec":       spec.SlackSpec{},
 		"PeSection":       spec.PeSection{},
 		"HistoryVisit":    spec.HistoryVisit{},
 		"HistoryDownload": spec.HistoryDownload{},

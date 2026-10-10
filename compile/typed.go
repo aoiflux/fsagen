@@ -28,6 +28,7 @@ var inferredFormats = map[string]spec.Format{
 	".png": spec.FormatPNG, ".jpg": spec.FormatJPEG, ".jpeg": spec.FormatJPEG,
 	".docx": spec.FormatDOCX,
 	".mp4":  spec.FormatMP4,
+	".lnk":  spec.FormatLNK,
 }
 
 // refusedExtensions promise a format fsagen still cannot build. Refusing is
@@ -55,6 +56,7 @@ var blockFormats = map[string][]spec.Format{
 	"docx":    {spec.FormatDOCX},
 	"pe":      {spec.FormatPE},
 	"history": {spec.FormatChromeHistory, spec.FormatFirefoxPlaces},
+	"lnk":     {spec.FormatLNK},
 }
 
 // checkTyped validates the typed blocks and the rules that tie a block to the
@@ -75,6 +77,18 @@ func checkTyped(op *Op, at func(field, format string, args ...any)) {
 	}
 	if k.has("content_len") && (op.Format == spec.FormatChromeHistory || op.Format == spec.FormatFirefoxPlaces) {
 		at("content_len", "a history database is as big as its contents make it; give history.visits instead")
+	}
+	if k.has("content_len") && op.Format == spec.FormatLNK {
+		at("content_len", "a shell link has no region for filler; it is as big as what it records")
+	}
+	if op.Format == spec.FormatLNK && op.Lnk == nil {
+		at("format", "lnk needs an lnk block saying what the link points at, at least its target")
+	}
+	if op.Lnk != nil {
+		checkLNK(op, at)
+	}
+	if op.Slack != nil {
+		checkSlack(op, at)
 	}
 
 	if (op.Format == spec.FormatChromeHistory || op.Format == spec.FormatFirefoxPlaces) && op.History == nil {
@@ -316,6 +330,15 @@ func cloneTyped(op *spec.Operation) {
 	}
 	if op.Email != nil {
 		op.Email = cloneEmail(op.Email)
+	}
+	if op.Slack != nil {
+		v := *op.Slack
+		op.Slack = &v
+	}
+	if op.Lnk != nil {
+		v := *op.Lnk
+		v.TargetAttributes = append([]string(nil), op.Lnk.TargetAttributes...)
+		op.Lnk = &v
 	}
 }
 

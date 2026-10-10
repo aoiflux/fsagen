@@ -4,8 +4,10 @@
 //
 // It runs go vet, a line-ending-insensitive gofmt check, a go.mod tidiness
 // check, the tests (with the race detector where cgo is available; the
-// product itself never needs cgo), and CGO_ENABLED=0 builds for windows,
-// linux, darwin and freebsd on amd64 and arm64. Setting GOOS/GOARCH for the
+// product itself never needs cgo), the conformance module that reads fsagen's
+// output with third-party parsers (vetted, tidy and tested the same way), and
+// CGO_ENABLED=0 builds for windows, linux, darwin and freebsd on amd64 and
+// arm64. Setting GOOS/GOARCH for the
 // child builds is how cross-compiling works; fsagen itself reads no
 // environment variables.
 package main
@@ -53,6 +55,13 @@ func gate() int {
 		fmt.Println("note  the race detector needs cgo and a C compiler; running tests without -race")
 	}
 	step(name, run(nil, "go", args...))
+
+	// The conformance suite is a module of its own, so its parsers never
+	// become fsagen's dependencies; "./..." above does not reach it.
+	conf := []string{"-C", conformanceDir}
+	step("conformance: go vet", run(nil, "go", append(conf, "vet", "./...")...))
+	step("conformance: go mod tidy", run(nil, "go", append(conf, "mod", "tidy", "-diff")...))
+	step("conformance: "+name, run(nil, "go", append(conf, args...)...))
 
 	tmp, err := os.MkdirTemp("", "fsagen-gate")
 	if err != nil {
@@ -122,6 +131,10 @@ func gofmtCheck() error {
 	}
 	return nil
 }
+
+// conformanceDir is the module that reads fsagen's output with third-party
+// parsers.
+const conformanceDir = "internal/conformance"
 
 // raceAvailable reports whether "go test -race" can build here.
 func raceAvailable() bool {

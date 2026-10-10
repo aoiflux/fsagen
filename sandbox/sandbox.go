@@ -40,6 +40,7 @@ type FS struct {
 	streams bool
 	fsName  string
 	gran    Granularity
+	cluster int
 }
 
 // Open opens dir, which must already exist, as a confined output root.
@@ -55,6 +56,7 @@ func Open(dir string) (*FS, error) {
 	f := &FS{root: r, dir: abs}
 	f.streams, f.fsName = probeVolume(r)
 	f.gran = volumeGranularity(r, f.fsName)
+	f.cluster = probeCluster(abs)
 	return f, nil
 }
 
@@ -66,6 +68,23 @@ func (f *FS) Dir() string { return f.dir }
 
 // SupportsStreams reports whether the volume stores named data streams.
 func (f *FS) SupportsStreams() bool { return f.streams }
+
+// ClusterSize is the volume's allocation unit in bytes, or 0 where the
+// platform does not report it.
+func (f *FS) ClusterSize() int { return f.cluster }
+
+// SlackBestEffort reports whether bytes written past the end of a file can be
+// left in its last cluster here: they are written, and the file system has
+// no reason to clear them, but only a read of the raw volume could confirm
+// that they stayed.
+func (f *FS) SlackBestEffort() bool { return slackBestEffort(f.fsName) }
+
+// WriteSlack writes data just past byte at of name, which must be where its
+// content ends, and shrinks the file back to at: the bytes stay in the last
+// cluster, outside the file. It is only meaningful where SlackBestEffort.
+func (f *FS) WriteSlack(name string, at int64, data []byte) error {
+	return writeSlack(f.root, name, at, data)
+}
 
 // FilesystemName is the volume's file-system name (NTFS, ReFS, ext4,
 // btrfs, ...), or "" where the platform does not report one.

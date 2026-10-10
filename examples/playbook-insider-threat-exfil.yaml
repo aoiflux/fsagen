@@ -38,6 +38,7 @@ steps:
 
   # Create USB staging directory (day 3)
   - actor: insider
+    mitre: [T1074.001]
     offset: 72h
     actions:
       - action: create
@@ -49,6 +50,7 @@ steps:
 
   # Copy files to USB staging (selective)
   - actor: insider
+    mitre: [T1074.001]
     offset: 72h30m
     batch_count: 15
     actions:
@@ -65,6 +67,7 @@ steps:
 
   # Compress for exfiltration
   - actor: insider
+    mitre: [T1560.001]
     offset: 73h
     actions:
       # A real archive of the staged documents.
@@ -93,6 +96,7 @@ steps:
 
   # Cloud upload simulation
   - actor: insider
+    mitre: [T1567.002]
     offset: 76h
     every: 5m
     repeat: 10
@@ -103,6 +107,7 @@ steps:
 
   # Cover tracks - selective deletion
   - actor: insider
+    mitre: [T1070.004, T1070.006]
     offset: 80h
     actions:
       - action: delete
@@ -131,6 +136,7 @@ steps:
 
   # Final cleanup before leaving
   - actor: insider
+    mitre: [T1070.004]
     offset: 168h
     actions:
       - action: delete

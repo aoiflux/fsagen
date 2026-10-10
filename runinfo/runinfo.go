@@ -18,6 +18,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -117,7 +118,8 @@ type Skipped struct {
 	Action spec.ActionName `json:"action"`
 	Path   string          `json:"path"`
 	// Field is set when only one field was dropped (an explicit time the
-	// platform cannot set) and the operation itself was performed.
+	// platform cannot set, or slack it cannot keep) and the operation itself
+	// was performed.
 	Field  string `json:"field,omitempty"`
 	Reason string `json:"reason"`
 }
@@ -127,8 +129,9 @@ type Outputs struct {
 	SHA256SUMS string `json:"sha256sums"` // SHA-256 of the SHA256SUMS file
 	Files      int    `json:"files"`
 	Streams    int    `json:"streams"`
-	Ledger     string `json:"ledger_sha256,omitempty"`     // SHA-256 of ledger.jsonl
-	AnswerKey  string `json:"answer_key_sha256,omitempty"` // SHA-256 of answer-key.jsonl
+	Ledger     string `json:"ledger_sha256,omitempty"`      // SHA-256 of ledger.jsonl
+	AnswerKey  string `json:"answer_key_sha256,omitempty"`  // SHA-256 of answer-key.jsonl
+	MitreLayer string `json:"mitre_layer_sha256,omitempty"` // SHA-256 of mitre-layer.json, when the run wrote one
 }
 
 // New starts a run manifest.
@@ -267,6 +270,19 @@ func writeAndSync(name string, data []byte) error {
 func WriteLedger(dir string, entries []ledger.Entry) (string, error) {
 	data := ledger.Bytes(entries)
 	return Digest(data), writeAtomic(dir, ledger.FileName, data)
+}
+
+// WriteRecord writes one more run record, data, into dir under name and
+// returns its SHA-256. A nil data removes a record an earlier run left there,
+// so a stale one cannot pass for this run's.
+func WriteRecord(dir, name string, data []byte) (string, error) {
+	if data == nil {
+		if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return "", err
+		}
+		return "", nil
+	}
+	return Digest(data), writeAtomic(dir, name, data)
 }
 
 // WriteAnswerKey writes answer-key.jsonl into dir and returns its SHA-256.

@@ -28,6 +28,9 @@ var writers = []struct {
 	{"bodyfile", (*Timeline).WriteBodyfile, []string{".bodyfile", ".body"}},
 	{"macb", (*Timeline).WriteMACB, []string{".macb"}},
 	{"jsonl", (*Timeline).WriteJSONL, []string{".jsonl"}},
+	// Timesketch reads JSON lines too, so .jsonl cannot imply it: it is only
+	// ever chosen by name.
+	{"timesketch", (*Timeline).WriteTimesketch, nil},
 }
 
 // formatNames is the name of every writer, in the table's order. It is what
@@ -48,6 +51,16 @@ func (tl *Timeline) Write(w io.Writer, format string) error {
 		}
 	}
 	return fmt.Errorf("unknown timeline format %q (want %s)", format, strings.Join(Formats, ", "))
+}
+
+// Extensions is every file extension that implies a format, in the table's
+// order.
+func Extensions() []string {
+	var out []string
+	for _, f := range writers {
+		out = append(out, f.extensions...)
+	}
+	return out
 }
 
 // FormatForExtension is the format a file extension implies, if any. It is how
@@ -251,6 +264,101 @@ func (tl *Timeline) WriteJSONL(w io.Writer) error {
 			UID: e.UID, GID: e.GID, Inode: e.Inode,
 			Atime: rfc(e.Atime), Mtime: rfc(e.Mtime), Ctime: rfc(e.Ctime), Crtime: rfc(e.Btime),
 			MD5: e.MD5, Deleted: e.Deleted,
+		}); err != nil {
+			return err
+		}
+	}
+	return b.Flush()
+}
+
+// timesketchTime is how Timesketch, and OpenSearch's @timestamp, take a time:
+// ISO 8601 with exactly six fractional digits and an explicit offset.
+const timesketchTime = "2006-01-02T15:04:05.000000-07:00"
+
+// timesketchDescs are Plaso's names for the four times, in MACB order, so a
+// sketch that also holds Plaso events lines up with these.
+var timesketchDescs = [4]string{"Content Modification Time", "Last Access Time", "Metadata Modification Time", "Creation Time"}
+
+type timesketchEvent struct {
+	Message       string `json:"message"`
+	Datetime      string `json:"datetime"`
+	AtTimestamp   string `json:"@timestamp"`
+	Timestamp     int64  `json:"timestamp"`
+	TimestampDesc string `json:"timestamp_desc"`
+	DataType      string `json:"data_type"`
+	Source        string `json:"timeline_source"`
+	DisplayName   string `json:"display_name"`
+	Filename      string `json:"filename"`
+	Stream        string `json:"stream,omitempty"`
+	EntryType     Type   `json:"file_entry_type"`
+	Size          int64  `json:"file_size"`
+	Mode          string `json:"mode"`
+	UID           int    `json:"uid"`
+	GID           int    `json:"gid"`
+	Inode         string `json:"inode,omitempty"`
+	MD5           string `json:"md5,omitempty"`
+	Allocated     bool   `json:"is_allocated"`
+}
+
+// timesketchRow is one event: an entry at one of its times.
+type timesketchRow struct {
+	at   time.Time
+	desc int
+	e    *Entry
+}
+
+// WriteTimesketch writes the JSON lines Timesketch imports: one event per
+// entry and known time, as Plaso's file-stat parser emits them, so an entry
+// with four known times is four events. Each carries the fields Timesketch
+// requires (message, datetime, timestamp_desc) plus @timestamp for OpenSearch
+// and the integer microseconds Timesketch indexes by. Timesketch keeps
+// microseconds, so a finer time is cut down to the microsecond, never rounded
+// up past it. Events run in time order, then by name, then in MACB order.
+func (tl *Timeline) WriteTimesketch(w io.Writer) error {
+	var rows []timesketchRow
+	for i := range tl.Entries {
+		e := &tl.Entries[i]
+		for j, t := range [4]time.Time{e.Mtime, e.Atime, e.Ctime, e.Btime} {
+			if !t.IsZero() {
+				rows = append(rows, timesketchRow{t.Truncate(time.Microsecond), j, e})
+			}
+		}
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		a, b := rows[i], rows[j]
+		if !a.at.Equal(b.at) {
+			return a.at.Before(b.at)
+		}
+		if a.e.Name() != b.e.Name() {
+			return a.e.Name() < b.e.Name()
+		}
+		return a.desc < b.desc
+	})
+
+	b := bufio.NewWriter(w)
+	enc := json.NewEncoder(b)
+	enc.SetEscapeHTML(false)
+	for _, r := range rows {
+		when := r.at.UTC().Format(timesketchTime)
+		if err := enc.Encode(timesketchEvent{
+			Message:       fmt.Sprintf("%s: %s (%s, %d bytes)", timesketchDescs[r.desc], r.e.Name(), r.e.Type, r.e.Size),
+			Datetime:      when,
+			AtTimestamp:   when,
+			Timestamp:     r.at.UnixMicro(),
+			TimestampDesc: timesketchDescs[r.desc],
+			DataType:      "fs:stat",
+			Source:        tl.Source,
+			DisplayName:   r.e.Name(),
+			Filename:      "/" + r.e.Path,
+			Stream:        r.e.Stream,
+			EntryType:     r.e.Type,
+			Size:          r.e.Size,
+			Mode:          r.e.octal(),
+			UID:           r.e.UID,
+			GID:           r.e.GID,
+			Inode:         r.e.Inode,
+			MD5:           r.e.MD5,
+			Allocated:     !r.e.Deleted,
 		}); err != nil {
 			return err
 		}

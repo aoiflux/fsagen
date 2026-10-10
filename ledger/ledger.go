@@ -33,6 +33,9 @@ type Entry struct {
 	Path    string          `json:"path,omitempty"`
 	NewPath string          `json:"new_path,omitempty"`
 	ID      string          `json:"id,omitempty"`
+	// Mitre are the ATT&CK techniques the operation exhibits, its step's
+	// included; see compile.Op.Techniques.
+	Mitre []string `json:"mitre,omitempty"`
 	// Object is the model's serial number for the object the operation left
 	// behind (for a delete, the one it removed); it survives renames.
 	Object int `json:"object,omitempty"`
@@ -63,6 +66,23 @@ type Entry struct {
 	Uncontrolled []string `json:"uncontrolled,omitempty"`
 	Outcome      string   `json:"outcome"`
 	Reason       string   `json:"reason,omitempty"`
+	// Slack is what the operation wrote past the end of the file, in the
+	// rest of its last cluster.
+	Slack *Slack `json:"slack,omitempty"`
+}
+
+// Slack is the bytes an operation left in a file's slack. Offset is where
+// the file's content ends, so where the slack starts within it; Length runs
+// to the end of the cluster. Verified says whether fsagen wrote the cluster
+// itself (a disk image) rather than leaving the bytes for a live file system
+// to keep, which only a read of the raw volume can confirm.
+type Slack struct {
+	Kind        string `json:"kind"`
+	ClusterSize int    `json:"cluster_size"`
+	Offset      int    `json:"offset"`
+	Length      int    `json:"length"`
+	SHA256      string `json:"sha256"`
+	Verified    bool   `json:"verified"`
 }
 
 // Stream is one named data stream on the object.

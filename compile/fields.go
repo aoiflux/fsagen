@@ -12,10 +12,12 @@ import (
 // Fields lists, per action, every YAML key a manifest operation or playbook
 // action may carry besides "action" itself. It is the single source for both
 // validation and the JSON Schema, so the two cannot drift. A key an action
-// does not use is an error rather than a silently ignored no-op.
+// does not use is an error rather than a silently ignored no-op. Every action
+// also takes "mitre", which annotates it without changing what it does; see
+// allowed.
 var Fields = map[spec.ActionName][]string{
-	spec.ActionCreate:   {"path", "id", "type", "ext", "content", "content_len", "content_kind", "content_file", "render", "template", "mode", "format", "pdf", "docx", "pe", "history", "atime", "mtime", "ctime", "crtime"},
-	spec.ActionUpdate:   {"path", "ref", "content", "content_len", "content_kind", "content_file", "render", "template", "mode", "format", "pdf", "docx", "pe", "history", "atime", "mtime", "ctime", "crtime"},
+	spec.ActionCreate:   {"path", "id", "type", "ext", "content", "content_len", "content_kind", "content_file", "render", "template", "mode", "format", "pdf", "docx", "pe", "history", "lnk", "slack", "atime", "mtime", "ctime", "crtime"},
+	spec.ActionUpdate:   {"path", "ref", "content", "content_len", "content_kind", "content_file", "render", "template", "mode", "format", "pdf", "docx", "pe", "history", "lnk", "slack", "atime", "mtime", "ctime", "crtime"},
 	spec.ActionAppend:   {"path", "ref", "id", "content", "content_len", "content_kind", "content_file", "render", "template", "mode", "atime", "mtime", "ctime", "crtime"},
 	spec.ActionEdit:     {"path", "ref", "refs", "edit", "mode", "atime", "mtime", "ctime", "crtime"},
 	spec.ActionDelete:   {"path", "ref", "refs", "missing_ok", "atime", "mtime"},
@@ -87,6 +89,7 @@ var (
 		spec.FormatRaw, spec.FormatText, spec.FormatPDF, spec.FormatDOCX,
 		spec.FormatPE, spec.FormatZip, spec.FormatPNG, spec.FormatJPEG,
 		spec.FormatMP4, spec.FormatChromeHistory, spec.FormatFirefoxPlaces,
+		spec.FormatLNK,
 	}
 )
 
@@ -113,6 +116,7 @@ func allowed(action spec.ActionName, playbook bool) []string {
 		}
 		out = append(out, f)
 	}
+	out = append(out, "mitre")
 	if playbook {
 		out = append(out, "offset", "condition")
 	}

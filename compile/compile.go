@@ -75,6 +75,13 @@ type Op struct {
 	// Skip explains why the platform cannot perform the operation, when the
 	// run was told to skip rather than fail (--on-unsupported=skip).
 	Skip string
+	// SlackDropped explains why the operation's slack was left out, when the
+	// platform cannot keep it and the run was told to skip; the file itself
+	// is still written.
+	SlackDropped string
+	// FragmentPath is, for slack of kind fragment, the file whose first bytes
+	// fill the slack, resolved from fragment_of when the operation runs.
+	FragmentPath string
 	// Rand is the operation's random key; every value the executor
 	// generates for it (random content, MIME boundaries, a vault salt) is
 	// drawn from a stream derived from it.
@@ -85,6 +92,9 @@ type Op struct {
 	Random int
 
 	keys keys
+	// stepMitre are the techniques the action's step declares, which the
+	// action inherits: see Techniques.
+	stepMitre []string
 }
 
 // Member is one file an archive holds: where it is in the output tree, the

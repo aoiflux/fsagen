@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf16"
 )
 
 // A PE here is a container for a parser to read, not a program to run. It has
@@ -800,14 +799,6 @@ func versionParts(s string) (ms, ls uint32) {
 func firstTwo(s string) (uint16, uint16) {
 	ms, _ := versionParts(s)
 	return uint16(ms >> 16), uint16(ms)
-}
-
-func utf16z(s string) []byte {
-	out := make([]byte, 0, 2*len(s)+2)
-	for _, u := range utf16.Encode([]rune(s)) {
-		out = append(out, byte(u), byte(u>>8))
-	}
-	return append(out, 0, 0)
 }
 
 func pad4(b []byte) []byte {

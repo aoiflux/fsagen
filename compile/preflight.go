@@ -17,13 +17,22 @@ type Caps struct {
 	// ChangeTime: a file's metadata change time can be set and is stored
 	// (Windows on NTFS or ReFS).
 	ChangeTime bool
+	// Slack is how far the target keeps bytes written past the end of a
+	// file, and ClusterSize the size of its clusters (0 when not known, as
+	// for --validate with no output volume).
+	Slack       SlackSupport
+	ClusterSize int
 }
 
 // DefaultCaps is the capability set assumed when no output volume is known
 // (for --validate and --dry-run without an output path).
 func DefaultCaps() Caps {
 	w := runtime.GOOS == "windows"
-	return Caps{NamedStreams: w, BirthTime: w, ChangeTime: w}
+	slack := SlackNone
+	if w {
+		slack = SlackBestEffort
+	}
+	return Caps{NamedStreams: w, BirthTime: w, ChangeTime: w, Slack: slack}
 }
 
 // unsettable lists the explicit time fields of op that caps cannot set.
@@ -88,5 +97,12 @@ func preflightOp(op *Op, caps Caps, skip bool, errs *ErrorList) {
 		op.Skip = reason
 	default:
 		r.whole("%s (pass --on-unsupported=skip to generate the rest and record the skip)", reason)
+	}
+	switch reason := slackUnsupported(op, caps); {
+	case reason == "":
+	case skip:
+		op.SlackDropped = reason
+	default:
+		r.at("slack", "%s (pass --on-unsupported=skip to write the file without its slack and record that)", reason)
 	}
 }

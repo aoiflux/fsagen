@@ -149,7 +149,11 @@ func ExecuteFile(mode compile.Mode, root, file string, opts compile.Options) (Re
 // Caps is the capability set of an output root.
 func Caps(fsys *sandbox.FS) compile.Caps {
 	tc := fsys.TimeCaps()
-	return compile.Caps{NamedStreams: fsys.SupportsStreams(), BirthTime: tc.Birth, ChangeTime: tc.Change}
+	slack := compile.SlackNone
+	if fsys.SlackBestEffort() {
+		slack = compile.SlackBestEffort
+	}
+	return compile.Caps{NamedStreams: fsys.SupportsStreams(), BirthTime: tc.Birth, ChangeTime: tc.Change, Slack: slack, ClusterSize: fsys.ClusterSize()}
 }
 
 // Execute applies the operations in order, leaving out those marked NoOp
@@ -200,6 +204,13 @@ func runOp(ctx ExecContext, op compile.Op, e *ledger.Entry, digests map[int]stri
 	if err := executeOp(ctx, op); err != nil {
 		return fail(err)
 	}
+	if op.Slack != nil && op.SlackDropped == "" {
+		s, err := writeSlack(ctx, op)
+		if err != nil {
+			return fail(err)
+		}
+		e.Slack = s
+	}
 	// Digests are read before stamping: a read may move the access time, which
 	// the stamps then put back.
 	if err := describe(ctx.FS, op, e, digests); err != nil {
@@ -241,6 +252,7 @@ func newEntry(i int, op compile.Op, caps compile.Caps) ledger.Entry {
 		Path:    op.Path,
 		NewPath: op.NewPath,
 		ID:      op.ID,
+		Mitre:   op.Techniques(),
 		Object:  op.Object,
 		Moved:   op.Moved,
 		Kind:    kindName(op.Kind),

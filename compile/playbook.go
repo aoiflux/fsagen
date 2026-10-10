@@ -116,6 +116,11 @@ func validateStep(file string, n *yaml.Node, si int, st spec.Step, actors map[st
 	if sk.has("condition") && !slices.Contains(Conditions, st.Condition) {
 		r.at("condition", "unknown condition %q (want one of: %s; a step condition tests the iteration index)", st.Condition, strings.Join(Conditions, ", "))
 	}
+	if sk.has("mitre") {
+		if err := checkMitre(st.Mitre); err != nil {
+			r.at("mitre", "%v", err)
+		}
+	}
 	if len(st.Actions) == 0 {
 		r.at("actions", "step has no actions")
 	}
@@ -307,7 +312,7 @@ func (g *opGen) actionOp(sp stepPlan, ai int, a spec.Action, occ occurrence) (Op
 		r.whole("%v", err)
 		return Op{}, false
 	}
-	return Op{Operation: prepared, Src: ref, At: at, When: when, Rand: ctx.Rand, keys: sp.info.actionKeys[ai]}, true
+	return Op{Operation: prepared, Src: ref, At: at, When: when, Rand: ctx.Rand, keys: sp.info.actionKeys[ai], stepMitre: sp.step.Mitre}, true
 }
 
 // context is the render context for one action: the occurrence's time and

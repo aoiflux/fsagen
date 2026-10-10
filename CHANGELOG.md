@@ -1,5 +1,106 @@
 # Changelog
 
+## Unreleased
+
+Generator version stays **6**: nothing below changes a byte that an existing
+input produces. Every v6 golden for an untouched input is byte-identical; the
+four examples that gained tags re-recorded only their ledger, answer key and
+dry-run listing, and their corpora and modelled bodyfiles are unchanged.
+
+**One input that used to be accepted is now refused.** `.lnk` now means
+`format: lnk`, so a `.lnk` given only `content_len` — base32 text under a name
+that promises a shortcut, the silent wrong output this tool exists to prevent —
+is an error that asks for an `lnk:` block, as `.exe` did when PE inference
+arrived. `playbook-malware-lifecycle` had exactly that: its startup-folder
+`WindowsUpdate.lnk` is now a real shortcut to the dropper the scenario plants
+(941 bytes instead of 256). Its goldens were re-recorded on both platforms; one
+line of its corpus fingerprint moved, the shortcut's, and nothing else did.
+`examples/INVESTIGATION_WORKFLOW.md` shows the new size and MD5.
+
+### ATT&CK tags and a Navigator layer
+
+Any operation, playbook action or playbook step takes `mitre: [T1070.006, ...]`.
+An action exhibits its step's techniques and its own. The IDs are checked for
+shape only (`T1234` or `T1234.001`); fsagen does not embed the ATT&CK catalogue.
+The ledger, the answer key and the dry-run listing carry each operation's
+techniques, and a run with at least one tagged operation that ran writes
+`mitre-layer.json` — an ATT&CK Navigator layer, format 4.5 — beside the answer
+key, its digest recorded in the run manifest. A rerun without tags removes a
+stale layer.
+
+Tagging moves no byte. An action without an `id` takes its random key from a hash
+of its own YAML; `mitre` is now left out of that hash, so the key is the same
+tagged or not (`TestMitreLeavesRandomKeyAlone`, proved load-bearing by emptying
+the exclusion; `TestMitreLayerWritten` compares the two corpora).
+`playbook-log-tampering`, `-windows-ads-motw`, `-persistence-artifacts` and
+`-insider-threat-exfil` are tagged. Their input changed, so their ledger, answer
+key and dry-run goldens were re-recorded on Windows and under WSL; every one was
+checked to differ only by the `mitre` fields and the `src` line numbers the new
+lines shifted.
+
+### Timesketch timelines
+
+`--timeline-format timesketch` writes the JSON lines Timesketch imports: one
+event per entry and known time, as Plaso's file-stat parser emits them, with
+`message`, `datetime`, `timestamp_desc` (Plaso's names), `@timestamp`, integer
+microseconds and the entry's attributes. Times finer than a microsecond are cut
+down to it. It is chosen by name only, since `.jsonl` already means `jsonl`.
+The format lists in `--help`, the flag's own help and its two error messages
+are now built from the timeline package's format table rather than written out
+by hand in four places.
+
+### Windows shortcuts (`.lnk`)
+
+`format: lnk`, inferred from `.lnk`, with an `lnk:` block, writes a shell link
+as [MS-SHLLINK] lays it out: the header with the target's times, size and
+attributes; the ID list down to the target, each folder an 8.3 name plus a
+`0xBEEF0004` block with the long name; the LinkInfo with drive type, volume
+serial, label and path (ANSI and, for a non-ASCII path, Unicode); the strings;
+and the TrackerDataBlock with the machine name and the volume and object ids.
+Times default to the operation's; serial, machine name and the NTFS file
+reference are drawn from the operation's stream when not given.
+
+It is read back three ways. A reader in the tests walks every structure from
+the sizes and offsets the link gives. Windows' own shell resolves the target,
+strings, icon and window state. And golnk, a third-party Go parser, reads it in
+the new **conformance module** (`internal/conformance`), a separate Go module so
+that test-only parsers never enter fsagen's `go.mod`; the gate now vets, tidies
+and tests it. golnk turned out to read the header's access and write times the
+wrong way round; which offset holds which was settled against a shortcut
+Windows saves itself (`TestLNKHeaderTimeOrderMatchesWindows`), and fsagen
+follows Windows and the specification.
+
+The shared Windows encodings — FILETIME, GUIDs in their on-disk layout,
+version 1 GUIDs, UTF-16LE, MS-DOS dates — now live in `libgen/winbin.go`;
+`utf16z` and `dosTime` moved there from `pe.go` and `zipgen.go` unchanged.
+
+### Slack canaries
+
+A `create` or `update` takes `slack: {cluster_size, kind, fragment_of}` and
+leaves bytes in the rest of the file's last cluster: a canary (a marker naming
+the object, seeded text, the marker again at every sector boundary), the marker
+repeated, or the first bytes of another file. The ledger and a new `slack`
+answer-key fact record kind, cluster size, offset, length, SHA-256 and whether
+the bytes were verified.
+
+Slack is a capability. On live NTFS it is best effort: the file is written long,
+flushed and shrunk back with `FlushFileBuffers` around `SetEndOfFile`, and the
+record says `verified: false`, because only a raw read of the volume can confirm
+it — `TestSlackSurvivesOnRawNTFS` in the conformance suite does that as an
+administrator with Velocidex's go-ntfs, following the file's own data runs. A
+file of 1 KiB or less (possibly MFT-resident), and a `cluster_size` that is not
+the volume's (read with `GetDiskFreeSpaceW`), are refused. Every other live file
+system refuses slack at pre-flight: ext4 zeroes a block's tail on truncate, and
+tmpfs and btrfs keep none. With `--on-unsupported=skip` the file is written
+without its slack and the run manifest records the dropped `slack` field.
+
+**Deviations from the plan.** Slack applies to `create` and `update`, not
+`append`: the model does not track a file's size, so where an appended file's
+last cluster ends is not known before the run. `fragment_of` names a file that
+still exists at that point in the scenario; one already deleted has no bytes
+left to copy. A structured format (pe, zip, docx, ...) cannot take slack, as its
+size is only known once it is built.
+
 ## v0.2.0 — the bulk corpus becomes answerable for itself (2026-10-02)
 
 Generator version **6**, and the first tagged release whose output differs from

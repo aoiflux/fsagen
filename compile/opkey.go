@@ -49,11 +49,20 @@ func identity(id string, n *yaml.Node) (kind, value string) {
 	return "yaml", nodeHash(n)
 }
 
+// annotations are the keys of an action that describe it without changing
+// what it does. They are left out of its identity, so tagging an action with
+// ATT&CK techniques never moves its bytes.
+var annotations = map[string]bool{"mitre": true}
+
 // nodeHash is a hash of a YAML node's content that ignores key order,
-// comments, quoting style and position.
+// comments, quoting style, position and the action's own annotations.
 func nodeHash(n *yaml.Node) string {
 	h := sha256.New()
-	canon(h, n)
+	if r := resolve(n); r != nil && r.Kind == yaml.MappingNode {
+		canonMapping(h, r, annotations)
+	} else {
+		canon(h, n)
+	}
 	return hex.EncodeToString(h.Sum(nil))
 }
 
@@ -81,16 +90,20 @@ func canon(h hash.Hash, n *yaml.Node) {
 			canon(h, c)
 		}
 	case yaml.MappingNode:
-		canonMapping(h, n)
+		canonMapping(h, n, nil)
 	}
 }
 
 // canonMapping hashes a mapping by the sorted hashes of its pairs, so two
-// mappings with the same content hash alike however they were written.
-func canonMapping(h hash.Hash, n *yaml.Node) {
+// mappings with the same content hash alike however they were written. A pair
+// whose key is in skip is left out.
+func canonMapping(h hash.Hash, n *yaml.Node, skip map[string]bool) {
 	type pair struct{ k, v string }
 	var hashed []pair
 	for k, v := range pairs(n) {
+		if k.Kind == yaml.ScalarNode && skip[k.Value] {
+			continue
+		}
 		kh, vh := sha256.New(), sha256.New()
 		canon(kh, k)
 		canon(vh, v)

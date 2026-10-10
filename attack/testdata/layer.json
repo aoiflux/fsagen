@@ -1,0 +1,91 @@
+{
+  "name": "fsagen: sample.yaml",
+  "versions": {
+    "layer": "4.5",
+    "navigator": "5.1.0"
+  },
+  "domain": "enterprise-attack",
+  "description": "Techniques exhibited by an fsagen scenario; each score is the number of operations that exhibit it.",
+  "techniques": [
+    {
+      "techniqueID": "T1036",
+      "score": 1,
+      "comment": "ledger operations 2",
+      "enabled": true,
+      "metadata": [
+        {
+          "name": "path",
+          "value": "home/a.txt"
+        },
+        {
+          "name": "path",
+          "value": "home/b.txt"
+        }
+      ]
+    },
+    {
+      "techniqueID": "T1070",
+      "score": 1,
+      "comment": "ledger operations 4",
+      "enabled": true,
+      "metadata": [
+        {
+          "name": "path",
+          "value": "home/b.txt"
+        }
+      ],
+      "showSubtechniques": true
+    },
+    {
+      "techniqueID": "T1070.006",
+      "score": 2,
+      "comment": "ledger operations 1, 4",
+      "enabled": true,
+      "metadata": [
+        {
+          "name": "path",
+          "value": "home/a.txt"
+        },
+        {
+          "name": "path",
+          "value": "home/b.txt"
+        }
+      ]
+    },
+    {
+      "techniqueID": "T1564",
+      "enabled": true,
+      "showSubtechniques": true
+    },
+    {
+      "techniqueID": "T1564.004",
+      "score": 1,
+      "comment": "ledger operations 1",
+      "enabled": true,
+      "metadata": [
+        {
+          "name": "path",
+          "value": "home/a.txt"
+        }
+      ]
+    }
+  ],
+  "gradient": {
+    "colors": [
+      "#ffffff",
+      "#ff6666"
+    ],
+    "minValue": 0,
+    "maxValue": 2
+  },
+  "metadata": [
+    {
+      "name": "generator_version",
+      "value": "6"
+    },
+    {
+      "name": "seed",
+      "value": "42"
+    }
+  ]
+}

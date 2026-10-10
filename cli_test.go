@@ -218,6 +218,25 @@ func TestTimelineFormats(t *testing.T) {
 		t.Errorf(".jsonl did not produce JSON lines: %q", data)
 	}
 
+	// Timesketch is JSON lines as well, so only the flag picks it; a
+	// modelled one is the same bytes on every run.
+	sketch := func(out string) string {
+		t.Helper()
+		ts := filepath.Join(dir, out+".jsonl")
+		if code, _, errOut := runCLI(t, "--manifest", m, "--timeline", ts, "--timeline-format", "timesketch", "--timeline-source", "modelled", filepath.Join(dir, out)); code != exitOK {
+			t.Fatalf("code=%d %s", code, errOut)
+		}
+		data, _ := os.ReadFile(ts)
+		return string(data)
+	}
+	first5, second := sketch("o5"), sketch("o6")
+	if !strings.HasPrefix(first5, `{"message":`) || !strings.Contains(first5, `"timestamp_desc":"Content Modification Time"`) {
+		t.Errorf("--timeline-format timesketch did not produce Timesketch events: %q", first5)
+	}
+	if first5 != second {
+		t.Error("two modelled Timesketch timelines of the same scenario differ")
+	}
+
 	foo := filepath.Join(dir, "case.foo")
 	code, _, errOut := runCLI(t, "--manifest", m, "--timeline", foo, filepath.Join(dir, "o3"))
 	if code != exitUsage || !strings.Contains(errOut, "cannot tell the timeline format") {
@@ -433,7 +452,7 @@ func TestTimelineFlagErrors(t *testing.T) {
 		{[]string{"--manifest", m, "--timeline", tl, "--hash-limit", "-1", out}, "must not be negative"},
 		{[]string{"--manifest", m, "--hash-limit", "10", out}, "needs --timeline"},
 		{[]string{"--manifest", m, "--timeline", tl, "--timeline-source", "modelled", "--hash-limit", "10", out}, "applies to observed"},
-		{[]string{"--manifest", m, "--timeline", tl, "--timeline-format", "xml", out}, "csv, txt, bodyfile, macb or jsonl"},
+		{[]string{"--manifest", m, "--timeline", tl, "--timeline-format", "xml", out}, "csv, txt, bodyfile, macb, jsonl, timesketch"},
 	} {
 		code, _, errOut := runCLI(t, c.args...)
 		if code != exitUsage || !strings.Contains(errOut, c.want) {

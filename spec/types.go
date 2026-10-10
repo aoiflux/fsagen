@@ -76,6 +76,7 @@ const (
 	FormatMP4           Format = "mp4"
 	FormatChromeHistory Format = "chrome_history"
 	FormatFirefoxPlaces Format = "firefox_places"
+	FormatLNK           Format = "lnk"
 	FormatEML           Format = "eml"
 	FormatMbox          Format = "mbox"
 )
@@ -127,6 +128,10 @@ type Operation struct {
 	Docx    *DocxSpec    `yaml:"docx" json:"docx"`       // metadata for format: docx
 	Pe      *PeSpec      `yaml:"pe" json:"pe"`           // for format: pe
 	History *HistorySpec `yaml:"history" json:"history"` // for format: chrome_history or firefox_places
+	Lnk     *LnkSpec     `yaml:"lnk" json:"lnk"`         // for format: lnk
+	// Slack asks for bytes past the end of the file, in the rest of its last
+	// cluster, where a carver looks and a file read never does.
+	Slack   *SlackSpec   `yaml:"slack" json:"slack"`
 	Email   *EmailSpec   `yaml:"email" json:"email"`     // for the email action
 	Vault   *VaultSpec   `yaml:"vault" json:"vault"`     // for the ansible-vault action
 	Archive *ArchiveSpec `yaml:"archive" json:"archive"` // for the archive action
@@ -137,6 +142,13 @@ type Operation struct {
 	ZoneID      int    `yaml:"zone_id" json:"zone_id"`           // for motw: ZoneId value (0-4)
 	HostURL     string `yaml:"host_url" json:"host_url"`         // for motw
 	ReferrerURL string `yaml:"referrer_url" json:"referrer_url"` // for motw
+
+	// Annotations: what the action means, never what it does.
+
+	// Mitre lists the ATT&CK techniques the action exhibits (T1070.006,
+	// T1564.004), for the answer key and the Navigator layer. It changes
+	// nothing the action does and no byte it writes.
+	Mitre []string `yaml:"mitre" json:"mitre" render:"-"`
 }
 
 // DocxSpec carries the document properties a .docx keeps inside itself, which
@@ -178,6 +190,45 @@ type PeVersion struct {
 	OriginalFilename string `yaml:"original_filename" json:"original_filename"`
 	ProductName      string `yaml:"product_name" json:"product_name"`
 	LegalCopyright   string `yaml:"legal_copyright" json:"legal_copyright"`
+}
+
+// LnkSpec describes a Windows shell link (.lnk): what it points at, and what
+// it records about the target, the target's volume and the machine it was
+// made on. Every time defaults to the operation time; the volume serial,
+// machine name and the target's NTFS file reference are drawn from the seed
+// when not given.
+type LnkSpec struct {
+	Target       string `yaml:"target" json:"target"`           // a Windows path on a drive letter, C:\dir\file.exe; required
+	TargetType   string `yaml:"target_type" json:"target_type"` // file (default) or dir
+	Arguments    string `yaml:"arguments" json:"arguments"`
+	WorkingDir   string `yaml:"working_dir" json:"working_dir"`
+	RelativePath string `yaml:"relative_path" json:"relative_path"`
+	Description  string `yaml:"description" json:"description"`
+	Icon         string `yaml:"icon" json:"icon"` // icon location
+	IconIndex    int    `yaml:"icon_index" json:"icon_index"`
+	ShowCommand  string `yaml:"show_command" json:"show_command"`   // normal (default), maximized, minimized
+	DriveType    string `yaml:"drive_type" json:"drive_type"`       // fixed (default), removable, cdrom, ramdisk
+	VolumeSerial string `yaml:"volume_serial" json:"volume_serial"` // 1A2B-3C4D or 1A2B3C4D
+	VolumeLabel  string `yaml:"volume_label" json:"volume_label"`
+	MachineID    string `yaml:"machine_id" json:"machine_id"`       // NetBIOS name, at most 15 ASCII characters
+	TargetCrtime string `yaml:"target_crtime" json:"target_crtime"` // RFC3339
+	TargetAtime  string `yaml:"target_atime" json:"target_atime"`   // RFC3339
+	TargetMtime  string `yaml:"target_mtime" json:"target_mtime"`   // RFC3339
+	TargetSize   int64  `yaml:"target_size" json:"target_size"`
+	// TargetAttributes are any of readonly, hidden, system and archive. With
+	// none, a file is archive.
+	TargetAttributes []string `yaml:"target_attributes" json:"target_attributes"`
+}
+
+// SlackSpec is what fills a file's slack: the bytes between the end of its
+// content and the end of its last cluster.
+type SlackSpec struct {
+	ClusterSize int    `yaml:"cluster_size" json:"cluster_size"` // bytes; 4096 by default, and on a live volume it must be the volume's
+	Kind        string `yaml:"kind" json:"kind"`                 // canary (default), pattern or fragment
+	// FragmentOf is, for kind fragment, the id of a file still present at
+	// that point in the scenario; its first bytes fill the slack, as an
+	// earlier file's would that once had the cluster.
+	FragmentOf string `yaml:"fragment_of" json:"fragment_of" render:"-"`
 }
 
 // HistorySpec is the browsing a profile database records.
@@ -333,6 +384,7 @@ type Step struct {
 	Repeat     int      `yaml:"repeat" json:"repeat"`
 	Condition  string   `yaml:"condition" json:"condition"`     // "odd", "even", "first", "last"; tested against the iteration index
 	BatchCount int      `yaml:"batch_count" json:"batch_count"` // Generate N files in this step
+	Mitre      []string `yaml:"mitre" json:"mitre"`             // ATT&CK techniques every action in the step exhibits
 	Actions    []Action `yaml:"actions" json:"actions"`
 }
 

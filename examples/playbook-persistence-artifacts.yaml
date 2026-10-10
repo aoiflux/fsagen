@@ -6,6 +6,7 @@ actors:
 steps:
   # Drop files in a startup-like folder (artifacts only, not real startup)
   - actor: foeman
+    mitre: [T1547.001]
     offset: 0s
     actions:
       - action: create
@@ -20,6 +21,7 @@ steps:
 
   # Fake registry export that would suggest persistence
   - actor: foeman
+    mitre: [T1547.001]
     offset: 5m
     actions:
       - action: create
@@ -31,6 +33,7 @@ steps:
 
   # Timestamp skew on artifacts dir
   - actor: foeman
+    mitre: [T1070.006]
     offset: 12m
     actions:
       - action: mace

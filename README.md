@@ -32,6 +32,7 @@ synthetic corpus with no YAML at all.
 **Writing scenarios** · [Manifest schema](#manifest-schema) ·
 [Playbook schema](#playbook-schema) ·
 [Email, PDF and Ansible vault](#email-pdf-and-ansible-vault) ·
+[ATT&CK tags](#attck-tags) · [Slack](#slack) ·
 [Sharing values](#sharing-values-across-scenarios) ·
 [File formats](#file-formats)
 
@@ -76,10 +77,12 @@ is recorded rather than silently dropped.
 - Author content in real files with `content_file`, shared across scenarios with
   `--vars-file`
 - Files a tool can actually parse: PE executables, zip, PNG, JPEG, MP4, docx,
-  PDF, and Chrome and Firefox history databases. Every one of them is read back
-  in the test suite — by `debug/pe`, `archive/zip`, `image/png`, `image/jpeg`, a
-  box walk, SQLite — and fsagen refuses the formats it cannot build rather than
-  writing random bytes under a name that promises one (see _File formats_)
+  PDF, Windows shortcuts (`.lnk`), and Chrome and Firefox history databases.
+  Every one of them is read back in the test suite — by `debug/pe`,
+  `archive/zip`, `image/png`, `image/jpeg`, a box walk, SQLite, Windows' own
+  shell and third-party parsers — and fsagen refuses the formats it cannot
+  build rather than writing random bytes under a name that promises one (see
+  _File formats_)
 - Real RFC 5322 email: MIME multipart, threading headers, base64 attachments,
   `.eml` and `.mbox`
 - Real PDFs from Markdown, with full control of document metadata
@@ -90,11 +93,15 @@ is recorded rather than silently dropped.
   scenario on Windows NTFS, access and modification elsewhere; set, then settled
   and verified after the last operation (see _Timestamps_)
 - Forensic timelines in The Sleuth Kit's bodyfile, a mactime-style MACB listing,
-  CSV, JSON lines and text, with four times per entry and every NTFS stream;
+  CSV, JSON lines, Timesketch JSON lines and text, with four times per entry
+  and every NTFS stream;
   observed (read back from disk) or modelled (what the scenario intends, deleted
   files included, byte-identical on every run)
 - A ledger of every operation and an answer key of what a tool should find,
   beside the output
+- ATT&CK technique tags (`mitre:`) on any action or step, carried into the
+  ledger and answer key and written as an ATT&CK Navigator layer; tagging an
+  action never changes a byte it writes
 - Octal file permissions
 - Windows-specific: NTFS ADS and Mark-of-the-Web (MoTW)
 
@@ -220,9 +227,11 @@ fsagen [OPTIONS] <output-path>
   `<output-path>.fsagen`, beside the output)
 - `--timeline FILE` - Write a timeline of the output after generating; `FILE`
   must be outside the output directory
-- `--timeline-format csv|txt|bodyfile|macb|jsonl` - Timeline format (default:
-  from the extension: `.csv`, `.txt`, `.bodyfile`, `.body`, `.macb`, `.jsonl`;
-  any other extension is an error)
+- `--timeline-format csv|txt|bodyfile|macb|jsonl|timesketch` - Timeline format
+  (default: from the extension: `.csv`, `.txt`, `.bodyfile`, `.body`, `.macb`,
+  `.jsonl`; any other extension is an error). `timesketch` is JSON lines too, so
+  only the flag selects it
+
 - `--timeline-source observed|modelled` - `observed` (default) reads the output
   back from disk; `modelled` writes what the scenario intends, including the
   objects it deleted, and is the same bytes on every run (needs `--manifest` or
@@ -250,6 +259,7 @@ corpus.fsagen/             (or wherever --meta points)
 ├── SHA256SUMS             every file and NTFS stream, as path:stream
 ├── ledger.jsonl           one line per operation, before/after hashes
 ├── answer-key.jsonl       what a tool should find, one fact per line
+├── mitre-layer.json       ATT&CK Navigator layer (only when something is tagged)
 └── run-info.json          the part that cannot be reproducible
 ```
 
@@ -279,7 +289,13 @@ corpus.fsagen/             (or wherever --meta points)
   `stream` written, and each object that ends with an `mtime_before_crtime` (a
   copy has one without being stomped, as copies do). Directories made only as
   missing parents are not listed as created. `TestAnswerKeyEntries` checks every
-  kind of fact.
+  kind of fact. A fact from a tagged operation carries its `mitre`
+  techniques.
+- `mitre-layer.json` (runs with at least one tagged operation that ran): an
+  ATT&CK Navigator layer (format 4.5, `enterprise-attack`) scoring each
+  technique by how many operations exhibit it, with the ledger numbers and
+  paths behind each score; see _ATT&CK tags_. Its digest is recorded in the run
+  manifest. A rerun with no tags removes a layer an earlier run left there.
 - `run-info.json`: what is not reproducible: build revision, host, OS, file
   system, the host's last-access-time policy, absolute paths and start and
   finish times.
@@ -346,6 +362,7 @@ YAML with an optional `start` and a sequence of operations:
 | `type`         | `file` or `dir` (for `create`)                                                                                                       |
 | `ext`          | file extension to append if `path` has no extension                                                                                  |
 | `missing_ok`   | for `delete`, a path that does not exist is a recorded no-op instead of an error                                                     |
+| `mitre`        | ATT&CK technique IDs the action exhibits (`[T1070.006, T1564.004]`); any action takes it, and it changes nothing written — see _ATT&CK tags_ |
 
 **Content**
 
@@ -357,7 +374,7 @@ YAML with an optional `start` and a sequence of operations:
 | `content_kind` | what invented bytes look like — `text` (the default: base32), `bytes` (uniform random), `zeros`, `pattern` (a counting ramp) or `lorem` (words). It only applies to bytes fsagen invents, so giving it beside `content`, `content_file` or `template` is an error                                                                                                                                                                             |
 | `render`       | run `${...}` substitution over the content. Defaults to `true` for inline `content` and `false` for `content_file`, because scripts and PEM keys contain `${...}` sequences of their own that must survive verbatim                                                                                                                                                                                                                           |
 | `mode`         | octal file permissions, e.g. `"0600"` (default 0644 files, 0755 directories)                                                                                                                                                                                                                                                                                                                                                                  |
-| `format`       | what to build — `raw` (default) or `text` writes the content through; `pdf`, `docx`, `pe`, `zip`, `png`, `jpeg`, `mp4`, `chrome_history` and `firefox_places` build a file of that type. With no `format` and no content of its own, the extension picks one (see _File formats_). For the `email` action, `eml` or `mbox`                                                                                                                    |
+| `format`       | what to build — `raw` (default) or `text` writes the content through; `pdf`, `docx`, `pe`, `zip`, `png`, `jpeg`, `mp4`, `lnk`, `chrome_history` and `firefox_places` build a file of that type. With no `format` and no content of its own, the extension picks one (see _File formats_). For the `email` action, `eml` or `mbox`                                                                                                                    |
 
 **Typed blocks** — each belongs to one `format` or action, and is an error
 beside any other
@@ -368,6 +385,8 @@ beside any other
 | `docx`    | `title`, `author`, `created`, `modified` for `format: docx`                                                      |
 | `pe`      | machine, subsystem, dll, timestamp, sections, imports and version resource for `format: pe` — see _File formats_ |
 | `history` | `visits` and (Chrome) `downloads` for `format: chrome_history` or `firefox_places` — see _File formats_          |
+| `lnk`     | the target and what the link records about it, for `format: lnk` — see _`lnk:`_                                  |
+| `slack`   | bytes left past the end of the file, in the rest of its last cluster (`create`, `update`) — see _Slack_         |
 | `archive` | what goes into the `archive` action's zip — see _File formats_                                                   |
 | `edit`    | the changes the `edit` action makes — see _File formats_                                                         |
 | `email`   | message definition for the `email` action — see _`email` action_                                                 |
@@ -458,6 +477,8 @@ YAML with a timeline and actors:
   - condition: Step-level conditional execution (`odd`, `even`, `first`,
     `last`), tested against the iteration index
   - batch_count: Generate N files in this step (multiplies actions)
+  - mitre: ATT&CK technique IDs every action in the step exhibits, on top of
+    each action's own (see _ATT&CK tags_)
   - actions: List of operations with extras:
     - offset: time.Duration relative to the step occurrence
     - condition: Action-level conditional execution, tested against the batch
@@ -720,6 +741,92 @@ printf '%s' 'the-password' > /tmp/vpw
 ansible-vault view --vault-password-file /tmp/vpw out/infra/group_vars/prod/vault.yml
 ```
 
+## ATT&CK tags
+
+Any manifest operation, playbook action or playbook step can say which ATT&CK
+techniques it exhibits:
+
+```yaml
+steps:
+  - actor: attacker
+    offset: 2h
+    mitre: [T1070.004] # every action in the step
+    actions:
+      - action: mace
+        path: var/log/app.jsonl
+        mtime: "2021-06-15T12:00:00Z"
+        mitre: [T1070.006] # this action too
+      - action: delete
+        path: var/log/app.jsonl
+```
+
+- An action exhibits its step's techniques and its own, sorted, each once.
+- Each ID must look like `T1234` or `T1234.001`. fsagen carries no copy of the
+  ATT&CK catalogue, so it checks the shape, not that ATT&CK defines the ID. An
+  empty list or the same ID twice in one list is an error
+  (`TestMitreValidation`).
+- Tags annotate; they never change what is written. An action without an `id`
+  takes its random key from a hash of its own YAML, and `mitre` is left out of
+  that hash, so adding or removing tags moves no byte of the corpus
+  (`TestMitreLeavesRandomKeyAlone`, `TestMitreLayerWritten`).
+- The ledger, the answer key and the `--dry-run` listing carry each
+  operation's techniques. `mitre-layer.json` in the run records directory is an
+  ATT&CK Navigator layer built from the operations that ran: a skipped or no-op
+  operation scores nothing, as it leaves no evidence. A tagged sub-technique
+  whose parent is not tagged brings an unscored parent entry, so the layer
+  opens with every tagged ID visible (`TestLayerContent`, `TestLayerGolden`).
+
+## Slack
+
+A `create` or `update` can leave bytes in the file's **slack** — between the
+end of its content and the end of its last cluster — where no read of the file
+sees them and a carver reading the volume does:
+
+```yaml
+- action: create
+  id: secret
+  path: Users/u/secret.txt
+  content: "account 4417, PIN 2208"
+- action: create
+  path: Users/u/notes.txt
+  content_len: 5000
+  slack:
+    cluster_size: 4096 # the default; on a live volume it must be the volume's
+    kind: canary # canary (default), pattern or fragment
+- action: create
+  path: Users/u/draft.txt
+  content_len: 9000
+  slack: { kind: fragment, fragment_of: secret } # the start of another file
+```
+
+- **canary** is `FSAGEN-SLACK:<object>:` (the ledger's object number), then
+  seeded text, with the marker again at every 512-byte sector boundary;
+  **pattern** is the marker repeated; **fragment** is the first bytes of the
+  file `fragment_of` names (an `id` still present at that point), then zeros.
+- The slack runs from the end of the content to the end of its cluster. The
+  file must have content whose size is known before the run — filler or
+  literal content, not a structured format — and that size must stop short of
+  a cluster's end; an empty file has no cluster at all
+  (`TestSlackRules`).
+- The ledger and the answer key (a `slack` fact) record the kind, cluster
+  size, offset, length and SHA-256 of what was written, and whether fsagen
+  could verify it stayed (`TestSlackOnLiveNTFS`).
+
+**Where it can be kept.** User-mode code cannot write into a cluster past the
+end of a file; it can only write the file long, flush, and shrink it back,
+and then it is up to the file system:
+
+| Target          | Slack                                                                                                                                   |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| live NTFS       | best effort, `verified: false`. NTFS leaves the rest of the last cluster alone when a file shrinks; Windows may zero the rest of the sector the file ends in, which is why the canary restarts at every sector. A file of 1 KiB or less is refused, as it may live inside its MFT record with no cluster at all, and so is a `cluster_size` that is not the volume's |
+| live elsewhere  | refused: ext4 zeroes the tail of a block when a file shrinks, and tmpfs and btrfs keep no fixed cluster tail                            |
+
+A refused slack fails the pre-flight, or with `--on-unsupported=skip` the file
+is written without it and the run manifest records the dropped `slack` field
+(`TestSlackPreflight`). `TestSlackSurvivesOnRawNTFS`, in the conformance
+suite, reads the volume raw as an administrator through the file's own data
+runs and finds the canary in the cluster.
+
 ## Sharing values across scenarios
 
 `--vars-file` takes a flat YAML map and exposes every key as `${VAR:name}` in
@@ -817,7 +924,7 @@ fsagen produces byte-identical:
    `SHA256SUMS`;
 2. set of relative paths;
 3. `--dry-run` listing (with each operation's intended times), `ledger.jsonl`,
-   `answer-key.jsonl` and `run-manifest.json`;
+   `answer-key.jsonl`, `mitre-layer.json` and `run-manifest.json`;
 4. the modelled timeline (`--timeline-source modelled`), in every format.
 
 This holds on every platform, for every operation the platform supports. Which
@@ -943,7 +1050,7 @@ What fsagen does not control, and what can change its output after it finishes:
 - A generated PE is a container for a parser, not a program: its sections hold
   filler, its entry point is inside that filler, and running one does nothing.
   fsagen has no way to produce, and no intention of producing, working code.
-- Not generated at all: registry hives (a `.reg` export is text), EVTX, LNK,
+- Not generated at all: registry hives (a `.reg` export is text), EVTX,
   Prefetch, `$Recycle.Bin`, and disk images. fsagen writes into a directory on a
   live file system; making a FAT or NTFS image, with `$FILE_NAME` times and
   deleted-entry residue under fsagen's control, is a separate piece of work.
@@ -962,6 +1069,7 @@ type whose extension is ambiguous.
 | `jpeg`           | `.jpg` `.jpeg`              | a 64×64 baseline JPEG                                                                                                | `COM` segments after `SOI`          | `image/jpeg` (`TestJPEGDecodesAndCarriesPadding`)                        |
 | `mp4`            | `.mp4`                      | `ftyp` + `moov` (`mvhd`, one video `trak`) + `mdat`, 320×240, 3 s                                                    | the `mdat` payload                  | a box walk (`TestMP4HasFtypMoovMdat`, `TestMP4DurationAndDimensions`)    |
 | `docx`           | `.docx`                     | an OOXML package: `[Content_Types].xml`, `word/document.xml`, `docProps/core.xml` and `app.xml`, stored uncompressed | the document's text                 | `archive/zip` + the properties (`TestDocxOpensWithParts`)                |
+| `lnk`            | `.lnk`                      | a Windows shell link: header, ID list down to the target, LinkInfo (volume and path), strings, a link-tracking block  | not accepted                        | Windows' own shell and golnk (see _`lnk:`_)                              |
 | `pdf`            | _(explicit only)_           | a paginated PDF from a Markdown subset                                                                               | the document's text                 | see _`format: pdf`_                                                      |
 | `chrome_history` | _(explicit only)_           | Chrome's `meta`, `urls`, `visits`, `downloads`, `downloads_url_chains` and `keyword_search_terms`, with its indexes  | not accepted                        | SQLite + the queries a tool runs (`TestStandardHistorySQLReturnsVisits`) |
 | `firefox_places` | _(explicit only)_           | Firefox's `moz_origins`, `moz_places` (with `rev_host`) and `moz_historyvisits`, `user_version = 77`                 | not accepted                        | as above                                                                 |
@@ -1061,6 +1169,59 @@ has been checked against a named forensic tool.
 A history database is as big as its contents make it, so it takes no
 `content_len`. `examples/manifest-history.yaml` and
 `examples/playbook-browsing.yaml` are worked profiles.
+
+### `lnk:` — Windows shortcuts
+
+A shell link as [MS-SHLLINK] lays it out: the header with the target's
+creation, access and write times, size and attributes; the ID list a shell
+walks (My Computer, the drive, then one item per folder, each with its 8.3 name
+and a `0xBEEF0004` block holding the long name, creation and access times and
+the NTFS file reference); the LinkInfo with the drive type, volume serial,
+label and path; the strings; and the TrackerDataBlock with the machine's
+NetBIOS name and the volume and object ids. Explorer resolves it, and a link
+tool reports where the target was, when, on which volume and on which machine.
+
+```yaml
+- action: create
+  path: Users/u/Desktop/report.lnk # .lnk implies format: lnk
+  lnk:
+    target: 'C:\Users\u\Documents\Q3 report.docx' # required: a path on a drive letter
+    target_type: file # file (default) or dir
+    arguments: /safe
+    working_dir: 'C:\Users\u\Documents'
+    relative_path: '..\Documents\Q3 report.docx'
+    description: Quarterly report
+    icon: 'C:\Windows\System32\shell32.dll'
+    icon_index: 1
+    show_command: normal # normal (default), maximized, minimized
+    drive_type: removable # fixed (default), removable, cdrom, ramdisk
+    volume_serial: 1A2B-3C4D # default: drawn from the seed
+    volume_label: USBSTICK
+    machine_id: DESKTOP-QUILL # default: DESKTOP- and 7 characters from the seed
+    target_crtime: "2024-03-15T09:00:00Z" # target_crtime, _atime and _mtime
+    target_mtime: "2024-03-15T11:00:00Z" # default to the action's time
+    target_size: 48213
+    target_attributes: [hidden] # readonly, hidden, system, archive
+```
+
+- The header's times are in [MS-SHLLINK]'s order — creation, access, write —
+  which is what Windows writes itself (`TestLNKHeaderTimeOrderMatchesWindows`
+  saves a shortcut through the shell and compares the offsets). At least one Go
+  parser, golnk, reads the last two the other way round.
+- The tracking block's object id is a version 1 GUID dated at the target's
+  creation, with a node a tool reports as a MAC address; it is a locally
+  administered address no real adapter has. The volume id is random, as an
+  NTFS volume's is. Both come from the seed.
+- A network target (`\\server\share`) is not built: a link records one with a
+  different structure. Volume labels and machine names are ASCII; a non-ASCII
+  target path is written in both the ANSI and the Unicode LinkInfo fields.
+- Read back three ways: fsagen's own reader walks every structure from the
+  sizes and offsets the link gives (`TestLNKRoundTrip`,
+  `TestLNKMinimalAndUnicode`); Windows' shell resolves the target, strings,
+  icon and window state through `WScript.Shell` and `Shell.Application`
+  (`TestLNKReadByWindowsShell`); and golnk parses it end to end in the
+  conformance suite (`TestLNKReadByGolnk`). Every value the block can give is
+  checked before anything is written (`TestLNKBlockRules`).
 
 ### `archive` action
 
@@ -1186,6 +1347,15 @@ an error, never a silent fall-back):
   deleted.
 - **JSON lines** (`.jsonl`): the same fields, one object per entry, with an
   octal mode.
+- **Timesketch** (`--timeline-format timesketch`): the JSON lines Timesketch
+  imports, one event per entry and known time as Plaso's file-stat parser
+  emits them, so an entry with four known times is four events. Each has the
+  fields Timesketch requires (`message`, `datetime`, `timestamp_desc` with
+  Plaso's names: Content Modification Time, Last Access Time, Metadata
+  Modification Time, Creation Time), `@timestamp` for OpenSearch, `timestamp`
+  in integer microseconds, and the entry's path, stream, type, size, mode,
+  inode, MD5 and `is_allocated`. Timesketch keeps microseconds, so a finer time
+  is cut down to the microsecond, before 1970 too (`TestTimesketchEvents`).
 - **Text** (`.txt`): a readable listing, one block per entry.
 
 **Every entry has four times**: accessed, modified, changed (metadata) and born
@@ -1319,6 +1489,17 @@ Five direct ones, each here for a reason the standard library does not cover.
 | `github.com/jung-kurt/gofpdf`   | writes the PDFs, with the document metadata pinned so two renders match                                                                         |
 | `golang.org/x/sys`              | `NtCreateFile` and `FILE_BASIC_INFO` on Windows, `statx` on Linux, `Birthtimespec` on the BSDs, and the last-access registry value              |
 | `golang.org/x/text`             | Unicode case folding and NFC normalisation, so the portability check catches names that collide on a case-insensitive or normalising volume     |
+
+**Test-only, in their own module.** `internal/conformance` reads what fsagen
+writes with parsers fsagen did not write, so each binary format is checked
+against someone else's reading of its specification too. It is a separate
+module (`go -C internal/conformance test ./...`, run by the gate), so none of
+these is a dependency of fsagen and none is in its `go.mod`:
+
+| Module                             | Reads                                                            | Licence    |
+| ---------------------------------- | ---------------------------------------------------------------- | ---------- |
+| `github.com/parsiya/golnk`          | `lnk`                                                                | Apache-2.0 |
+| `www.velocidex.com/golang/go-ntfs` | a live NTFS volume, raw, to read slack back (administrator only) | Apache-2.0 |
 
 ## Citation
 

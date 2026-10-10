@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"cmp"
 	"fmt"
 	"strings"
 	"time"
@@ -62,6 +63,9 @@ func buildContent(c compile.Op) ([]byte, error) {
 
 	case spec.FormatMP4:
 		return libgen.MP4(c.When, mp4Duration, 320, 240, body), nil
+
+	case spec.FormatLNK:
+		return buildLNK(c)
 
 	case spec.FormatChromeHistory, spec.FormatFirefoxPlaces:
 		hist, err := historyOf(c)
@@ -169,6 +173,60 @@ func buildPE(c compile.Op, overlay []byte) ([]byte, error) {
 		Version:   version,
 		Overlay:   overlay,
 	})
+}
+
+// buildLNK maps the lnk block to the link builder. The target's times default
+// to the operation's; what a real link carries that the scenario leaves out —
+// the volume serial, the machine's name, the target's NTFS file reference —
+// is drawn from the operation's own stream, every value in a fixed order
+// whether it is used or not, so giving one never moves another.
+func buildLNK(c compile.Op) ([]byte, error) {
+	in := c.Lnk
+	s := c.Rand.Derive("lnk").Stream()
+	serial := uint32(s.Uint64())
+	machine := "DESKTOP-" + s.Text(7)
+	mftEntry := uint64(64 + s.IntN(1<<20))
+	mftSeq := uint16(1 + s.IntN(8))
+
+	if in.VolumeSerial != "" {
+		v, err := libgen.ParseVolumeSerial(in.VolumeSerial)
+		if err != nil {
+			return nil, err
+		}
+		serial = v
+	}
+	times := map[string]time.Time{}
+	for _, f := range []struct{ key, val string }{
+		{"lnk.target_crtime", in.TargetCrtime}, {"lnk.target_atime", in.TargetAtime}, {"lnk.target_mtime", in.TargetMtime},
+	} {
+		t, err := timeOr(f.val, f.key, c.When)
+		if err != nil {
+			return nil, err
+		}
+		times[f.key] = t
+	}
+	return libgen.BuildLNK(libgen.LNKSpec{
+		Target:       in.Target,
+		Dir:          in.TargetType == "dir",
+		Arguments:    in.Arguments,
+		WorkingDir:   in.WorkingDir,
+		RelativePath: in.RelativePath,
+		Description:  in.Description,
+		IconLocation: in.Icon,
+		IconIndex:    int32(in.IconIndex),
+		ShowCommand:  in.ShowCommand,
+		DriveType:    in.DriveType,
+		VolumeSerial: serial,
+		VolumeLabel:  in.VolumeLabel,
+		MachineID:    cmp.Or(in.MachineID, machine),
+		Created:      times["lnk.target_crtime"],
+		Accessed:     times["lnk.target_atime"],
+		Modified:     times["lnk.target_mtime"],
+		Size:         in.TargetSize,
+		Attributes:   in.TargetAttributes,
+		MFTEntry:     mftEntry,
+		MFTSequence:  mftSeq,
+	}, s)
 }
 
 // historyOf turns the scenario's visits into the builder's, filling in the

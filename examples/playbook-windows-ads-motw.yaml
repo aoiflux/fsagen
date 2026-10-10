@@ -18,6 +18,7 @@ steps:
       - action: ads
         path: downloads/installer.exe
         stream: Note
+        mitre: [T1564.004]
         content: "Downloaded by ${ACTOR}"
       - action: motw
         path: downloads/installer.exe

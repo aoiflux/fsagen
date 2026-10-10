@@ -15,11 +15,13 @@ import (
 	"runtime"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/aoiflux/fsagen/attack"
 	"github.com/aoiflux/fsagen/compile"
 	"github.com/aoiflux/fsagen/constant"
 	"github.com/aoiflux/fsagen/ledger"
@@ -136,7 +138,7 @@ func parseFlags(args []string) (*config, error) {
 	fl.IntVar(&c.depth, "depth", 1, "bulk generation: directory depth")
 	fl.StringVar(&c.bulkStart, "bulk-start", "", "bulk generation: RFC 3339 reference time for dates inside files (default 2021-01-01T00:00:00Z)")
 	fl.StringVar(&c.timeline, "timeline", "", "write a timeline of the output tree to this file (outside the tree)")
-	fl.StringVar(&c.timelineFormat, "timeline-format", "", "timeline format: csv, txt, bodyfile, macb or jsonl (default: from the extension)")
+	fl.StringVar(&c.timelineFormat, "timeline-format", "", "timeline format: "+strings.Join(timelinepkg.Formats, ", ")+" (default: from the extension)")
 	fl.StringVar(&c.timelineSource, "timeline-source", "", "timeline source: observed (read back from disk, the default) or modelled (what the scenario intends, including deleted objects)")
 	fl.Int64Var(&c.hashLimit, "hash-limit", 0, "observed timeline: skip the MD5 of files and streams larger than this many bytes (default: hash everything)")
 	fl.StringVar(&c.varsFile, "vars-file", "", "YAML map of variables exposed as ${VAR:name}")
@@ -582,6 +584,9 @@ func skippedOps(ops []compile.Op) []runinfo.Skipped {
 		for _, f := range op.Dropped {
 			out = append(out, runinfo.Skipped{Op: i + 1, Src: src.String(), Action: op.Action, Path: op.Path, Field: f, Reason: f + " cannot be set on this platform or volume"})
 		}
+		if op.SlackDropped != "" {
+			out = append(out, runinfo.Skipped{Op: i + 1, Src: src.String(), Action: op.Action, Path: op.Path, Field: "slack", Reason: op.SlackDropped})
+		}
 	}
 	return out
 }
@@ -660,6 +665,9 @@ func runGeneration(c *config, fsys *sandbox.FS, prog *compile.Program, caps comp
 	if g.err == nil && !c.bulkMode() {
 		g.err = writeAnswerKey(metaDir, prog, g.entries, caps, rm)
 	}
+	if g.err == nil && !c.bulkMode() {
+		g.err = writeLayer(metaDir, inputFile(c), c.seed, g.entries, rm)
+	}
 	return g
 }
 
@@ -681,6 +689,29 @@ func writeAnswerKey(metaDir string, prog *compile.Program, entries []ledger.Entr
 		return fmt.Errorf("write %s: %w", ledger.AnswerKeyFileName, err)
 	}
 	rm.Outputs.AnswerKey = sum
+	return nil
+}
+
+// writeLayer records the ATT&CK techniques the scenario exhibits, as a
+// Navigator layer. A run with no tagged operation writes none, and removes
+// one an earlier run left in the same directory.
+func writeLayer(metaDir, input string, seed int64, entries []ledger.Entry, rm *runinfo.Manifest) error {
+	var data []byte
+	if attack.Tagged(entries) {
+		var err error
+		data, err = attack.Layer("fsagen: "+filepath.Base(input), entries, [][2]string{
+			{"generator_version", strconv.Itoa(constant.GeneratorVersion)},
+			{"seed", strconv.FormatInt(seed, 10)},
+		})
+		if err != nil {
+			return err
+		}
+	}
+	sum, err := runinfo.WriteRecord(metaDir, attack.FileName, data)
+	if err != nil {
+		return fmt.Errorf("write %s: %w", attack.FileName, err)
+	}
+	rm.Outputs.MitreLayer = sum
 	return nil
 }
 
@@ -800,12 +831,12 @@ func timelineFormat(flagValue, file string) (string, error) {
 		if slices.Contains(timelinepkg.Formats, flagValue) {
 			return flagValue, nil
 		}
-		return "", usagef("unknown --timeline-format %q (want csv, txt, bodyfile, macb or jsonl)", flagValue)
+		return "", usagef("unknown --timeline-format %q (want one of: %s)", flagValue, strings.Join(timelinepkg.Formats, ", "))
 	}
 	if f, ok := timelinepkg.FormatForExtension(strings.ToLower(filepath.Ext(file))); ok {
 		return f, nil
 	}
-	return "", usagef("cannot tell the timeline format from %q; use .csv, .txt, .bodyfile, .body, .macb or .jsonl, or pass --timeline-format", file)
+	return "", usagef("cannot tell the timeline format from %q; use one of %s, or pass --timeline-format", file, strings.Join(timelinepkg.Extensions(), " "))
 }
 
 // timelineRequest is a --timeline and the flags that shape it.
@@ -854,7 +885,7 @@ func printVersion(w io.Writer) {
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprint(w, `Usage: fsagen [OPTIONS] <output-path>
+	fmt.Fprintf(w, `Usage: fsagen [OPTIONS] <output-path>
 
 Generate deterministic filesystem artifacts for forensic testing.
 
@@ -886,9 +917,9 @@ Checking without writing:
 Timeline:
   --timeline FILE           write a timeline of the output (FILE must be
                             outside the output directory)
-  --timeline-format F       csv, txt, bodyfile, macb or jsonl (default: from
-                            the extension: .csv .txt .bodyfile .body .macb
-                            .jsonl)
+  --timeline-format F       %s
+                            (default: from the extension:
+                            %s; timesketch only by name)
   --timeline-source S       observed (default): read back from the output;
                             modelled: what the scenario intends, including
                             deleted objects, the same bytes on every run
@@ -911,7 +942,7 @@ Examples:
   fsagen --playbook adversary.yaml --dry-run
   fsagen --seed 7 --bulk 3 --depth 2 ./quick-bulk
   fsagen --timeline existing.csv ./existing-artifacts
-`)
+`, strings.Join(timelinepkg.Formats, ", "), strings.Join(timelinepkg.Extensions(), " "))
 }
 
 func writeInputSchemas(outputDir string) (string, string, error) {

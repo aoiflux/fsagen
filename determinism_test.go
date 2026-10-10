@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aoiflux/fsagen/attack"
 	"github.com/aoiflux/fsagen/compile"
 	"github.com/aoiflux/fsagen/constant"
 	"github.com/aoiflux/fsagen/ledger"
@@ -59,7 +60,7 @@ func dryRun(t *testing.T, args ...string) string {
 // TestDeterminismHarness is the determinism contract, checked on every
 // shipped example and on bulk mode: two runs with the same seed into
 // different directories give identical SHA256SUMS, run manifests, dry-run
-// listings, ledgers, answer keys and modelled timelines, and another seed
+// listings, ledgers, answer keys, ATT&CK layers and modelled timelines, and another seed
 // gives different output.
 func TestDeterminismHarness(t *testing.T) {
 	type scenario struct {
@@ -92,6 +93,14 @@ func TestDeterminismHarness(t *testing.T) {
 			files := []string{runinfo.SumsFileName, runinfo.FileName}
 			if sc.name != "bulk" {
 				files = append(files, ledger.FileName, ledger.AnswerKeyFileName)
+				// A tagged scenario writes a Navigator layer (on Linux, ads
+				// and motw are skipped, so their tags leave none): whatever
+				// one run wrote, the other must have written too.
+				if _, err := os.Stat(filepath.Join(a+".fsagen", attack.FileName)); err == nil {
+					files = append(files, attack.FileName)
+				} else if _, err := os.Stat(filepath.Join(b+".fsagen", attack.FileName)); err == nil {
+					t.Errorf("only one of two runs with the same seed wrote %s", attack.FileName)
+				}
 				ta, _ := os.ReadFile(filepath.Join(dir, "modelled.body"))
 				tb, _ := os.ReadFile(filepath.Join(elsewhere, "modelled.body"))
 				if len(ta) == 0 || !bytes.Equal(ta, tb) {

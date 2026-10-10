@@ -93,6 +93,7 @@ func BuildPlaybookSchema() ([]byte, error) {
 	stepProps["condition"] = map[string]any{"$ref": "#/$defs/Condition"}
 	stepProps["repeat"] = map[string]any{"type": "integer", "minimum": 1}
 	stepProps["batch_count"] = map[string]any{"type": "integer", "minimum": 1}
+	stepProps["mitre"] = map[string]any{"$ref": "#/$defs/Mitre", "description": "MITRE technique IDs every action in the step exhibits, on top of its own."}
 	stepProps["actions"] = map[string]any{"type": "array", "items": map[string]any{"$ref": "#/$defs/Action"}, "minItems": 1}
 	// repeat > 1 without every would stack every occurrence on one instant.
 	step["allOf"] = []any{map[string]any{
@@ -151,6 +152,13 @@ func baseDefs() map[string]any {
 		"OperationAction": map[string]any{
 			"type": "string",
 			"enum": spec.ActionNames(),
+		},
+		"Mitre": map[string]any{
+			"type":        "array",
+			"items":       map[string]any{"type": "string", "pattern": compile.TechniquePattern},
+			"minItems":    1,
+			"uniqueItems": true,
+			"description": "MITRE technique IDs (T1234 or T1234.001) the action exhibits. Annotation only: it changes no byte written. The shape is checked, not the MITRE catalogue.",
 		},
 	}
 }
@@ -285,6 +293,32 @@ func nestedDefs(defs map[string]any) {
 
 	register(defs, "VaultSpec", spec.VaultSpec{}, "password").
 		prop("salt", map[string]any{"type": "string", "pattern": "^[0-9a-fA-F]{64}$"})
+
+	register(defs, "LnkSpec", spec.LnkSpec{}, "target").
+		prop("target", map[string]any{
+			"type":        "string",
+			"pattern":     `^[A-Za-z]:\\`,
+			"description": `The Windows path the link points at, on a drive letter: C:\Users\Public\tool.exe.`,
+		}).
+		prop("target_type", enumOf(compile.Types)).
+		prop("show_command", enumOf(libgen.LNKShowCommands)).
+		prop("drive_type", enumOf(libgen.LNKDriveTypes)).
+		prop("volume_serial", map[string]any{"type": "string", "pattern": "^[0-9A-Fa-f]{4}-?[0-9A-Fa-f]{4}$"}).
+		prop("machine_id", map[string]any{"type": "string", "maxLength": libgen.MaxLNKMachineID}).
+		prop("volume_label", map[string]any{"type": "string", "maxLength": 32}).
+		prop("target_crtime", rfc3339()).
+		prop("target_atime", rfc3339()).
+		prop("target_mtime", rfc3339()).
+		prop("target_size", nonNegative()).
+		prop("target_attributes", map[string]any{"type": "array", "items": enumOf(libgen.LNKAttributes), "uniqueItems": true})
+
+	register(defs, "SlackSpec", spec.SlackSpec{}).
+		prop("kind", enumOf(compile.SlackKinds)).
+		prop("cluster_size", map[string]any{
+			"type":        "integer",
+			"enum":        []int{512, 1024, 2048, 4096, 8192, 16384, 32768, 65536},
+			"description": "The cluster size the slack is planned for; 4096 by default. On a live volume it must be the volume's own.",
+		})
 
 	register(defs, "PeSpec", spec.PeSpec{}).
 		prop("machine", enumOf(libgen.PEMachines)).
@@ -421,6 +455,7 @@ func commonOperationProps(props map[string]any) {
 	props["ref"] = map[string]any{"type": "string", "description": "Instead of path: the one live path created under this id."}
 	props["refs"] = map[string]any{"type": "string", "description": "Instead of path: every live path created under this id."}
 	props["missing_ok"] = map[string]any{"type": "boolean", "description": "delete: a missing path is a recorded no-op."}
+	props["mitre"] = map[string]any{"$ref": "#/$defs/Mitre"}
 }
 
 func operationConditionals(playbook bool) []any {

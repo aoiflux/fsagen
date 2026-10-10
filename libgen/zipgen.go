@@ -205,18 +205,6 @@ func StoredZipOverhead(names []string, comment string) int {
 	return n
 }
 
-// dosTime converts t to the MS-DOS date and time the zip format stores:
-// two-second resolution, no zone, and nothing before 1980.
-func dosTime(t time.Time) (date, clock uint16) {
-	t = t.UTC()
-	if t.Year() < 1980 {
-		return 1<<5 | 1, 0 // 1980-01-01 00:00:00
-	}
-	date = uint16((t.Year()-1980)<<9 | int(t.Month())<<5 | t.Day())
-	clock = uint16(t.Hour()<<11 | t.Minute()<<5 | t.Second()/2)
-	return date, clock
-}
-
 func isASCII(s string) bool {
 	for i := 0; i < len(s); i++ {
 		if s[i] >= 0x80 {

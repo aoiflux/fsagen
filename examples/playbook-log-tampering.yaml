@@ -16,6 +16,7 @@ steps:
 
   # Tampering: inject fake entries, then backdate file
   - actor: attacker
+    mitre: [T1565.001]
     offset: 30m
     every: 5m
     repeat: 3
@@ -25,6 +26,7 @@ steps:
         content: |
           {"ts":"${DATE:2006-01-02T15:04:05Z07:00}","level":"warn","user":"${RND:6}","msg":"unexpected input"}
       - action: mace
+        mitre: [T1070.006]
         path: var/log/app.jsonl
         atime: "2021-06-15T12:00:00Z"
         mtime: "2021-06-15T12:00:00Z"
@@ -32,6 +34,7 @@ steps:
   # Anti-forensics: cut the injected lines back out, leaving a gap in the
   # record rather than an obviously truncated file.
   - actor: attacker
+    mitre: [T1070.002]
     offset: 1h
     actions:
       - action: edit
@@ -43,6 +46,7 @@ steps:
 
   # Cleanup: delete the log after a period
   - actor: attacker
+    mitre: [T1070.004]
     offset: 2h
     actions:
       - action: delete

@@ -23,6 +23,7 @@ type dryRunOp struct {
 	NewPath       string          `json:"new_path,omitempty"`
 	Dir           bool            `json:"dir,omitempty"`
 	ID            string          `json:"id,omitempty"`
+	Mitre         []string        `json:"mitre,omitempty"`
 	ContentBytes  *int            `json:"content_bytes,omitempty"`
 	ContentSHA256 string          `json:"content_sha256,omitempty"`
 	RandomBytes   int             `json:"random_bytes,omitempty"`
@@ -80,6 +81,7 @@ func WriteDryRun(w io.Writer, p *Program) error {
 			NewPath:     op.NewPath,
 			Dir:         op.Dir,
 			ID:          op.ID,
+			Mitre:       op.Techniques(),
 			Format:      op.Format,
 			ContentKind: op.ContentKind,
 			Mode:        op.Mode,

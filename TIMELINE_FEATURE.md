@@ -61,13 +61,16 @@ timeline is built completely in memory before its file is written.
 
 ## Formats
 
-All five are written from the same entries (`timeline/formats.go`):
+All six are written from the same entries (`timeline/formats.go`):
 
 - `bodyfile`: TSK bodyfile 3.x. A name containing `|` or a line break cannot
   be written in it, and is an error.
 - `macb`: one line per entry and distinct instant, flags `MACB` for the times
   that fall then; unknown times have no line.
 - `csv`, `jsonl`: every field; unknown times empty (CSV) or absent (JSON).
+- `timesketch`: one Timesketch event per entry and known time, with Plaso's
+  `timestamp_desc` names and microsecond times; chosen by name only, since
+  `.jsonl` already means `jsonl`.
 - `txt`: one block per entry.
 
 The text formats (`txt`, `macb`) start with a line saying which source they

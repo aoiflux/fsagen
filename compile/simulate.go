@@ -173,6 +173,11 @@ func apply(t *model.Tree, op *Op, opts Options) error {
 	if err := action(s); err != nil {
 		return err
 	}
+	if op.Slack != nil {
+		if err := placeSlack(t, op); err != nil {
+			return err
+		}
+	}
 	settleTimes(s)
 	return nil
 }

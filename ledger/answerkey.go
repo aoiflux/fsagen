@@ -30,6 +30,9 @@ const (
 	StreamWritten = "stream"
 	// Stomped: a mace operation set times explicitly.
 	Stomped = "stomped"
+	// SlackWritten: bytes were left past the end of a file, in the rest of
+	// its last cluster.
+	SlackWritten = "slack"
 	// MtimeBeforeCrtime: an object ends (or was deleted) with a
 	// modification time earlier than its creation time. A copy has one
 	// without being stomped, as copies do in the wild.
@@ -62,6 +65,10 @@ type Fact struct {
 	// Deleted marks an mtime_before_crtime fact about an object the
 	// scenario deleted.
 	Deleted bool `json:"deleted,omitempty"`
+	// Mitre are the ATT&CK techniques of the operation the fact comes from.
+	Mitre []string `json:"mitre,omitempty"`
+	// Slack is, for a slack fact, where the bytes are and what they hash to.
+	Slack *Slack `json:"slack,omitempty"`
 }
 
 // Final is an object's last intended state, for the facts that depend on
@@ -98,12 +105,18 @@ func AnswerKey(entries []Entry, finals []Final) []Fact {
 // actionFacts is what one finished operation left for a tool to find: what the
 // action itself did, and what became of the content it touched.
 func actionFacts(e Entry, seen map[int]bool) []Fact {
-	base := Fact{N: e.N, At: e.At, Object: e.Object, Kind: e.Kind, Path: e.Path}
+	base := Fact{N: e.N, At: e.At, Object: e.Object, Kind: e.Kind, Path: e.Path, Mitre: e.Mitre}
 	if e.Action == spec.ActionCopy {
 		// A copy is answerable for the file it wrote, not the one it read.
 		base.Path = e.NewPath
 	}
-	return append(effectFact(e, base), contentFacts(e, base, seen)...)
+	facts := append(effectFact(e, base), contentFacts(e, base, seen)...)
+	if e.Slack != nil {
+		f := base
+		f.Event, f.Slack = SlackWritten, e.Slack
+		facts = append(facts, f)
+	}
+	return facts
 }
 
 // effectFact is the mark the action itself leaves: an object gone, a path

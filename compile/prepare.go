@@ -159,6 +159,11 @@ func checkValues(op *Op, src *sandbox.Sources) ErrorList {
 	checkStreamFields(op, r)
 	checkVault(op, r)
 	checkDirectoryFields(op, r)
+	if op.keys.has("mitre") {
+		if err := checkMitre(op.Mitre); err != nil {
+			r.at("mitre", "%v", err)
+		}
+	}
 	if op.Email != nil {
 		errs.add(checkEmail(op, src))
 	}

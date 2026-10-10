@@ -2,6 +2,7 @@ package timeline
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -537,5 +538,53 @@ func TestEveryFormatHasAWriter(t *testing.T) {
 	}
 	if err := (&Timeline{}).Write(new(bytes.Buffer), "nosuchformat"); err == nil {
 		t.Error("Write accepted a format that is not in the table")
+	}
+}
+
+// TestTimesketchEvents: every event carries what Timesketch requires
+// (message, datetime, timestamp_desc) plus @timestamp and the integer
+// microseconds it indexes by; an entry has one event per known time, none for
+// an unknown one; and a time finer than a microsecond is cut down to it,
+// before 1970 too, the same way in the string and in the integer.
+func TestTimesketchEvents(t *testing.T) {
+	fine := time.Date(2021, 3, 1, 9, 0, 0, 123456789, time.UTC)
+	early := time.Date(1969, 12, 31, 23, 59, 59, 999999900, time.UTC)
+	tl := &Timeline{Source: SourceModelled, Entries: []Entry{
+		{Path: "a", Type: TypeFile, Size: 1, Mtime: fine, Atime: fine, Btime: early},
+	}}
+	var events []map[string]any
+	for _, line := range strings.Split(strings.TrimSuffix(out(t, tl, "timesketch"), "\n"), "\n") {
+		var ev map[string]any
+		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+			t.Fatalf("%q: %v", line, err)
+		}
+		events = append(events, ev)
+	}
+	if len(events) != 3 {
+		t.Fatalf("%d events for three known times, want 3: %v", len(events), events)
+	}
+	for _, ev := range events {
+		for _, key := range []string{"message", "datetime", "timestamp_desc", "@timestamp", "timestamp"} {
+			if _, ok := ev[key]; !ok {
+				t.Errorf("event lacks %q: %v", key, ev)
+			}
+		}
+		if ev["datetime"] != ev["@timestamp"] {
+			t.Errorf("datetime %v and @timestamp %v differ", ev["datetime"], ev["@timestamp"])
+		}
+	}
+	want := []struct {
+		datetime, desc string
+		micros         float64
+	}{
+		{"1969-12-31T23:59:59.999999+00:00", "Creation Time", -1},
+		{"2021-03-01T09:00:00.123456+00:00", "Content Modification Time", 1614589200123456},
+		{"2021-03-01T09:00:00.123456+00:00", "Last Access Time", 1614589200123456},
+	}
+	for i, w := range want {
+		ev := events[i]
+		if ev["datetime"] != w.datetime || ev["timestamp_desc"] != w.desc || ev["timestamp"] != w.micros {
+			t.Errorf("event %d = %v %v %v, want %s %s %.0f", i, ev["datetime"], ev["timestamp_desc"], ev["timestamp"], w.datetime, w.desc, w.micros)
+		}
 	}
 }

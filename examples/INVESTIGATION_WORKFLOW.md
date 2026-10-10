@@ -117,7 +117,7 @@ from machine to machine):
 Path,Stream,Type,Size,Mode,UID,GID,Inode,Accessed,Modified,Changed,Born,MD5,Deleted
 users/alice/AppData/Local/Temp/wupdmgr32.exe,,file,8704,r/rrwxrwxrwx,0,0,4085524,2024-09-01T00:00:00Z,2024-09-01T00:00:00Z,2024-09-01T00:00:00Z,2024-09-01T00:00:00Z,5afe847345ec60a303e2af313e1fff43,
 users/alice/AppData/Local/Temp/wupdmgr32.exe,Zone.Identifier,stream,26,r/rrwxrwxrwx,0,0,4085524,2024-09-01T00:00:00Z,2024-09-01T00:00:00Z,2024-09-01T00:00:00Z,2024-09-01T00:00:00Z,fbccf14d504b7b2dbcb5a5bda75bd93b,
-users/alice/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/WindowsUpdate.lnk,,file,256,r/rrwxrwxrwx,0,0,4085579,2024-09-01T00:02:00Z,2024-08-15T10:00:00Z,2024-09-01T00:02:00Z,2024-09-01T00:02:00Z,e3eff4082bc514751e2c3297565cd2d8,
+users/alice/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/WindowsUpdate.lnk,,file,941,r/rrwxrwxrwx,0,0,4085579,2024-09-01T00:02:00Z,2024-08-15T10:00:00Z,2024-09-01T00:02:00Z,2024-09-01T00:02:00Z,64e1c2aa0924594f44b2dfe658b62350,
 ...
 ```
 
@@ -128,11 +128,11 @@ birth:
 
 ```
 Date                                  Size MACB Mode         UID    GID    Inode      Name
-2024-08-15 10:00:00.000000000          256 M... r/rrwxrwxrwx 0      0      4085579    /users/alice/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/WindowsUpdate.lnk
+2024-08-15 10:00:00.000000000          941 M... r/rrwxrwxrwx 0      0      4085579    /users/alice/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/WindowsUpdate.lnk
 2024-09-01 00:00:00.000000000         8704 MACB r/rrwxrwxrwx 0      0      4085524    /users/alice/AppData/Local/Temp/wupdmgr32.exe
 2024-09-01 00:00:00.000000000           26 MACB r/rrwxrwxrwx 0      0      4085524    /users/alice/AppData/Local/Temp/wupdmgr32.exe:Zone.Identifier
 2024-09-01 00:00:30.000000000           54 ...B r/rrwxrwxrwx 0      0      4085538    /users/alice/AppData/Local/Temp/.beacon.log
-2024-09-01 00:02:00.000000000          256 .ACB r/rrwxrwxrwx 0      0      4085579    /users/alice/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/WindowsUpdate.lnk
+2024-09-01 00:02:00.000000000          941 .ACB r/rrwxrwxrwx 0      0      4085579    /users/alice/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/WindowsUpdate.lnk
 ...
 ```
 
