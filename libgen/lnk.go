@@ -103,11 +103,11 @@ type LNKSpec struct {
 	MFTSequence uint16
 }
 
-// CheckLNKTarget reports whether target is a path a link can point at: an
-// absolute Windows path on a drive letter, with no empty component and no
-// character Windows forbids in a name.
-func CheckLNKTarget(target string) error {
-	_, _, err := splitWindowsPath(target)
+// CheckWindowsPath reports whether p is a path a link can point at or a
+// prefetch file can record: an absolute Windows path on a drive letter, with
+// no empty component and no character Windows forbids in a name.
+func CheckWindowsPath(p string) error {
+	_, _, err := splitWindowsPath(p)
 	return err
 }
 

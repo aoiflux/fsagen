@@ -133,7 +133,17 @@ steps:
       - action: create
         type: dir
         path: winevt/Logs
+      # The Security log as the attacker left it: cleared, so all it holds
+      # is the 1102 Windows logs to say who cleared it, then backdated.
       - action: create
         path: winevt/Logs/Security.evtx
-        content_len: 512
         mtime: "2024-03-01T00:00:00Z"
+        evtx:
+          computer: ACME-WS042
+          events:
+            - event_id: 1102
+              data:
+                SubjectUserSid: S-1-5-21-1004336348-1177238915-682003330-1001
+                SubjectUserName: victim
+                SubjectDomainName: ACME-WS042
+                SubjectLogonId: "0x3e7a2c1"

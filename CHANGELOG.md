@@ -7,15 +7,29 @@ input produces. Every v6 golden for an untouched input is byte-identical; the
 four examples that gained tags re-recorded only their ledger, answer key and
 dry-run listing, and their corpora and modelled bodyfiles are unchanged.
 
-**One input that used to be accepted is now refused.** `.lnk` now means
-`format: lnk`, so a `.lnk` given only `content_len` — base32 text under a name
-that promises a shortcut, the silent wrong output this tool exists to prevent —
-is an error that asks for an `lnk:` block, as `.exe` did when PE inference
-arrived. `playbook-malware-lifecycle` had exactly that: its startup-folder
-`WindowsUpdate.lnk` is now a real shortcut to the dropper the scenario plants
-(941 bytes instead of 256). Its goldens were re-recorded on both platforms; one
-line of its corpus fingerprint moved, the shortcut's, and nothing else did.
-`examples/INVESTIGATION_WORKFLOW.md` shows the new size and MD5.
+**Inputs that used to be accepted are now refused.** An extension or a name
+that promises a format fsagen now builds means that format, so the same name
+given only `content_len` — filler under a name that promises a real artefact,
+the silent wrong output this tool exists to prevent — is an error that asks for
+the format's block, as `.exe` did when PE inference arrived:
+
+- `.lnk` means `format: lnk`. `playbook-malware-lifecycle` had exactly that: its
+  startup-folder `WindowsUpdate.lnk` is now a real shortcut to the dropper the
+  scenario plants (941 bytes instead of 256). Its goldens were re-recorded on
+  both platforms; one line of its corpus fingerprint moved, the shortcut's, and
+  nothing else did. `examples/INVESTIGATION_WORKFLOW.md` shows the new size and
+  MD5.
+- `.pf` means `format: prefetch` and `.evtx` means `format: evtx`; `.hve` and
+  the names `NTUSER.DAT`, `USRCLASS.DAT`, `SYSTEM`, `SOFTWARE`, `SAM`,
+  `SECURITY` and `DEFAULT` mean `format: regf`; the names `utmp`, `wtmp` and
+  `btmp` mean `format: utmp`, and `audit.log` means `format: auditd`. `.dat`
+  alone infers nothing: it names plenty of files that are not hives (an
+  example and the acceptance scenario stage `.dat` files).
+  `playbook-comprehensive-ransomware` wrote 512 bytes of filler to
+  `winevt/Logs/Security.evtx`; it is now the cleared Security log the scenario
+  describes, holding the 1102 that says who cleared it (69632 bytes). Its
+  goldens were re-recorded on both platforms; the log's line and the input hash
+  moved, and nothing else did.
 
 ### ATT&CK tags and a Navigator layer
 
@@ -100,6 +114,99 @@ last cluster ends is not known before the run. `fragment_of` names a file that
 still exists at that point in the scenario; one already deleted has no bytes
 left to copy. A structured format (pe, zip, docx, ...) cannot take slack, as its
 size is only known once it is built.
+
+### Prefetch files
+
+`format: prefetch`, inferred from `.pf`, with a `prefetch:` block, writes the
+prefetch file Windows 10 (SCCA version 30, in its 1903 layout) or Windows 11
+(version 31) keeps for a program: its name and path hash, run count, last eight
+run times, the files it loaded and the volumes they were on, each volume named
+`\VOLUME{<created>-<serial>}` as Windows names it. ntdll.dll and the program
+are always listed. The hash is checked against two real Windows 10 prefetch
+file names, and a file named `NAME.EXE-XXXXXXXX.pf` must match its program, or
+the scenario is refused.
+
+It is compressed as Windows compresses it: a `MAM` header and [MS-XCA]
+LZ77+Huffman (XPRESS Huffman), by a new deterministic encoder in
+`libgen/xpress.go` with length-limited canonical codes by package-merge.
+Windows' own `RtlDecompressBufferEx` decodes everything the encoder writes, as
+do a decoder written from the specification and go-prefetch's. The run count is
+written where Windows 10 1903 and later keep it, and the field older files kept
+it in is zero, so every parser reads one count: go-prefetch reads the older
+field first, PECmd the newer when the field between them is set, which it is.
+
+### Event logs (`.evtx`)
+
+`format: evtx`, inferred from `.evtx`, with an `evtx:` block, writes a Windows
+event log: the file header, 64 KiB chunks with their 64-bucket string and
+32-bucket template tables, and each event as binary XML, its template defined
+inline the first time a chunk uses it, names interned per chunk with Windows'
+name hash, records padded to eight bytes, every CRC right. Events 4624, 4688,
+7045 and 1102 are built in with Windows' own provider, channel, version, task,
+keywords and data names and types (1102 as `UserData`); any other event names
+its provider. Windows' own `Get-WinEvent -Path` renders every record to exactly
+the XML the events describe, across several chunks, and Velocidex's evtx reads
+every value back. Where Windows nests event data in a template of its own,
+fsagen uses one template per event.
+
+A `data:` map is a new kind of field for the template pass: its values are
+rendered in key order, so random draws stay reproducible, and its keys stay
+literal. Each repetition of a playbook action renders into a map of its own
+(`TestEvtxRepeatedRendersEachTime`, proved load-bearing by removing the copy).
+
+### Registry hives
+
+`format: regf`, inferred from a hive's name or `.hve`, with a `registry:` block,
+writes a version 1.5 hive: keys with their last-write times, values of the eight
+common types (inline, in a cell, or in big-data segments), hash leaves sorted
+the way Windows looks names up and an index of leaves past 512 subkeys, names a
+byte per character when they fit (as Windows stores them), one shared security
+descriptor, and a checksummed base block. `run`, `userassist` and `usbstor`
+write those artefacts where their hive keeps them: the Run key; Explorer's
+ROT13'd, known-folder-GUID UserAssist records with their 72-byte values; and a
+USB stick's `Enum\USBSTOR` key with its install, arrival and removal times as
+FILETIME device properties, plus the `Select` key. An artefact in the wrong hive
+is refused.
+
+Windows' own registry loads every hive the tests build, as an application hive
+(`RegLoadAppKey`, which needs no administrator), and reads each key, value,
+type and time back. It found one thing the format documentation does not say:
+Windows drops a big value whose last segment cell holds less than a full 16344
+bytes, so every segment is now written full, the last one padded. Velocidex's
+regparser reads the hives too.
+
+### Linux login records and audit logs
+
+`format: utmp`, inferred from the names `utmp`, `wtmp` and `btmp`, writes
+glibc's 384-byte `struct utmp`: boots, shutdowns, logins, logouts (taking their
+login's line, id and pid) and, in btmp only, failed logins. A time after
+2038-01-19T03:14:07Z does not fit its 32-bit seconds and is refused.
+util-linux's `utmpdump` and `last` read the records back, `last` pairing each
+login with its logout (run under WSL; skipped where they are not installed).
+
+`format: auditd`, inferred from `audit.log`, writes auditd's raw log: an
+`execve` as the kernel records it (`SYSCALL`, `EXECVE`, `CWD`, two `PATH`s,
+`PROCTITLE`, one serial), and `USER_AUTH`, `USER_LOGIN` and `USER_START` as PAM
+and sshd write them, with strings hex-encoded by the kernel's own rule. Serials
+start from the seed and rise. `TestAuditLogReadByAusearch` runs `ausearch`
+where it is installed; it was not on any machine this was tested on, so nothing
+outside fsagen has read these logs yet.
+
+In a playbook, a login record or audit event that names no user is the actor's.
+
+### Conformance module
+
+go-prefetch, evtx and regparser, all Velocidex's and Apache-2.0, join golnk and
+go-ntfs in `internal/conformance`. Each was checked to be pure Go and to build
+on the pinned toolchain before it was added.
+
+**Deviations from the plan.** `.dat` is not inferred as a hive (see above). A
+built-in event's data names are checked, but a name left out takes the value
+Windows writes when it has none rather than being an error: requiring all 27 of
+a 4624's would make the block unusable. EVTX writes one template per event
+rather than Windows' nested event-data template. The prefetch block has no
+`device_path`: a volume's name follows from its serial and creation time, and
+the hash's volume number is `harddisk_volume`.
 
 ## v0.2.0 — the bulk corpus becomes answerable for itself (2026-10-02)
 

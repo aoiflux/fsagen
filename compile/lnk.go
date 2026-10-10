@@ -13,7 +13,7 @@ func checkLNK(op *Op, at func(string, string, ...any)) {
 	l := op.Lnk
 	if strings.TrimSpace(l.Target) == "" {
 		at("lnk", `target is required: the Windows path the link points at, for example C:\Users\Public\tool.exe`)
-	} else if err := libgen.CheckLNKTarget(l.Target); err != nil {
+	} else if err := libgen.CheckWindowsPath(l.Target); err != nil {
 		at("lnk", "target: %v", err)
 	}
 	if l.TargetType != "" && !slices.Contains(Types, l.TargetType) {

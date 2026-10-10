@@ -362,6 +362,15 @@ func TestEveryStringFieldRenders(t *testing.T) {
 	var op spec.Operation
 	op.Pdf, op.Email, op.Vault = &spec.PdfSpec{}, &spec.EmailSpec{Headers: []spec.Header{{}}, Attachments: []spec.Attachment{{}}}, &spec.VaultSpec{}
 	op.Email.To, op.Email.Cc, op.Email.Bcc, op.Email.References = []string{""}, []string{""}, []string{""}, []string{""}
+	op.Lnk = &spec.LnkSpec{TargetAttributes: []string{""}}
+	op.Prefetch = &spec.PrefetchSpec{LastRunTimes: []string{""}, ReferencedFiles: []string{""}, Volumes: []spec.PrefetchVolume{{}}}
+	op.Evtx = &spec.EvtxSpec{Events: []spec.EvtxEvent{{Data: map[string]string{"Name": ""}}}}
+	op.Registry = &spec.RegistrySpec{
+		Keys: []spec.RegistryKey{{Values: []spec.RegistryValue{{Strings: []string{""}}}}},
+		Run:  []spec.RegistryRun{{}}, UserAssist: []spec.RegistryUserAssist{{}}, USBStor: []spec.RegistryUSB{{}},
+	}
+	op.Utmp = &spec.UtmpSpec{Records: []spec.UtmpRecord{{}}}
+	op.Auditd = &spec.AuditdSpec{Events: []spec.AuditdEvent{{Argv: []string{""}}}}
 
 	var fill func(v reflect.Value, name string)
 	var fields []string
@@ -384,6 +393,12 @@ func TestEveryStringFieldRenders(t *testing.T) {
 		case reflect.Slice:
 			for i := 0; i < v.Len(); i++ {
 				fill(v.Index(i), name)
+			}
+		case reflect.Map:
+			// A map's values are templated; its keys are names.
+			for _, k := range v.MapKeys() {
+				v.SetMapIndex(k, reflect.ValueOf("${VAR:v}"))
+				fields = append(fields, name+"["+k.String()+"]")
 			}
 		case reflect.String:
 			v.SetString("${VAR:v}")
@@ -426,6 +441,12 @@ func TestEveryStringFieldRenders(t *testing.T) {
 		case reflect.Slice:
 			for i := 0; i < v.Len(); i++ {
 				check(v.Index(i), name)
+			}
+		case reflect.Map:
+			for _, k := range v.MapKeys() {
+				if k.String() != "Name" || v.MapIndex(k).String() != "X" {
+					t.Errorf("%s[%s] = %q: the key should stay and the value be rendered", name, k, v.MapIndex(k))
+				}
 			}
 		case reflect.String:
 			if v.String() != "X" {

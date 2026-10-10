@@ -2,9 +2,16 @@ package manifest
 
 import (
 	"cmp"
+	"encoding/binary"
 	"fmt"
+	"maps"
+	"net"
+	"path"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/aoiflux/fsagen/compile"
 	"github.com/aoiflux/fsagen/libgen"
@@ -66,6 +73,21 @@ func buildContent(c compile.Op) ([]byte, error) {
 
 	case spec.FormatLNK:
 		return buildLNK(c)
+
+	case spec.FormatPrefetch:
+		return buildPrefetch(c)
+
+	case spec.FormatEvtx:
+		return buildEvtx(c)
+
+	case spec.FormatRegistry:
+		return buildRegistry(c)
+
+	case spec.FormatUtmp:
+		return buildUtmp(c)
+
+	case spec.FormatAuditd:
+		return buildAuditd(c)
 
 	case spec.FormatChromeHistory, spec.FormatFirefoxPlaces:
 		hist, err := historyOf(c)
@@ -227,6 +249,268 @@ func buildLNK(c compile.Op) ([]byte, error) {
 		MFTEntry:     mftEntry,
 		MFTSequence:  mftSeq,
 	}, s)
+}
+
+// buildPrefetch maps the prefetch block to the prefetch builder. The program
+// last ran at the operation time unless the block says when. A volume the
+// block does not describe gets a serial and a formatting time from the
+// operation's stream, drawn per drive letter, so describing one volume never
+// changes another; the time is up to three years before the operation.
+func buildPrefetch(c compile.Op) ([]byte, error) {
+	in := c.Prefetch
+	var runs []time.Time
+	for i, v := range in.LastRunTimes {
+		t, err := timeOr(v, fmt.Sprintf("prefetch.last_run_times[%d]", i), c.When)
+		if err != nil {
+			return nil, err
+		}
+		runs = append(runs, t)
+	}
+	if len(runs) == 0 {
+		runs = []time.Time{c.When}
+	}
+	count := uint32(in.RunCount)
+	if count == 0 {
+		count = uint32(len(runs))
+	}
+	var loaded []string
+	if len(in.ReferencedFiles) > 0 {
+		loaded = in.ReferencedFiles
+	}
+	drives, err := libgen.PrefetchDrives(in.Executable, loaded)
+	if err != nil {
+		return nil, err
+	}
+	volumes := map[byte]libgen.PrefetchVolume{}
+	for _, d := range drives {
+		s := c.Rand.Derive("prefetch.volume", string(d)).Stream()
+		volumes[d] = libgen.PrefetchVolume{
+			Serial:  uint32(s.Uint64()),
+			Created: c.When.Add(-time.Duration(1+s.IntN(3*365*24*3600)) * time.Second).Truncate(time.Second),
+		}
+	}
+	for i, v := range in.Volumes {
+		d := strings.ToUpper(strings.TrimSuffix(v.Drive, ":"))[0]
+		vol := volumes[d]
+		if v.Serial != "" {
+			serial, err := libgen.ParseVolumeSerial(v.Serial)
+			if err != nil {
+				return nil, err
+			}
+			vol.Serial = serial
+		}
+		created, err := timeOr(v.Created, fmt.Sprintf("prefetch.volumes[%d].created", i), vol.Created)
+		if err != nil {
+			return nil, err
+		}
+		vol.Created = created
+		volumes[d] = vol
+	}
+	return libgen.BuildPrefetch(libgen.PrefetchSpec{
+		Version:        in.Version,
+		Executable:     in.Executable,
+		Loaded:         loaded,
+		RunCount:       count,
+		LastRuns:       runs,
+		HarddiskVolume: in.HarddiskVolume,
+		Volumes:        volumes,
+		Uncompressed:   in.Compressed != nil && !*in.Compressed,
+	}, c.Rand.Derive("prefetch").Stream())
+}
+
+// buildEvtx maps the evtx block to the event log builder. A built-in event
+// starts from Windows' own shape for it and takes the block's values over
+// it; any other event is the block's, with level Information unless it says
+// otherwise and its data as strings in name order. What the block leaves out
+// is drawn from the operation's stream: the computer's name, a process id
+// per provider (a multiple of four, as Windows' are) and a thread id per
+// event.
+func buildEvtx(c compile.Op) ([]byte, error) {
+	in := c.Evtx
+	computer := in.Computer
+	if computer == "" {
+		computer = "DESKTOP-" + c.Rand.Derive("evtx.computer").Stream().Text(7)
+	}
+	out := libgen.EvtxSpec{
+		Channel:       compile.EvtxChannel(in),
+		Computer:      computer,
+		FirstRecordID: uint64(in.FirstRecordID),
+	}
+	for i, e := range in.Events {
+		ev := libgen.EvtxEvent{EventID: uint16(e.EventID), Provider: e.Provider, ProviderGUID: e.ProviderGUID, Level: 4}
+		b, builtin := compile.EvtxBuiltin(e)
+		if builtin {
+			ev = b.Event
+			ev.ProviderGUID = cmp.Or(e.ProviderGUID, ev.ProviderGUID)
+			for j, f := range ev.Fields {
+				if v, ok := e.Data[f.Name]; ok {
+					ev.Fields[j].Value = v
+				}
+			}
+		} else {
+			for _, name := range slices.Sorted(maps.Keys(e.Data)) {
+				ev.Fields = append(ev.Fields, libgen.EvtxField{Name: name, Type: "string", Value: e.Data[name]})
+			}
+		}
+		when, err := timeOr(e.Time, fmt.Sprintf("evtx.events[%d].time", i), c.When)
+		if err != nil {
+			return nil, err
+		}
+		ev.Time = when
+		for _, n := range []struct {
+			given *int
+			set   func(int)
+		}{
+			{e.Version, func(v int) { ev.Version = uint8(v) }},
+			{e.Level, func(v int) { ev.Level = uint8(v) }},
+			{e.Task, func(v int) { ev.Task = uint16(v) }},
+			{e.Opcode, func(v int) { ev.Opcode = uint8(v) }},
+		} {
+			if n.given != nil {
+				n.set(*n.given)
+			}
+		}
+		if e.Keywords != "" {
+			k, err := libgen.EvtxValue("hex64", e.Keywords)
+			if err != nil {
+				return nil, fmt.Errorf("evtx.events[%d].keywords: %w", i, err)
+			}
+			ev.Keywords = binary.LittleEndian.Uint64(k)
+		}
+		ev.ProcessID = uint32(4 * (100 + c.Rand.Derive("evtx.process", ev.Provider).Stream().IntN(1000)))
+		ev.ThreadID = uint32(4 * (1 + c.Rand.Derive("evtx.thread", strconv.Itoa(i)).Stream().IntN(4000)))
+		if e.ProcessID != nil {
+			ev.ProcessID = uint32(*e.ProcessID)
+		}
+		if e.ThreadID != nil {
+			ev.ThreadID = uint32(*e.ThreadID)
+		}
+		ev.UserSID = e.UserSID
+		out.Events = append(out.Events, ev)
+	}
+	return libgen.BuildEvtx(out)
+}
+
+// buildRegistry builds the hive a registry block describes. Which hive it is
+// comes from the file's name; the base block records the file's path the way
+// Windows does, as \??\C:\... when the output's first directory is a drive
+// letter.
+func buildRegistry(c compile.Op) ([]byte, error) {
+	keys, err := compile.RegistryKeys(c.Registry, libgen.HiveKind(path.Base(c.Path)), c.When)
+	if err != nil {
+		return nil, fmt.Errorf("registry: %w", err)
+	}
+	name := strings.ReplaceAll(c.Path, "/", `\`)
+	if len(name) > 2 && name[1] == '\\' && unicode.IsLetter(rune(name[0])) {
+		name = `\??\` + name[:1] + ":" + name[1:]
+	}
+	return libgen.BuildHive(libgen.HiveSpec{FileName: name, Modified: c.When, Keys: keys})
+}
+
+// defaultKernel is the kernel release a boot or shutdown record names when
+// the scenario gives none.
+const defaultKernel = "6.8.0-31-generic"
+
+// buildUtmp maps a utmp block to its records. A login or failed login whose
+// pid is not given gets one from the operation's stream, drawn per record,
+// and a login's session defaults to its pid, as sshd's does.
+func buildUtmp(c compile.Op) ([]byte, error) {
+	var out []libgen.UtmpRecord
+	for i, r := range c.Utmp.Records {
+		when, err := timeOr(r.Time, fmt.Sprintf("utmp.records[%d].time", i), c.When)
+		if err != nil {
+			return nil, err
+		}
+		rec := libgen.UtmpRecord{Kind: r.Type, User: r.User, Line: r.Line, Host: r.Host, PID: int32(r.PID), Session: int32(r.Session), Time: when}
+		pid := int32(1000 + c.Rand.Derive("utmp.pid", strconv.Itoa(i)).Stream().IntN(30000))
+		switch r.Type {
+		case "boot", "shutdown":
+			rec.Host = cmp.Or(r.Host, defaultKernel)
+		case "login", "logout":
+			rec.Line = cmp.Or(r.Line, "pts/0")
+		case "failed":
+			rec.Line = cmp.Or(r.Line, "ssh:notty")
+		}
+		if rec.PID == 0 && (r.Type == "login" || r.Type == "failed") {
+			rec.PID = pid
+		}
+		if rec.Session == 0 && r.Type == "login" {
+			rec.Session = rec.PID
+		}
+		out = append(out, rec)
+	}
+	return libgen.BuildUtmp(out)
+}
+
+// buildAuditd maps an auditd block to its events. What the block leaves out
+// comes from the operation's stream: the first serial, the login session
+// and the sshd and shell process ids once for the log, and each program's
+// own process id.
+func buildAuditd(c compile.Op) ([]byte, error) {
+	in := c.Auditd
+	d := c.Rand.Derive("auditd.defaults").Stream()
+	serial := uint64(1000 + d.IntN(900000))
+	session := uint32(1 + d.IntN(50))
+	sshd, shell := uint32(1000+d.IntN(30000)), uint32(1000+d.IntN(30000))
+	if in.FirstSerial > 0 {
+		serial = uint64(in.FirstSerial)
+	}
+	log := libgen.AuditLog{FirstSerial: serial}
+	for i, e := range in.Events {
+		when, err := timeOr(e.Time, fmt.Sprintf("auditd.events[%d].time", i), c.When.Add(time.Duration(i)*time.Second))
+		if err != nil {
+			return nil, err
+		}
+		uid := uint32(1000)
+		if e.User == "root" {
+			uid = 0
+		}
+		if e.UID != nil {
+			uid = uint32(*e.UID)
+		}
+		auid := uid
+		if e.AUID != nil {
+			auid = uint32(*e.AUID)
+		}
+		home := "/home/" + e.User
+		if uid == 0 {
+			home = "/root"
+		}
+		ev := libgen.AuditEvent{
+			Kind: e.Type, Time: when, User: e.User, UID: uid, AUID: auid, Session: session,
+			PID: sshd, PPID: 1, Exe: cmp.Or(e.Exe, "/usr/sbin/sshd"), Argv: e.Argv, Cwd: cmp.Or(e.Cwd, home),
+			Key: e.Key, Host: e.Host, Addr: e.Host, TTY: e.TTY, Success: e.Success == nil || *e.Success,
+		}
+		if net.ParseIP(e.Host) == nil {
+			ev.Addr = "?"
+		}
+		if e.Session != 0 {
+			ev.Session = uint32(e.Session)
+		}
+		switch e.Type {
+		case "execve":
+			ev.PID, ev.PPID = uint32(1000+c.Rand.Derive("auditd.pid", strconv.Itoa(i)).Stream().IntN(30000)), shell
+			ev.TTY = cmp.Or(e.TTY, "pts0")
+			if e.Exe == "" {
+				ev.Exe = e.Argv[0]
+				if !strings.HasPrefix(ev.Exe, "/") {
+					ev.Exe = "/usr/bin/" + path.Base(ev.Exe)
+				}
+			}
+		case "login":
+			ev.Terminal = cmp.Or(e.Terminal, "/dev/pts/0")
+		default:
+			ev.Terminal = cmp.Or(e.Terminal, "ssh")
+		}
+		if e.PID != 0 {
+			ev.PID = uint32(e.PID)
+		}
+		if e.PPID != 0 {
+			ev.PPID = uint32(e.PPID)
+		}
+		log.Events = append(log.Events, ev)
+	}
+	return libgen.BuildAuditLog(log, c.Rand.Derive("auditd").Stream())
 }
 
 // historyOf turns the scenario's visits into the builder's, filling in the

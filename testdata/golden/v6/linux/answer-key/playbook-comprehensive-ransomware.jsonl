@@ -1,4 +1,4 @@
-# input-sha256 d446a85c86f5d8be29aecd7da203187c8c3469907afbae7baa9a63044c6bbdf3
+# input-sha256 f2c59d69022b1fda8ee7339f71034ac7d0f248bb6bd5ab5cc2506d35cf09803f
 {"event":"created","n":1,"at":"2024-03-15T02:00:00Z","object":7,"kind":"file","path":"C/Users/victim/AppData/Local/Temp/recon-0.txt","size":237,"sha256":"b418ab5622e35d8865cf6ed0eb52304c87d63ce5959c6dca3fb9a56a10d7d0f3"}
 {"event":"created","n":2,"at":"2024-03-15T02:00:01Z","object":8,"kind":"file","path":"C/Users/victim/AppData/Local/Temp/recon-1.txt","size":237,"sha256":"6bcef909cc5a7df64a7fec8b88a5ec8425ae2add14496c232708559042af66f8"}
 {"event":"created","n":3,"at":"2024-03-15T02:00:02Z","object":9,"kind":"file","path":"C/Users/victim/AppData/Local/Temp/recon-2.txt","size":237,"sha256":"7cae9fd22d4b2fe6402efd156439af80af6116ada061b1f6978e29829638c408"}
@@ -120,4 +120,4 @@
 {"event":"deleted","n":120,"at":"2024-03-15T03:10:00Z","object":44,"kind":"file","path":"C/Users/victim/AppData/Local/Temp/upload.log","sha256":"1d7acfeeec3d0398d036d86a4985263d282e35a19dc6aad75b30b400f2c537de"}
 {"event":"modified","n":121,"at":"2024-03-15T03:10:00Z","object":7,"kind":"file","path":"C/Users/victim/AppData/Local/Temp/recon-0.txt","size":0,"sha256_before":"b418ab5622e35d8865cf6ed0eb52304c87d63ce5959c6dca3fb9a56a10d7d0f3","sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}
 {"event":"created","n":122,"at":"2024-03-15T03:15:00Z","object":127,"kind":"dir","path":"C/Windows/System32/winevt/Logs"}
-{"event":"created","n":123,"at":"2024-03-15T03:15:00Z","object":128,"kind":"file","path":"C/Windows/System32/winevt/Logs/Security.evtx","size":512,"sha256":"c51ca2875bd562d3faba947c172234f378a7fc43e383ce49aed9cd8135674811"}
+{"event":"created","n":123,"at":"2024-03-15T03:15:00Z","object":128,"kind":"file","path":"C/Windows/System32/winevt/Logs/Security.evtx","size":69632,"sha256":"1d15fee5a8cc0672f947e78fcb231fc3c8a84bba208b44acba2e813c07681eb5"}

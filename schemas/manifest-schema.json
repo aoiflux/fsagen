@@ -96,6 +96,96 @@
       },
       "type": "object"
     },
+    "AuditdEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "argv": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "auid": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "exe": {
+          "pattern": "^/",
+          "type": "string"
+        },
+        "host": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "pid": {
+          "type": "integer"
+        },
+        "ppid": {
+          "type": "integer"
+        },
+        "session": {
+          "type": "integer"
+        },
+        "success": {
+          "type": "boolean"
+        },
+        "terminal": {
+          "type": "string"
+        },
+        "time": {
+          "$ref": "#/$defs/Rfc3339Time"
+        },
+        "tty": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "execve",
+            "auth",
+            "login",
+            "session_start"
+          ],
+          "type": "string"
+        },
+        "uid": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "user": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "AuditdSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "events": {
+          "items": {
+            "$ref": "#/$defs/AuditdEvent"
+          },
+          "type": "array"
+        },
+        "first_serial": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "events"
+      ],
+      "type": "object"
+    },
     "DocxSpec": {
       "additionalProperties": false,
       "properties": {
@@ -271,6 +361,105 @@
           "type": "array"
         }
       },
+      "type": "object"
+    },
+    "EvtxEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          },
+          "description": "The event's data values by name.",
+          "type": "object"
+        },
+        "event_id": {
+          "description": "The event's id. Built in, with Windows' own provider, channel and data: 1102, 4624, 4688, 7045.",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "keywords": {
+          "type": "string"
+        },
+        "level": {
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "opcode": {
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "process_id": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "provider_guid": {
+          "pattern": "^\\{?[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\\}?$",
+          "type": "string"
+        },
+        "task": {
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "thread_id": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "time": {
+          "$ref": "#/$defs/Rfc3339Time"
+        },
+        "user_sid": {
+          "pattern": "^S-1-[0-9]+(-[0-9]+)*$",
+          "type": "string"
+        },
+        "version": {
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "event_id"
+      ],
+      "type": "object"
+    },
+    "EvtxSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "channel": {
+          "type": "string"
+        },
+        "computer": {
+          "type": "string"
+        },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/EvtxEvent"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "first_record_id": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "events"
+      ],
       "type": "object"
     },
     "Header": {
@@ -505,7 +694,12 @@
                   "mp4",
                   "chrome_history",
                   "firefox_places",
-                  "lnk"
+                  "lnk",
+                  "prefetch",
+                  "evtx",
+                  "regf",
+                  "utmp",
+                  "auditd"
                 ]
               }
             },
@@ -513,6 +707,7 @@
               "enum": [
                 "action",
                 "atime",
+                "auditd",
                 "content",
                 "content_file",
                 "content_kind",
@@ -520,6 +715,7 @@
                 "crtime",
                 "ctime",
                 "docx",
+                "evtx",
                 "ext",
                 "format",
                 "history",
@@ -531,9 +727,12 @@
                 "path",
                 "pdf",
                 "pe",
+                "prefetch",
+                "registry",
                 "render",
                 "slack",
-                "type"
+                "type",
+                "utmp"
               ]
             },
             "required": [
@@ -579,7 +778,12 @@
                   "mp4",
                   "chrome_history",
                   "firefox_places",
-                  "lnk"
+                  "lnk",
+                  "prefetch",
+                  "evtx",
+                  "regf",
+                  "utmp",
+                  "auditd"
                 ]
               }
             },
@@ -587,6 +791,7 @@
               "enum": [
                 "action",
                 "atime",
+                "auditd",
                 "content",
                 "content_file",
                 "content_kind",
@@ -594,6 +799,7 @@
                 "crtime",
                 "ctime",
                 "docx",
+                "evtx",
                 "format",
                 "history",
                 "lnk",
@@ -603,9 +809,12 @@
                 "path",
                 "pdf",
                 "pe",
+                "prefetch",
                 "ref",
+                "registry",
                 "render",
-                "slack"
+                "slack",
+                "utmp"
               ]
             }
           }
@@ -1214,6 +1423,9 @@
         "atime": {
           "$ref": "#/$defs/Rfc3339Time"
         },
+        "auditd": {
+          "$ref": "#/$defs/AuditdSpec"
+        },
         "content": {
           "type": "string"
         },
@@ -1252,6 +1464,9 @@
         "email": {
           "$ref": "#/$defs/EmailSpec"
         },
+        "evtx": {
+          "$ref": "#/$defs/EvtxSpec"
+        },
         "ext": {
           "pattern": "^\\.[^/\\\\:]+$",
           "type": "string"
@@ -1270,6 +1485,11 @@
             "chrome_history",
             "firefox_places",
             "lnk",
+            "prefetch",
+            "evtx",
+            "regf",
+            "utmp",
+            "auditd",
             "eml",
             "mbox"
           ],
@@ -1315,6 +1535,9 @@
         "pe": {
           "$ref": "#/$defs/PeSpec"
         },
+        "prefetch": {
+          "$ref": "#/$defs/PrefetchSpec"
+        },
         "ref": {
           "description": "Instead of path: the one live path created under this id.",
           "type": "string"
@@ -1325,6 +1548,9 @@
         "refs": {
           "description": "Instead of path: every live path created under this id.",
           "type": "string"
+        },
+        "registry": {
+          "$ref": "#/$defs/RegistrySpec"
         },
         "render": {
           "type": "boolean"
@@ -1341,6 +1567,9 @@
             "dir"
           ],
           "type": "string"
+        },
+        "utmp": {
+          "$ref": "#/$defs/UtmpSpec"
         },
         "vault": {
           "$ref": "#/$defs/VaultSpec"
@@ -1523,6 +1752,248 @@
       },
       "type": "object"
     },
+    "PrefetchSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "compressed": {
+          "type": "boolean"
+        },
+        "executable": {
+          "description": "The Windows path of the program that ran: C:\\Windows\\System32\\cmd.exe.",
+          "pattern": "^[A-Za-z]:\\\\",
+          "type": "string"
+        },
+        "harddisk_volume": {
+          "description": "The number N of the executable's volume, \\Device\\HarddiskVolumeN, which the prefetch hash is computed over; 3 by default.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "last_run_times": {
+          "items": {
+            "$ref": "#/$defs/Rfc3339Time"
+          },
+          "maxItems": 8,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "referenced_files": {
+          "items": {
+            "pattern": "^[A-Za-z]:\\\\",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "run_count": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "version": {
+          "enum": [
+            "win10",
+            "win11"
+          ],
+          "type": "string"
+        },
+        "volumes": {
+          "items": {
+            "$ref": "#/$defs/PrefetchVolume"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "executable"
+      ],
+      "type": "object"
+    },
+    "PrefetchVolume": {
+      "additionalProperties": false,
+      "properties": {
+        "created": {
+          "$ref": "#/$defs/Rfc3339Time"
+        },
+        "drive": {
+          "pattern": "^[A-Za-z]:?$",
+          "type": "string"
+        },
+        "serial": {
+          "pattern": "^[0-9A-Fa-f]{4}-?[0-9A-Fa-f]{4}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "drive"
+      ],
+      "type": "object"
+    },
+    "RegistryKey": {
+      "additionalProperties": false,
+      "properties": {
+        "last_written": {
+          "$ref": "#/$defs/Rfc3339Time"
+        },
+        "path": {
+          "type": "string"
+        },
+        "values": {
+          "items": {
+            "$ref": "#/$defs/RegistryValue"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "RegistryRun": {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "command"
+      ],
+      "type": "object"
+    },
+    "RegistrySpec": {
+      "additionalProperties": false,
+      "properties": {
+        "keys": {
+          "items": {
+            "$ref": "#/$defs/RegistryKey"
+          },
+          "type": "array"
+        },
+        "run": {
+          "items": {
+            "$ref": "#/$defs/RegistryRun"
+          },
+          "type": "array"
+        },
+        "usbstor": {
+          "items": {
+            "$ref": "#/$defs/RegistryUSB"
+          },
+          "type": "array"
+        },
+        "userassist": {
+          "items": {
+            "$ref": "#/$defs/RegistryUserAssist"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "RegistryUSB": {
+      "additionalProperties": false,
+      "properties": {
+        "first_install": {
+          "$ref": "#/$defs/Rfc3339Time"
+        },
+        "last_arrival": {
+          "$ref": "#/$defs/Rfc3339Time"
+        },
+        "last_removal": {
+          "$ref": "#/$defs/Rfc3339Time"
+        },
+        "product": {
+          "maxLength": 16,
+          "minLength": 1,
+          "type": "string"
+        },
+        "revision": {
+          "maxLength": 4,
+          "minLength": 1,
+          "type": "string"
+        },
+        "serial": {
+          "type": "string"
+        },
+        "vendor": {
+          "maxLength": 8,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "vendor",
+        "product",
+        "revision",
+        "serial"
+      ],
+      "type": "object"
+    },
+    "RegistryUserAssist": {
+      "additionalProperties": false,
+      "properties": {
+        "focus_count": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "focus_time_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "last_run": {
+          "$ref": "#/$defs/Rfc3339Time"
+        },
+        "path": {
+          "type": "string"
+        },
+        "run_count": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "RegistryValue": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "description": "Text for REG_SZ and REG_EXPAND_SZ, a number for REG_DWORD and REG_QWORD, hex bytes for REG_BINARY and REG_NONE.",
+          "type": [
+            "string",
+            "integer"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "strings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "enum": [
+            "REG_NONE",
+            "REG_SZ",
+            "REG_EXPAND_SZ",
+            "REG_BINARY",
+            "REG_DWORD",
+            "REG_DWORD_BIG_ENDIAN",
+            "REG_MULTI_SZ",
+            "REG_QWORD"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "Rfc3339Time": {
       "description": "Timestamp in RFC 3339 format, fractional seconds allowed",
       "format": "date-time",
@@ -1557,6 +2028,65 @@
           "type": "string"
         }
       },
+      "type": "object"
+    },
+    "UtmpRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "maxLength": 256,
+          "type": "string"
+        },
+        "line": {
+          "maxLength": 32,
+          "type": "string"
+        },
+        "pid": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "session": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "time": {
+          "$ref": "#/$defs/Rfc3339Time"
+        },
+        "type": {
+          "enum": [
+            "boot",
+            "shutdown",
+            "login",
+            "logout",
+            "failed"
+          ],
+          "type": "string"
+        },
+        "user": {
+          "maxLength": 32,
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "UtmpSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "records": {
+          "items": {
+            "$ref": "#/$defs/UtmpRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "records"
+      ],
       "type": "object"
     },
     "VaultSpec": {

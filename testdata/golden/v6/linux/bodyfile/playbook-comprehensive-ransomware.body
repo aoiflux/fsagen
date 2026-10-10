@@ -1,6 +1,6 @@
-# input-sha256 d446a85c86f5d8be29aecd7da203187c8c3469907afbae7baa9a63044c6bbdf3
+# input-sha256 f2c59d69022b1fda8ee7339f71034ac7d0f248bb6bd5ab5cc2506d35cf09803f
 35c88e296fa2ee608cab0d8b768a3c42|/C/Users/victim/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/updater.bat|23|r/rrw-r--r--|0|0|147|1710468300|1673769600|0|0
-336376d3ddbf868fc68d9b3becf01e3e|/C/Windows/System32/winevt/Logs/Security.evtx|128|r/rrw-r--r--|0|0|512|1710472500|1709251200|0|0
+b2057f5b9900416b30604aac9e8a4e65|/C/Windows/System32/winevt/Logs/Security.evtx|128|r/rrw-r--r--|0|0|69632|1710472500|1709251200|0|0
 0|/C/Users|2|d/drwxr-xr-x|0|0|0|1710468000|1710468000|0|0
 fbef20361d2fec2247f98093c741a432|/C/Users/victim/AppData/Local/Temp/recon-1.txt|8|r/rrw-r--r--|0|0|237|1710468001|1710468001|0|0
 f52564934988b0719409ea5c19ebd0f6|/C/Users/victim/AppData/Local/Temp/recon-2.txt|9|r/rrw-r--r--|0|0|237|1710468002|1710468002|0|0

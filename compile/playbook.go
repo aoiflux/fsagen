@@ -301,6 +301,7 @@ func (g *opGen) actionOp(sp stepPlan, ai int, a spec.Action, occ occurrence) (Op
 		r.at(ferr.field, "%s", ferr.msg)
 		return Op{}, false
 	}
+	defaultActorUsers(&op, sp.actor.Name)
 	rebaseArchive(&op, sp.actor.Base)
 	if err := applyTemplate(&op, a.Template, ctx); err != nil {
 		r.at("template", "%v", err)

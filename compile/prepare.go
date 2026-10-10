@@ -106,7 +106,21 @@ func renderStringFields(v reflect.Value, rctx render.Context, where string, errs
 			renderStringFields(v.Index(i), rctx, fmt.Sprintf("%s[%d]", where, i), errs)
 		}
 	case reflect.Map:
-		// Variable maps are the source of substitution, not a target of it.
+		// A map's keys are names and stay literal; its string values are
+		// templated in key order, so the draws a token makes come out the same
+		// every run. (Variable maps never get here: they belong to the
+		// playbook and its actors, not to an operation.)
+		if v.Type().Elem().Kind() != reflect.String {
+			return
+		}
+		keys := v.MapKeys()
+		slices.SortFunc(keys, func(a, b reflect.Value) int { return strings.Compare(a.String(), b.String()) })
+		for _, k := range keys {
+			val := reflect.New(v.Type().Elem()).Elem()
+			val.Set(v.MapIndex(k))
+			renderStringValue(val, rctx, where+"."+k.String(), errs)
+			v.SetMapIndex(k, val)
+		}
 	case reflect.String:
 		renderStringValue(v, rctx, where, errs)
 	}
@@ -181,10 +195,12 @@ func checkValues(op *Op, src *sandbox.Sources) ErrorList {
 
 // settleContent settles what the operation's path implies about its content: the
 // format an extension promises, and then how much invented content to write,
-// which depends on that format.
+// which depends on that format. A prefetch file named for a program must be
+// that program's.
 func settleContent(op *Op, r reporter) {
 	inferFormatFromExtension(op, r)
 	op.Random = randomLength(op)
+	checkPrefetchName(op, r)
 }
 
 // checkClosedSets rejects a value outside the closed set its key allows.
@@ -341,6 +357,12 @@ func inferFormatFromExtension(op *Op, r reporter) {
 	}
 	ext := strings.ToLower(path.Ext(op.Path))
 	format, known := inferredFormats[ext]
+	if f, ok := inferredByName(path.Base(op.Path)); ok {
+		// Some files are known by their whole name, NTUSER.DAT or wtmp, more
+		// than by an extension: .dat alone names plenty of files that are not
+		// hives.
+		format, known, ext = f, true, path.Base(op.Path)
+	}
 	switch {
 	case known && (op.Action == spec.ActionCreate || op.Action == spec.ActionUpdate):
 		op.Format = format

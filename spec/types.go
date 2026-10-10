@@ -77,6 +77,11 @@ const (
 	FormatChromeHistory Format = "chrome_history"
 	FormatFirefoxPlaces Format = "firefox_places"
 	FormatLNK           Format = "lnk"
+	FormatPrefetch      Format = "prefetch"
+	FormatEvtx          Format = "evtx"
+	FormatRegistry      Format = "regf"
+	FormatUtmp          Format = "utmp"
+	FormatAuditd        Format = "auditd"
 	FormatEML           Format = "eml"
 	FormatMbox          Format = "mbox"
 )
@@ -129,6 +134,16 @@ type Operation struct {
 	Pe      *PeSpec      `yaml:"pe" json:"pe"`           // for format: pe
 	History *HistorySpec `yaml:"history" json:"history"` // for format: chrome_history or firefox_places
 	Lnk     *LnkSpec     `yaml:"lnk" json:"lnk"`         // for format: lnk
+	// Prefetch is for format: prefetch, a Windows prefetch file.
+	Prefetch *PrefetchSpec `yaml:"prefetch" json:"prefetch"`
+	// Evtx is for format: evtx, a Windows event log.
+	Evtx *EvtxSpec `yaml:"evtx" json:"evtx"`
+	// Registry is for format: regf, a Windows registry hive file.
+	Registry *RegistrySpec `yaml:"registry" json:"registry"`
+	// Utmp is for format: utmp, a Linux utmp, wtmp or btmp login record.
+	Utmp *UtmpSpec `yaml:"utmp" json:"utmp"`
+	// Auditd is for format: auditd, a Linux audit log.
+	Auditd *AuditdSpec `yaml:"auditd" json:"auditd"`
 	// Slack asks for bytes past the end of the file, in the rest of its last
 	// cluster, where a carver looks and a file read never does.
 	Slack   *SlackSpec   `yaml:"slack" json:"slack"`
@@ -218,6 +233,204 @@ type LnkSpec struct {
 	// TargetAttributes are any of readonly, hidden, system and archive. With
 	// none, a file is archive.
 	TargetAttributes []string `yaml:"target_attributes" json:"target_attributes"`
+}
+
+// PrefetchSpec describes a Windows prefetch file (.pf): which program ran,
+// how many times and when it last did, and what it loaded. Windows' own name
+// for the file is the program's name and the hash of its path,
+// CMD.EXE-D269B812.pf; a file named that way must match.
+type PrefetchSpec struct {
+	Executable string `yaml:"executable" json:"executable"` // the program's Windows path, C:\Windows\System32\cmd.exe; required
+	Version    string `yaml:"version" json:"version"`       // win11 (default) or win10
+	// Compressed says whether the file is MAM-compressed, as Windows 10 and
+	// 11 write it; default true.
+	Compressed *bool `yaml:"compressed" json:"compressed"`
+	RunCount   int   `yaml:"run_count" json:"run_count"` // defaults to the number of last_run_times
+	// LastRunTimes are when the program last ran, RFC3339, at most 8, in any
+	// order; default the operation time.
+	LastRunTimes []string `yaml:"last_run_times" json:"last_run_times"`
+	// ReferencedFiles are the Windows paths of what the program loaded besides
+	// itself and ntdll.dll, which are always listed. Without them it loaded
+	// kernel32.dll and KernelBase.dll.
+	ReferencedFiles []string `yaml:"referenced_files" json:"referenced_files"`
+	// HarddiskVolume is the n of \Device\HarddiskVolume<n> for the
+	// executable's volume, which the hash is computed over; default 3.
+	HarddiskVolume int `yaml:"harddisk_volume" json:"harddisk_volume"`
+	// Volumes say what the file records about the volumes its files are on;
+	// a drive not listed gets a serial and creation time from the seed.
+	Volumes []PrefetchVolume `yaml:"volumes" json:"volumes"`
+}
+
+// PrefetchVolume is a volume as a prefetch file records it.
+type PrefetchVolume struct {
+	Drive   string `yaml:"drive" json:"drive"`     // the drive letter, C
+	Serial  string `yaml:"serial" json:"serial"`   // 1A2B-3C4D or 1A2B3C4D
+	Created string `yaml:"created" json:"created"` // RFC3339, when the volume was formatted
+}
+
+// EvtxSpec describes a Windows event log (.evtx): one channel's events, as
+// a machine logged them. Events 1102, 4624, 4688 and 7045 are built in: their
+// provider, channel, version, level, task, opcode, keywords and the names and
+// types of their data are Windows' own, and a data value left out is what
+// Windows writes when it has none. Any other event names its provider, and
+// its data are strings.
+type EvtxSpec struct {
+	// Channel is the log's channel, Security or System; default the channel
+	// the built-in events are logged to, else Application.
+	Channel string `yaml:"channel" json:"channel"`
+	// Computer is the name of the machine that logged the events; default
+	// DESKTOP- and seven characters from the seed.
+	Computer      string      `yaml:"computer" json:"computer"`
+	FirstRecordID int64       `yaml:"first_record_id" json:"first_record_id"` // the first event's record id; default 1
+	Events        []EvtxEvent `yaml:"events" json:"events"`
+}
+
+// EvtxEvent is one logged event. Every field but event_id has a default.
+type EvtxEvent struct {
+	EventID int    `yaml:"event_id" json:"event_id"`
+	Time    string `yaml:"time" json:"time"` // RFC3339; default the operation time
+	// Provider and ProviderGUID name who logged the event; required for an
+	// event that is not built in.
+	Provider     string `yaml:"provider" json:"provider"`
+	ProviderGUID string `yaml:"provider_guid" json:"provider_guid"`
+	Version      *int   `yaml:"version" json:"version"`
+	Level        *int   `yaml:"level" json:"level"` // 0 LogAlways, 1 Critical, 2 Error, 3 Warning, 4 Information (default), 5 Verbose
+	Task         *int   `yaml:"task" json:"task"`
+	Opcode       *int   `yaml:"opcode" json:"opcode"`
+	Keywords     string `yaml:"keywords" json:"keywords"` // 64 bits, 0x8020000000000000
+	// ProcessID and ThreadID are of the process that logged the event;
+	// default from the seed.
+	ProcessID *int   `yaml:"process_id" json:"process_id"`
+	ThreadID  *int   `yaml:"thread_id" json:"thread_id"`
+	UserSID   string `yaml:"user_sid" json:"user_sid"` // the Security element's UserID, S-1-5-18; default none
+	// Data are the event's data values by name. A built-in event takes the
+	// names Windows gives its data, each in its own type; any other event
+	// takes strings, written in name order.
+	Data map[string]string `yaml:"data" json:"data"`
+}
+
+// RegistrySpec describes a Windows registry hive file: its keys and their
+// values, and the artefacts Windows writes that a scenario most often wants,
+// each where its hive keeps it. Which hive a file is comes from its name:
+// NTUSER.DAT, USRCLASS.DAT, SYSTEM, SOFTWARE, SAM, SECURITY or DEFAULT.
+type RegistrySpec struct {
+	Keys []RegistryKey `yaml:"keys" json:"keys"`
+	// Run are programs started at logon, in NTUSER.DAT or SOFTWARE.
+	Run []RegistryRun `yaml:"run" json:"run"`
+	// UserAssist are Explorer's records of programs a user started, in
+	// NTUSER.DAT.
+	UserAssist []RegistryUserAssist `yaml:"userassist" json:"userassist"`
+	// USBStor are USB storage devices the machine has seen, in SYSTEM.
+	USBStor []RegistryUSB `yaml:"usbstor" json:"usbstor"`
+}
+
+// RegistryKey is a key, by its path below the hive's root, and its values.
+// A key's parents are created as needed.
+type RegistryKey struct {
+	Path        string          `yaml:"path" json:"path"`                 // Software\Microsoft\Windows\CurrentVersion\Run
+	LastWritten string          `yaml:"last_written" json:"last_written"` // RFC3339; default the operation time
+	Values      []RegistryValue `yaml:"values" json:"values"`
+}
+
+// RegistryValue is one value. Data is text for the string types, a number
+// for the integer types and hex bytes for REG_BINARY and REG_NONE;
+// REG_MULTI_SZ takes strings instead.
+type RegistryValue struct {
+	Name    string   `yaml:"name" json:"name"` // empty is the key's default value
+	Type    string   `yaml:"type" json:"type"` // REG_SZ (default), REG_EXPAND_SZ, REG_MULTI_SZ, REG_DWORD, REG_QWORD, REG_BINARY, REG_NONE, REG_DWORD_BIG_ENDIAN
+	Data    string   `yaml:"data" json:"data"`
+	Strings []string `yaml:"strings" json:"strings"`
+}
+
+// RegistryRun is one program started at logon.
+type RegistryRun struct {
+	Name    string `yaml:"name" json:"name"`
+	Command string `yaml:"command" json:"command"`
+}
+
+// RegistryUserAssist is one program or shortcut a user started from
+// Explorer.
+type RegistryUserAssist struct {
+	Path        string `yaml:"path" json:"path"`                   // the program's or the shortcut's Windows path
+	RunCount    int    `yaml:"run_count" json:"run_count"`         // default 1
+	FocusCount  int    `yaml:"focus_count" json:"focus_count"`     // times it had the focus
+	FocusTimeMs int    `yaml:"focus_time_ms" json:"focus_time_ms"` // how long it had the focus, in milliseconds
+	LastRun     string `yaml:"last_run" json:"last_run"`           // RFC3339; default the operation time
+}
+
+// RegistryUSB is a USB storage device as the SYSTEM hive remembers it.
+type RegistryUSB struct {
+	Vendor   string `yaml:"vendor" json:"vendor"`     // at most 8 characters
+	Product  string `yaml:"product" json:"product"`   // at most 16 characters
+	Revision string `yaml:"revision" json:"revision"` // at most 4 characters
+	Serial   string `yaml:"serial" json:"serial"`
+	// FirstInstall and LastArrival default to the operation time; a device
+	// without a LastRemoval is still connected.
+	FirstInstall string `yaml:"first_install" json:"first_install"`
+	LastArrival  string `yaml:"last_arrival" json:"last_arrival"`
+	LastRemoval  string `yaml:"last_removal" json:"last_removal"`
+}
+
+// UtmpSpec describes a Linux login record file: utmp (who is logged in),
+// wtmp (logins, logouts, boots and shutdowns) or btmp (failed logins), which
+// the file's name says. Each record is glibc's struct utmp, which holds no
+// time after 2038-01-19T03:14:07Z.
+type UtmpSpec struct {
+	Records []UtmpRecord `yaml:"records" json:"records"`
+}
+
+// UtmpRecord is one record.
+type UtmpRecord struct {
+	Type string `yaml:"type" json:"type"` // boot, shutdown, login, logout or failed (btmp only)
+	// User is who logged in or tried to; in a playbook it defaults to the
+	// actor.
+	User string `yaml:"user" json:"user"`
+	// Line is the terminal: pts/0 by default, ssh:notty for a failed SSH
+	// login. A logout names the line of the login it ends.
+	Line string `yaml:"line" json:"line"`
+	// Host is where a login came from, a name or an address; for a boot or
+	// shutdown, the kernel release.
+	Host    string `yaml:"host" json:"host"`
+	PID     int    `yaml:"pid" json:"pid"`         // the login process; default from the seed, and a logout's is its login's
+	Session int    `yaml:"session" json:"session"` // the session id
+	Time    string `yaml:"time" json:"time"`       // RFC3339; default the operation time
+}
+
+// AuditdSpec describes a Linux audit log (audit.log) in auditd's raw format:
+// programs executed, as the kernel records an execve, and logins, as PAM and
+// sshd record them.
+type AuditdSpec struct {
+	FirstSerial int64         `yaml:"first_serial" json:"first_serial"` // the first event's serial; default from the seed
+	Events      []AuditdEvent `yaml:"events" json:"events"`
+}
+
+// AuditdEvent is one event.
+type AuditdEvent struct {
+	Type string `yaml:"type" json:"type"` // execve, auth, login or session_start
+	// Time is when it happened, RFC3339; default the operation time plus a
+	// second for each event before it.
+	Time string `yaml:"time" json:"time"`
+	// User is the account; in a playbook it defaults to the actor.
+	User string `yaml:"user" json:"user"`
+	UID  *int   `yaml:"uid" json:"uid"`   // default 0 for root, else 1000
+	AUID *int   `yaml:"auid" json:"auid"` // the login's user id; default the uid
+	// Session is the login session's number; default from the seed.
+	Session int `yaml:"session" json:"session"`
+	PID     int `yaml:"pid" json:"pid"`   // default from the seed
+	PPID    int `yaml:"ppid" json:"ppid"` // default from the seed
+	// Exe is the program run, or the service a login went through
+	// (default /usr/sbin/sshd). Argv are its arguments, the program first;
+	// Cwd where it ran, default the user's home.
+	Exe  string   `yaml:"exe" json:"exe"`
+	Argv []string `yaml:"argv" json:"argv"`
+	Cwd  string   `yaml:"cwd" json:"cwd"`
+	Key  string   `yaml:"key" json:"key"` // the audit rule key, which ausearch -k finds
+	// Host is where a login came from; Terminal what it was on (default ssh,
+	// and the pts for a login); TTY the terminal a program ran on.
+	Host     string `yaml:"host" json:"host"`
+	Terminal string `yaml:"terminal" json:"terminal"`
+	TTY      string `yaml:"tty" json:"tty"`
+	Success  *bool  `yaml:"success" json:"success"` // default true
 }
 
 // SlackSpec is what fills a file's slack: the bytes between the end of its

@@ -10,6 +10,7 @@ import (
 	"maps"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/aoiflux/fsagen/compile"
@@ -311,6 +312,92 @@ func nestedDefs(defs map[string]any) {
 		prop("target_mtime", rfc3339()).
 		prop("target_size", nonNegative()).
 		prop("target_attributes", map[string]any{"type": "array", "items": enumOf(libgen.LNKAttributes), "uniqueItems": true})
+
+	register(defs, "PrefetchSpec", spec.PrefetchSpec{}, "executable").
+		prop("executable", map[string]any{
+			"type":        "string",
+			"pattern":     `^[A-Za-z]:\\`,
+			"description": `The Windows path of the program that ran: C:\Windows\System32\cmd.exe.`,
+		}).
+		prop("version", enumOf(libgen.PrefetchVersions)).
+		prop("run_count", nonNegative()).
+		prop("last_run_times", map[string]any{"type": "array", "items": rfc3339(), "maxItems": libgen.MaxPrefetchRuns, "uniqueItems": true}).
+		prop("referenced_files", map[string]any{"type": "array", "items": map[string]any{"type": "string", "pattern": `^[A-Za-z]:\\`}}).
+		prop("harddisk_volume", map[string]any{"type": "integer", "minimum": 0, "description": `The number N of the executable's volume, \Device\HarddiskVolumeN, which the prefetch hash is computed over; 3 by default.`})
+
+	register(defs, "PrefetchVolume", spec.PrefetchVolume{}, "drive").
+		prop("drive", map[string]any{"type": "string", "pattern": "^[A-Za-z]:?$"}).
+		prop("serial", map[string]any{"type": "string", "pattern": "^[0-9A-Fa-f]{4}-?[0-9A-Fa-f]{4}$"}).
+		prop("created", rfc3339())
+
+	register(defs, "EvtxSpec", spec.EvtxSpec{}, "events").
+		prop("first_record_id", nonNegative()).
+		prop("events", map[string]any{"type": "array", "items": map[string]any{"$ref": "#/$defs/EvtxEvent"}, "minItems": 1})
+
+	builtins := make([]string, 0, len(libgen.EvtxBuiltinIDs))
+	for _, id := range libgen.EvtxBuiltinIDs {
+		builtins = append(builtins, strconv.Itoa(id))
+	}
+	register(defs, "EvtxEvent", spec.EvtxEvent{}, "event_id").
+		prop("event_id", map[string]any{
+			"type": "integer", "minimum": 0, "maximum": 0xFFFF,
+			"description": "The event's id. Built in, with Windows' own provider, channel and data: " + strings.Join(builtins, ", ") + ".",
+		}).
+		prop("time", rfc3339()).
+		prop("provider_guid", map[string]any{"type": "string", "pattern": "^\\{?[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\\}?$"}).
+		prop("version", map[string]any{"type": "integer", "minimum": 0, "maximum": 0xFF}).
+		prop("level", map[string]any{"type": "integer", "minimum": 0, "maximum": 0xFF}).
+		prop("task", map[string]any{"type": "integer", "minimum": 0, "maximum": 0xFFFF}).
+		prop("opcode", map[string]any{"type": "integer", "minimum": 0, "maximum": 0xFF}).
+		prop("process_id", map[string]any{"type": "integer", "minimum": 0, "maximum": 0xFFFFFFFF}).
+		prop("thread_id", map[string]any{"type": "integer", "minimum": 0, "maximum": 0xFFFFFFFF}).
+		prop("user_sid", map[string]any{"type": "string", "pattern": "^S-1-[0-9]+(-[0-9]+)*$"}).
+		prop("data", map[string]any{
+			"type":                 "object",
+			"additionalProperties": map[string]any{"type": []string{"string", "number", "boolean"}},
+			"description":          "The event's data values by name.",
+		})
+
+	register(defs, "RegistrySpec", spec.RegistrySpec{})
+	register(defs, "RegistryKey", spec.RegistryKey{}, "path").
+		prop("last_written", rfc3339())
+	register(defs, "RegistryValue", spec.RegistryValue{}).
+		prop("type", enumOf(libgen.RegTypes)).
+		prop("data", map[string]any{
+			"type":        []string{"string", "integer"},
+			"description": "Text for REG_SZ and REG_EXPAND_SZ, a number for REG_DWORD and REG_QWORD, hex bytes for REG_BINARY and REG_NONE.",
+		})
+	register(defs, "RegistryRun", spec.RegistryRun{}, "name", "command")
+	register(defs, "RegistryUserAssist", spec.RegistryUserAssist{}, "path").
+		prop("run_count", nonNegative()).
+		prop("focus_count", nonNegative()).
+		prop("focus_time_ms", nonNegative()).
+		prop("last_run", rfc3339())
+	register(defs, "RegistryUSB", spec.RegistryUSB{}, "vendor", "product", "revision", "serial").
+		prop("vendor", map[string]any{"type": "string", "minLength": 1, "maxLength": libgen.USBLimits[0]}).
+		prop("product", map[string]any{"type": "string", "minLength": 1, "maxLength": libgen.USBLimits[1]}).
+		prop("revision", map[string]any{"type": "string", "minLength": 1, "maxLength": libgen.USBLimits[2]}).
+		prop("first_install", rfc3339()).
+		prop("last_arrival", rfc3339()).
+		prop("last_removal", rfc3339())
+
+	register(defs, "UtmpSpec", spec.UtmpSpec{}, "records")
+	register(defs, "UtmpRecord", spec.UtmpRecord{}, "type").
+		prop("type", enumOf(libgen.UtmpKinds)).
+		prop("user", map[string]any{"type": "string", "maxLength": 32}).
+		prop("line", map[string]any{"type": "string", "maxLength": 32}).
+		prop("host", map[string]any{"type": "string", "maxLength": 256}).
+		prop("pid", map[string]any{"type": "integer", "minimum": 0, "maximum": 0x7FFFFFFF}).
+		prop("session", map[string]any{"type": "integer", "minimum": 0, "maximum": 0x7FFFFFFF}).
+		prop("time", rfc3339())
+	register(defs, "AuditdSpec", spec.AuditdSpec{}, "events").
+		prop("first_serial", nonNegative())
+	register(defs, "AuditdEvent", spec.AuditdEvent{}, "type").
+		prop("type", enumOf(libgen.AuditKinds)).
+		prop("time", rfc3339()).
+		prop("uid", map[string]any{"type": "integer", "minimum": 0, "maximum": 0xFFFFFFFF}).
+		prop("auid", map[string]any{"type": "integer", "minimum": 0, "maximum": 0xFFFFFFFF}).
+		prop("exe", map[string]any{"type": "string", "pattern": "^/"})
 
 	register(defs, "SlackSpec", spec.SlackSpec{}).
 		prop("kind", enumOf(compile.SlackKinds)).

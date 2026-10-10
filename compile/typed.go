@@ -29,6 +29,9 @@ var inferredFormats = map[string]spec.Format{
 	".docx": spec.FormatDOCX,
 	".mp4":  spec.FormatMP4,
 	".lnk":  spec.FormatLNK,
+	".pf":   spec.FormatPrefetch,
+	".evtx": spec.FormatEvtx,
+	".hve":  spec.FormatRegistry,
 }
 
 // refusedExtensions promise a format fsagen still cannot build. Refusing is
@@ -44,6 +47,21 @@ var refusedExtensions = map[string]string{
 	".mbox":   "an mbox mailbox (use action: email)",
 }
 
+// inferredByName is what a file's whole name means, for the files known by
+// name rather than extension: a registry hive (NTUSER.DAT, SYSTEM), a login
+// record (wtmp) or an audit log.
+func inferredByName(base string) (spec.Format, bool) {
+	switch {
+	case libgen.HiveKind(base) != "":
+		return spec.FormatRegistry, true
+	case slices.Contains(UtmpFiles, base):
+		return spec.FormatUtmp, true
+	case base == "audit.log":
+		return spec.FormatAuditd, true
+	}
+	return "", false
+}
+
 // DocumentText reports a format whose content is the document's text rather
 // than filler bytes.
 func DocumentText(format spec.Format) bool {
@@ -52,11 +70,16 @@ func DocumentText(format spec.Format) bool {
 
 // blockFormats says which formats each typed block belongs to.
 var blockFormats = map[string][]spec.Format{
-	"pdf":     {spec.FormatPDF},
-	"docx":    {spec.FormatDOCX},
-	"pe":      {spec.FormatPE},
-	"history": {spec.FormatChromeHistory, spec.FormatFirefoxPlaces},
-	"lnk":     {spec.FormatLNK},
+	"pdf":      {spec.FormatPDF},
+	"docx":     {spec.FormatDOCX},
+	"pe":       {spec.FormatPE},
+	"history":  {spec.FormatChromeHistory, spec.FormatFirefoxPlaces},
+	"lnk":      {spec.FormatLNK},
+	"prefetch": {spec.FormatPrefetch},
+	"evtx":     {spec.FormatEvtx},
+	"registry": {spec.FormatRegistry},
+	"utmp":     {spec.FormatUtmp},
+	"auditd":   {spec.FormatAuditd},
 }
 
 // checkTyped validates the typed blocks and the rules that tie a block to the
@@ -86,6 +109,51 @@ func checkTyped(op *Op, at func(field, format string, args ...any)) {
 	}
 	if op.Lnk != nil {
 		checkLNK(op, at)
+	}
+	if k.has("content_len") && op.Format == spec.FormatPrefetch {
+		at("content_len", "a prefetch file has no region for filler; it is as big as what it records")
+	}
+	if op.Format == spec.FormatPrefetch && op.Prefetch == nil {
+		at("format", "prefetch needs a prefetch block saying which program ran, at least its executable")
+	}
+	if op.Prefetch != nil {
+		checkPrefetch(op, at)
+	}
+	if k.has("content_len") && op.Format == spec.FormatEvtx {
+		at("content_len", "an event log has no region for filler; it is as big as its events make it")
+	}
+	if op.Format == spec.FormatEvtx && op.Evtx == nil {
+		at("format", "evtx needs an evtx block saying which events were logged")
+	}
+	if op.Evtx != nil {
+		checkEvtx(op, at)
+	}
+	if k.has("content_len") && op.Format == spec.FormatRegistry {
+		at("content_len", "a registry hive has no region for filler; it is as big as its keys make it")
+	}
+	if op.Format == spec.FormatRegistry && op.Registry == nil {
+		at("format", "regf needs a registry block saying which keys the hive holds")
+	}
+	if op.Registry != nil {
+		checkRegistry(op, at)
+	}
+	for _, f := range []struct {
+		format spec.Format
+		block  bool
+		what   string
+	}{{spec.FormatUtmp, op.Utmp != nil, "utmp needs a utmp block listing its records"}, {spec.FormatAuditd, op.Auditd != nil, "auditd needs an auditd block listing its events"}} {
+		if k.has("content_len") && op.Format == f.format {
+			at("content_len", "a %s file has no region for filler; it is as big as its records make it", f.format)
+		}
+		if op.Format == f.format && !f.block {
+			at("format", "%s", f.what)
+		}
+	}
+	if op.Utmp != nil {
+		checkUtmp(op, at)
+	}
+	if op.Auditd != nil {
+		checkAuditd(op, at)
 	}
 	if op.Slack != nil {
 		checkSlack(op, at)
@@ -339,6 +407,29 @@ func cloneTyped(op *spec.Operation) {
 		v := *op.Lnk
 		v.TargetAttributes = append([]string(nil), op.Lnk.TargetAttributes...)
 		op.Lnk = &v
+	}
+	if op.Prefetch != nil {
+		v := *op.Prefetch
+		v.LastRunTimes = append([]string(nil), op.Prefetch.LastRunTimes...)
+		v.ReferencedFiles = append([]string(nil), op.Prefetch.ReferencedFiles...)
+		v.Volumes = append([]spec.PrefetchVolume(nil), op.Prefetch.Volumes...)
+		if op.Prefetch.Compressed != nil {
+			c := *op.Prefetch.Compressed
+			v.Compressed = &c
+		}
+		op.Prefetch = &v
+	}
+	if op.Evtx != nil {
+		op.Evtx = cloneEvtx(op.Evtx)
+	}
+	if op.Registry != nil {
+		op.Registry = cloneRegistry(op.Registry)
+	}
+	if op.Utmp != nil {
+		op.Utmp = cloneUtmp(op.Utmp)
+	}
+	if op.Auditd != nil {
+		op.Auditd = cloneAuditd(op.Auditd)
 	}
 }
 
