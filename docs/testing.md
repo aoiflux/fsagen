@@ -178,7 +178,7 @@ The brief left image output as a follow-on (D-7), with NTFS to be made on a
 scratch volume and its times patched in place through aoiflux/libntfs. The
 roadmap that took it up supersedes that. Every image is built byte by byte
 in pure Go, NTFS included, so there is no scratch volume and no libntfs
-dependency. FAT32 is the first file system.
+dependency. FAT32 came first, then ext4.
 
 | What | Verified by |
 |---|---|
@@ -186,12 +186,20 @@ dependency. FAT32 is the first file system.
 | The short names Windows would give | `TestShortNamesMatchWindows`, against names Windows 11 generated |
 | Someone else's reading of the image | `TestFAT32ReadByGoDiskfs`, `TestImageReadBy7Zip`, `TestImageCheckedByFsckVfat`, `TestImageListedByTSK` |
 | A tool's report of an image scored against the run | `TestImageScoredByOracle`, and `TestImageListedByTSK` with `--fail-under 1` |
+| ext4 formatted as mke2fs formats it, byte for byte | `TestFormatMatchesMke2fs` |
+| ext4 with nanosecond times, links, wiped entries and orphaned inodes | `TestExt4ImageGolden`, `TestExt4ObservedTimelineToTheNanosecond`, `TestDeleteWipesEntryAndKeepsInode`, `TestLinks`, `TestRecentlyDeletedInodeWaits` |
+| Someone else's reading of an ext4 image | `TestExt4ReadByGoDiskfs`, `TestExt4ReadByGoExt4`, `TestExt4CheckedByE2fsck`, `TestExt4ListedByTSK` |
 
 The external tools need not be installed system-wide. In WSL, run
 `apt-get download dosfstools sleuthkit libtsk19t64 libvmdk1 libvhdi1
 libafflib0t64 libbfio1` and `dpkg -x` each package into a directory you own.
 Then put that directory's `usr/bin` and `usr/sbin` on `PATH`, and its
 `usr/lib/x86_64-linux-gnu` on `LD_LIBRARY_PATH`. None of this needs root.
+e2fsprogs (`mkfs.ext4`, `e2fsck`) comes with Ubuntu.
+
+The Sleuth Kit 4.12.1 lists no ext4 orphan inode at all on a volume where a
+directory was deleted: it fails to open the emptied directory while looking
+for orphans. `testdata/image/ext4.yaml` deletes no directory for that reason.
 
 ## Found while re-verifying the brief
 

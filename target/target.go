@@ -121,6 +121,10 @@ type Caps struct {
 	// ValidName refuses a name the volume cannot store; nil accepts any
 	// name pathpolicy does.
 	ValidName func(name string) error
+	// Reserved are names the file system keeps for itself at the root of
+	// the volume, such as ext4's lost+found, which the scenario cannot use
+	// there.
+	Reserved []string
 }
 
 // File is an open file in a target: read, written, or both, as it was
@@ -224,11 +228,14 @@ type Finisher interface {
 }
 
 // OpObserver is a target told which operation is running, so what it
-// records itself, such as residue, can name the ledger entry that left it.
+// records itself, such as residue, can name the ledger entry that left it,
+// and what it stamps itself, such as ext4's deletion time, carries the
+// operation's time.
 type OpObserver interface {
 	// BeginOp is called before operation n (the ledger's n) runs, and with 0
-	// once the operations are done.
-	BeginOp(n int)
+	// once the operations are done. when is the time the operation happens,
+	// zero when the scenario does not say.
+	BeginOp(n int, when time.Time)
 }
 
 // Forensic is a target that knows what its writes left behind beyond the
@@ -286,6 +293,9 @@ type ResidueEntry struct {
 	// Offset and Length are where it lies in the image file.
 	Offset int64 `json:"offset"`
 	Length int   `json:"length"`
+	// Deleted is when the entry itself says it was deleted, where the file
+	// system records that (ext4's dtime, to the second), in RFC 3339.
+	Deleted string `json:"deleted,omitempty"`
 	// Overwritten: a later write reused it, so no tool will find it.
 	Overwritten bool `json:"overwritten,omitempty"`
 }

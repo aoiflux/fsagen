@@ -7,6 +7,7 @@ toolchain go1.27.0
 require (
 	github.com/aoiflux/fsagen v0.0.0
 	github.com/diskfs/go-diskfs v1.9.3
+	github.com/dsoprea/go-ext4 v0.0.0-20190528173430-c13b09fc0ff8
 	github.com/parsiya/golnk v0.0.0-20260401090434-89c3c681a14a
 	github.com/richardlehane/mscfb v1.0.9
 	golang.org/x/sys v0.47.0
@@ -27,10 +28,12 @@ require (
 	github.com/clipperhouse/uax29/v2 v2.6.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/djherbis/times v1.6.0 // indirect
+	github.com/dsoprea/go-logging v0.0.0-20200710184922-b02d349568dd // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/elliotwutingfeng/asciiset v0.0.0-20260129054604-cfde2086bc57 // indirect
 	github.com/fatih/color v1.18.0 // indirect
 	github.com/glebarez/go-sqlite v1.22.0 // indirect
+	github.com/go-errors/errors v1.0.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/golang-lru v0.5.4 // indirect
 	github.com/jung-kurt/gofpdf v1.16.2 // indirect
@@ -53,6 +56,7 @@ require (
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/ulikunitz/xz v0.5.15 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
+	golang.org/x/net v0.0.0-20200501053045-e0ff5e5a1de5 // indirect
 	golang.org/x/text v0.40.0 // indirect
 	modernc.org/libc v1.74.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

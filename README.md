@@ -108,10 +108,12 @@ is recorded rather than silently dropped.
   bodyfile, Plaso's l2tcsv, dynamic CSV or JSON lines) against what the run
   made: names, deleted entries, streams, times, digests and links, with
   precision, recall and F1 per category and a JSON scorecard
-- Disk images built byte by byte: FAT32 in a raw or VHD disk, with Windows'
-  short names, deleted entries and freed clusters left where Windows leaves
-  them, and every piece of that residue in the answer key, read back by
-  go-diskfs, 7-Zip, `fsck.vfat` and The Sleuth Kit (see _Disk images_)
+- Disk images built byte by byte, in a raw or VHD disk: FAT32 with Windows'
+  short names and deleted entries left where Windows leaves them; ext4 laid
+  out as mke2fs lays it out, byte for byte, with nanosecond times, links,
+  and deletes that wipe what Linux wipes. Every piece of residue is in the
+  answer key. Read back by go-diskfs, go-ext4, 7-Zip, `fsck.vfat`, `e2fsck`
+  and The Sleuth Kit (see _Disk images_)
 - ATT&CK technique tags (`mitre:`) on any action or step, carried into the
   ledger and answer key and written as an ATT&CK Navigator layer; tagging an
   action never changes a byte it writes
@@ -998,6 +1000,8 @@ builds byte by byte, with no operating system in between:
 ```sh
 fsagen --seed 42 --playbook adversary.yaml \
   --image case.vhd --image-fs fat32 --image-size 512M
+fsagen --seed 42 --manifest scene.yaml \
+  --image scene.img --image-fs ext4 --image-size 256M
 ```
 
 Every byte of the image is fsagen's, so the same seed and input give the same
@@ -1009,25 +1013,27 @@ part of the answer key.
   is a fixed VHD, a raw disk followed by a 512-byte footer that Windows,
   Hyper-V, 7-Zip and qemu read.
 - `--partition mbr` (the default) puts the file system in one partition 1
-  MiB in, type `0x0C`, as Windows' disk tools align it. `--partition none`
-  writes the file system alone.
+  MiB in, as Windows' and Linux's disk tools align it: type `0x0C` for
+  FAT32, `0x83` for ext4. `--partition none` writes the file system alone.
 - `--image-size` takes bytes or `K`, `M`, `G`, `T` (powers of 1024). A VHD's
   disk is rounded down to a whole number of its cylinders, so the footer's
   size and its geometry agree.
 - `--image-label` sets the volume label.
-- The volume serial, the disk signature and the VHD's ID are drawn from the
-  seed. Nothing else in the run draws from that key, so writing into an image
-  changes no file's bytes.
+- The volume serial (FAT32) or UUID and directory hash seed (ext4), the
+  disk signature, the VHD's ID and ext4's inode generation numbers are drawn
+  from the seed. Nothing else in the run draws from that key, so writing
+  into an image changes no file's bytes.
 - `--image-time` (default `2021-01-01T00:00:00Z`) stamps what the file
-  system creates before the scenario sets its times: the label, the `.` and
-  `..` entries, and the VHD footer.
+  system creates before the scenario sets its times: FAT's label and `.` and
+  `..` entries, ext4's root directory, lost+found and superblock, and the
+  VHD footer. ext4 also stamps a delete with the operation's own time.
 - The image is written to a temporary file beside it and takes its name only
   once the run has succeeded. An existing image is replaced only with
   `--clean`, and only then. `--into-existing` is refused.
 - The run's records go to `<image>.fsagen`. `run-manifest.json` says
   `"target": "image"`, describes the image (`fs`, `format`, `partition`,
-  `partition_offset`, `size`, `cluster_size`, `serial`, `alloc`) and gives
-  its `image_sha256`.
+  `partition_offset`, `size`, `cluster_size`, `serial` or `uuid`, `alloc`)
+  and gives its `image_sha256`.
 
 **FAT32** (`--image-fs fat32`) is laid out as Windows formats and writes it:
 - **Format.** A 32-sector reserved area holds the boot sector, FSInfo and
@@ -1068,6 +1074,56 @@ What FAT cannot hold is refused before anything is written
 - a name with a character Windows forbids in it;
 - two names that differ only in case, even with `--allow-nonportable`.
 
+**ext4** (`--image-fs ext4`) is laid out as mke2fs 1.47 formats it and
+Linux writes it:
+- **Format.** An empty volume is mke2fs's byte for byte, checksums
+  included, given the same UUID, hash seed and time
+  (`TestFormatMatchesMke2fs`, nine geometries from one group to eighteen).
+  - The features are mke2fs's ext4 set less the journal, `64bit`,
+    `resize_inode`, `dir_index`, `huge_file` and `ext_attr`: `filetype`,
+    `extent`, `flex_bg`, `sparse_super`, `large_file`, `dir_nlink`,
+    `extra_isize` and `metadata_csum`.
+  - Blocks are 4 KiB (`--cluster-size` takes 1024, 2048 or 4096).
+  - Inodes are 256 bytes, one per 4 KiB below 512 MiB and one per 16 KiB
+    above, with 5% of blocks reserved.
+  - Superblock and descriptor backups are in groups 0, 1 and the powers of
+    3, 5 and 7. Each flex group's bitmaps and inode tables are packed at its
+    start, and groups nothing has used yet are left uninitialised.
+  - lost+found is ready with 16 KiB of entries.
+  - Every superblock, descriptor, bitmap, inode, extent block and directory
+    block carries its crc32c.
+- **Names** are any bytes but `/` and NUL, up to 255 of them, and case
+  matters. `lost+found` at the root is the file system's own, and is
+  refused.
+- **Times.** All four times are kept, to the nanosecond, from 1901-12-13 to
+  2446-05-10. The change time is the scenario's too, as the executor stamps
+  it.
+- **Links.** Hard links share an inode and count its names. A symlink's
+  target lives in the inode up to 59 bytes, else in a block of its own.
+- **What a write leaves behind,** as Linux has left it since 5.14:
+  - A deleted name's directory entry is wiped: folded into the entry before
+    it and zeroed. The first entry of a block keeps only its length.
+  - The inode keeps its mode, owner and times, and gains its deletion time,
+    which is also its change time. It loses its size, its links and its
+    blocks count.
+  - Each extent's start and length are zeroed, and its logical block kept.
+    A fast symlink's target is zeroed. The blocks are freed with their
+    bytes in place.
+  - A rename's old entry is wiped the same way, so a rename leaves nothing.
+    A deleted directory goes as a file does, its block freed with its
+    entries in it.
+  - A new object takes the lowest free inode in its parent's flex group.
+    An inode deleted within the last minute is skipped while there is
+    another, as Linux skips it on a volume with no journal.
+  - A file rewritten after it was truncated gets new blocks (with
+    `next-fit`), and the old ones keep its old content.
+  - The rest of a file's last block is zeroed, as the page cache writes it.
+- **Allocation** is `next-fit` or `first-fit` as for FAT32. It is not
+  mballoc, so where a file's blocks land is not where Linux would put them.
+
+What ext4 cannot hold is refused before anything is written: streams,
+junctions, a time outside its range, and a name longer than 255 bytes.
+
 **Residue in the answer key.** Each thing a write left behind is a `residue`
 fact, tied to the operation that left it:
 
@@ -1079,10 +1135,12 @@ fact, tied to the operation that left it:
 ```
 
 - `cause` is `delete`, `rename` or `overwrite`.
-- `entry` is the deleted short entry. `number` is its address as The Sleuth
-  Kit numbers it, which `istat` takes, and `offset` is where it lies in the
-  image file. `overwritten` says a later name took it over, so no tool will
-  find it.
+- `entry` is the deleted entry: FAT's short entry (`fat_dirent`) or ext4's
+  inode (`ext4_inode`). `number` is its address as The Sleuth Kit numbers
+  it, which `istat` takes, and `offset` is where it lies in the image file.
+  `overwritten` says a later write took it over, so no tool will find it.
+  ext4's gives `deleted`, the time of the delete, which the inode keeps as
+  its change time and, to the second, as its deletion time.
 - `extents` are where the freed content lies in the image file, in order,
   and `sha256` its digest then.
 - `recoverable` is `full`, `partial` or `none`, depending on how much of
@@ -1094,27 +1152,43 @@ Slack on an image is written into the cluster itself and recorded
 
 **How it is checked.**
 - **During the run.** Every run is verified and digested through fsagen's own
-  FAT parser, which reads the finished image and knows nothing of how it was
-  written. Every time the run controls is compared, to FAT's resolution.
-- **Every example.** Each example FAT can hold makes an image whose
+  parser of the file system, which reads the finished image and knows
+  nothing of how it was written; ext4's checks every checksum it passes.
+  Every time the run controls is compared, to the file system's resolution.
+- **Every example.** Each example a file system can hold makes an image whose
   `SHA256SUMS` and ledger are, byte for byte, those of the same run in
-  memory (`TestImagesTakeEveryExample`). The one example with a hard link is
-  refused.
-- **One pinned image.** `testdata/image/fat32.yaml` takes the driver through
-  every path above. Its image, residue and `SHA256SUMS` are pinned, the same
-  on Windows and Linux (`TestImageGolden`).
+  memory (`TestImagesTakeEveryExample`). On FAT32, the one example with a
+  hard link is refused; ext4 takes it.
+- **Pinned images.** `testdata/image/fat32.yaml` and
+  `testdata/image/ext4.yaml` take each driver through every path above.
+  Their images, residue and `SHA256SUMS` are pinned, the same on Windows and
+  Linux (`TestImageGolden`, `TestExt4ImageGolden`). fsagen's own observed
+  timeline of the ext4 image scores 1.0 with no time tolerance at all
+  (`TestExt4ObservedTimelineToTheNanosecond`).
 - **Independent readers.**
   - go-diskfs reads every name and byte back, bare and in a VHD
-    (`TestFAT32ReadByGoDiskfs`).
+    (`TestFAT32ReadByGoDiskfs`, `TestExt4ReadByGoDiskfs`), checking ext4's
+    checksums as it goes.
+  - go-ext4 reads the ext4 image too (`TestExt4ReadByGoExt4`).
   - 7-Zip extracts every file through the VHD and the MBR
     (`TestImageReadBy7Zip`).
-  - `fsck.vfat -n` finds nothing to fix (`TestImageCheckedByFsckVfat`).
-  - The Sleuth Kit's `fls` lists every file, and every deleted entry at the
-    address the answer key gives (`TestImageListedByTSK`).
-- **Scoring.** `fsagen diff-oracle` scores TSK's bodyfile of the image at
-  1.0 for files, deleted entries and times.
+  - `fsck.vfat -n` and `e2fsck -fn` find nothing to fix
+    (`TestImageCheckedByFsckVfat`, `TestExt4CheckedByE2fsck`). `e2fsck` also
+    checks every volume the ext4 driver's unit tests make.
+  - The Sleuth Kit's `fls` lists every file. It lists every deleted FAT entry
+    at the address the answer key gives (`TestImageListedByTSK`), and every
+    deleted ext4 inode as `$OrphanFiles/OrphanFile-N` (`TestExt4ListedByTSK`).
+- **Scoring.** `fsagen diff-oracle` scores TSK's bodyfile of either image at
+  1.0 for files, deleted entries and times. On ext4 it takes a deleted
+  inode's change time from the residue's `deleted`.
 
-ext4 and NTFS images come next.
+One thing found on the way: The Sleuth Kit 4.12.1 lists **no** ext4 orphan
+at all once any directory on the volume has been deleted. Linux empties a
+deleted directory's inode, and TSK fails to open it while looking for
+orphans, so it drops them all. The ext4 fixture deletes no directory for
+that reason; deleting one is tested in the driver's own tests.
+
+NTFS images come next.
 
 ## Sharing values across scenarios
 
@@ -1359,10 +1433,17 @@ What fsagen does not control, and what can change its output after it finishes:
   filler, its entry point is inside that filler, and running one does nothing.
   fsagen has no way to produce, and no intention of producing, working code.
 - Not generated at all: `$Recycle.Bin`, SRUM, Amcache, ESE databases, and
-  ext4 or NTFS images (FAT32 images are; see _Disk images_). On a FAT32
-  image, a deleted entry keeps the high word of its start cluster, which
-  some Windows versions clear, and the `.` and `..` entries keep the times
-  their directory was made with.
+  NTFS images (FAT32 and ext4 images are; see _Disk images_).
+- On a FAT32 image, a deleted entry keeps the high word of its start
+  cluster, which some Windows versions clear. The `.` and `..` entries keep
+  the times their directory was made with.
+- An ext4 image has no journal, and its directories stay linear lists
+  however large they grow (no `dir_index`).
+  - Blocks are placed by fsagen's allocator, not mballoc. Every directory's
+    inode is chosen as a file's is, not spread across groups as Orlov
+    spreads top-level directories.
+  - Everything is owned by root.
+  - The superblock is as mke2fs left it, its counts aside: never mounted.
 
 ## File formats
 
@@ -2194,7 +2275,8 @@ these is a dependency of fsagen and none is in its `go.mod`:
 | `www.velocidex.com/golang/regparser`   | `regf`                                                           | Apache-2.0 |
 | `github.com/richardlehane/mscfb`       | the compound file inside `docm` and `xlsm` (the VBA project)     | Apache-2.0 |
 | `www.velocidex.com/golang/go-ntfs`     | a live NTFS volume, raw, to read slack back (administrator only) | Apache-2.0 |
-| `github.com/diskfs/go-diskfs`          | FAT32 images, bare and inside an MBR-partitioned VHD             | MIT        |
+| `github.com/diskfs/go-diskfs`          | FAT32 and ext4 images, bare and inside an MBR-partitioned VHD    | MIT        |
+| `github.com/dsoprea/go-ext4`           | ext4 images (it reads only volumes with `flex_bg`)               | MIT        |
 
 ## Citation
 

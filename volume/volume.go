@@ -65,7 +65,7 @@ type Driver interface {
 	// Root is the record of the root directory.
 	Root() any
 	// Create gives the new node n the name in parent. A directory starts
-	// empty and a file with no content.
+	// empty, a file with no content, and a symlink holds n.Target.
 	Create(parent *Node, name string, n *Node) error
 	// Commit stores n's content, now n.Data. truncated says the content was
 	// cut to nothing before it was written, as opening with O_TRUNC does,
@@ -89,6 +89,22 @@ type Driver interface {
 	Flush() error
 	// Open reads the finished file system back from disk.
 	Open() (target.Reader, error)
+}
+
+// LinkDriver is a driver that makes hard links. One whose Caps claim them
+// must implement it.
+type LinkDriver interface {
+	// Link gives the file n the further name name in parent; n.Names is
+	// what it had before.
+	Link(parent *Node, name string, n *Node) error
+}
+
+// Clocked is a driver that stamps times of its own, such as ext4's
+// deletion time. The Volume tells it when each operation happens.
+type Clocked interface {
+	// SetNow says the changes that follow happen at t, which is zero when
+	// the scenario does not say.
+	SetNow(t time.Time)
 }
 
 // Volume is a target built on a Driver.
@@ -139,11 +155,15 @@ func (v *Volume) Caps() target.Caps { return v.caps }
 // Granularity is how finely the file system stores each time.
 func (v *Volume) Granularity() target.Granularity { return v.d.Granularity() }
 
-// BeginOp names the operation the following writes belong to.
-func (v *Volume) BeginOp(n int) {
+// BeginOp names the operation the following writes belong to, and tells a
+// Clocked driver when it happens.
+func (v *Volume) BeginOp(n int, when time.Time) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	v.op = n
+	if c, ok := v.d.(Clocked); ok {
+		c.SetNow(when)
+	}
 }
 
 // Finish writes what is not yet on disk, works out what residue survived,
@@ -530,18 +550,81 @@ func (v *Volume) change(op, name string, f func(*Node) error) error {
 	return nil
 }
 
-// Link, Symlink and Junction are refused: no driver makes links yet, and
-// pre-flight never asks one whose Caps do not claim them.
+// Link gives the file oldname the further name newname, on a volume whose
+// Caps claim hard links.
 func (v *Volume) Link(oldname, newname string) error {
-	return pathErr("link", newname, errors.ErrUnsupported)
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if err := v.writable(newname); err != nil {
+		return pathErr("link", newname, err)
+	}
+	l, ok := v.d.(LinkDriver)
+	if !ok || !v.caps.Hardlinks {
+		return pathErr("link", newname, errors.ErrUnsupported)
+	}
+	n, err := v.lookup(oldname)
+	if err == nil && n.Kind != File {
+		err = errors.New("not a regular file")
+	}
+	if err != nil {
+		return pathErr("link", oldname, err)
+	}
+	d, leaf, err := v.free(newname)
+	if err != nil {
+		return pathErr("link", newname, err)
+	}
+	if err := l.Link(d, leaf, n); err != nil {
+		return pathErr("link", newname, err)
+	}
+	n.Names++
+	d.children[v.key(leaf)] = &child{leaf, n}
+	return nil
 }
 
-// Symlink is refused; see Link.
+// free finds the directory that is to hold name, making it and its parents
+// if they are missing, as a live target does for a link. name must not
+// exist yet.
+func (v *Volume) free(name string) (*Node, string, error) {
+	if d := path.Dir(name); d != "." {
+		if err := v.mkdirAll(d, target.DirMode); err != nil {
+			return nil, "", err
+		}
+	}
+	d, leaf, err := v.parent(name)
+	if err != nil {
+		return nil, "", err
+	}
+	if _, ok := d.children[v.key(leaf)]; ok {
+		return nil, "", fs.ErrExist
+	}
+	return d, leaf, nil
+}
+
+// Symlink makes name a symlink to to, on a volume whose Caps claim them.
+// The link is stored as given and never followed.
 func (v *Volume) Symlink(name, to string, _ bool) error {
-	return pathErr("symlink", name, errors.ErrUnsupported)
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if err := v.writable(name); err != nil {
+		return pathErr("symlink", name, err)
+	}
+	if !v.caps.Symlinks {
+		return pathErr("symlink", name, errors.ErrUnsupported)
+	}
+	d, leaf, err := v.free(name)
+	if err != nil {
+		return pathErr("symlink", name, err)
+	}
+	n := v.newNode(Symlink, 0o777)
+	n.Target = to
+	if err := v.add(d, leaf, n); err != nil {
+		return pathErr("symlink", name, err)
+	}
+	return nil
 }
 
-// Junction is refused; see Link.
+// Junction is refused: no image file system has junctions yet, and
+// pre-flight never asks a volume whose Caps do not claim them.
 func (v *Volume) Junction(name, to string) error {
 	return pathErr("junction", name, errors.ErrUnsupported)
 }
@@ -556,9 +639,17 @@ func (e entry) Name() string               { return e.name }
 func (e entry) IsDir() bool                { return e.n.Kind == Dir }
 func (e entry) Type() fs.FileMode          { return e.Mode().Type() }
 func (e entry) Info() (fs.FileInfo, error) { return e, nil }
-func (e entry) Size() int64                { return int64(len(e.n.Data)) }
 func (e entry) ModTime() time.Time         { return e.n.Times.Mtime }
 func (e entry) Sys() any                   { return nil }
+
+// Size is a file's length, and a symlink's that of its target, as lstat
+// gives it.
+func (e entry) Size() int64 {
+	if e.n.Kind == Symlink {
+		return int64(len(e.n.Target))
+	}
+	return int64(len(e.n.Data))
+}
 
 // Mode is the entry's type and permissions; both kinds of link read as
 // symlinks.

@@ -16,7 +16,9 @@ import (
 	"github.com/aoiflux/fsagen/internal/testutil"
 	"github.com/aoiflux/fsagen/ledger"
 	"github.com/aoiflux/fsagen/runinfo"
+	"github.com/aoiflux/fsagen/target"
 	"github.com/aoiflux/fsagen/volume/container"
+	"github.com/aoiflux/fsagen/volume/ext4"
 	"github.com/aoiflux/fsagen/volume/fat"
 )
 
@@ -42,6 +44,10 @@ func TestImageFlagErrors(t *testing.T) {
 		{"--manifest", m, "--image", filepath.Join(dir, "x.vhdx"), "--image-fs", "fat32", "--image-size", "64M"},
 		{"--manifest", m, "--image", img, "--image-fs", "fat32", "--image-size", "64M", "--image-time", "yesterday"},
 		{"--image", img, "--image-fs", "fat32", "--image-size", "64M"},
+		{"--manifest", m, "--image", img, "--image-fs", "ext4", "--image-size", "64M", "--image-label", "seventeen-bytes-x"},
+		{"--manifest", m, "--image", img, "--image-fs", "ext4", "--image-size", "64M", "--cluster-size", "8192"},
+		{"--manifest", m, "--image", img, "--image-fs", "ext4", "--image-size", "64K"},
+		{"--manifest", m, "--image", img, "--image-fs", "ext4", "--image-size", "64M", "--image-time", "1900-01-01T00:00:00Z"},
 	} {
 		if code, _, stderr := runCLI(t, args...); code != exitUsage {
 			t.Errorf("%q: exit %d, want %d (%s)", args, code, exitUsage, stderr)
@@ -102,13 +108,22 @@ func TestImageGolden(t *testing.T) {
 	}
 }
 
-// Every example a FAT32 volume can hold makes an image whose files are,
-// byte for byte, the files the same scenario writes into a target in
-// memory claiming FAT32's capabilities, and whose ledger is that run's: the
-// image holds the whole scenario, and its reader reads it all back. The one
-// example with a hard link is refused before anything is written.
+// Every example a volume can hold makes an image whose files are, byte for
+// byte, the files the same scenario writes into a target in memory claiming
+// the volume's capabilities, and whose ledger is that run's: the image
+// holds the whole scenario, and its reader reads it all back. On FAT32, the
+// one example with a hard link is refused before anything is written; ext4
+// takes it.
 func TestImagesTakeEveryExample(t *testing.T) {
-	caps := fat.Caps(512)
+	for _, v := range []struct {
+		fs   string
+		caps target.Caps
+	}{{"fat32", fat.Caps(512)}, {"ext4", ext4.Caps(4096)}} {
+		t.Run(v.fs, func(t *testing.T) { imagesTakeEveryExample(t, v.fs, v.caps) })
+	}
+}
+
+func imagesTakeEveryExample(t *testing.T, fsName string, caps target.Caps) {
 	for _, path := range exampleFiles(t) {
 		name := strings.TrimSuffix(filepath.Base(path), ".yaml")
 		t.Run(name, func(t *testing.T) {
@@ -118,8 +133,8 @@ func TestImagesTakeEveryExample(t *testing.T) {
 			}
 			dir := t.TempDir()
 			img := filepath.Join(dir, name+".img")
-			code, _, stderr := runCLI(t, "--seed", "42", "--on-unsupported", "skip", mode, path, "--image", img, "--image-fs", "fat32", "--image-size", "64M", "--partition", "none")
-			if name == "playbook-macro-phish" {
+			code, _, stderr := runCLI(t, "--seed", "42", "--on-unsupported", "skip", mode, path, "--image", img, "--image-fs", fsName, "--image-size", "64M", "--partition", "none")
+			if name == "playbook-macro-phish" && !caps.Hardlinks {
 				if code != exitRuntime || !strings.Contains(stderr, "hard links") {
 					t.Fatalf("exit %d: %s", code, stderr)
 				}
@@ -138,7 +153,7 @@ func TestImagesTakeEveryExample(t *testing.T) {
 			} else {
 				c.playbook = path
 			}
-			prog, err := compile.Load(inputMode(c), path, compile.Options{Seed: 42, FoldCase: true})
+			prog, err := compile.Load(inputMode(c), path, compile.Options{Seed: 42, FoldCase: caps.FoldsCase})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -278,19 +293,21 @@ func TestImageReadBy7Zip(t *testing.T) {
 }
 
 // A bulk corpus written into an image holds the files the bulk golden
-// describes, byte for byte.
+// describes, byte for byte, on either file system.
 func TestImageTakesBulk(t *testing.T) {
-	img := filepath.Join(t.TempDir(), "bulk.img")
-	if code, _, stderr := runCLI(t, "--seed", "7", "--bulk", "1", "--depth", "1", "--bulk-start", bulkGoldenStart, "--image", img, "--image-fs", "fat32", "--image-size", "64M"); code != exitOK {
-		t.Fatalf("exit %d: %s", code, stderr)
-	}
-	sums, err := os.ReadFile(filepath.Join(img+metaDirSuffix, runinfo.SumsFileName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	golden := filepath.Join("testdata", "golden", fmt.Sprintf("v%d", constant.GeneratorVersion), "bulk", "one-of-each.txt")
-	if want := sumsOf(t, golden); string(sums) != want {
-		t.Errorf("%s:\n%s\nwant (from %s):\n%s", runinfo.SumsFileName, sums, golden, want)
+	for _, fsName := range []string{"fat32", "ext4"} {
+		img := filepath.Join(t.TempDir(), "bulk.img")
+		if code, _, stderr := runCLI(t, "--seed", "7", "--bulk", "1", "--depth", "1", "--bulk-start", bulkGoldenStart, "--image", img, "--image-fs", fsName, "--image-size", "64M"); code != exitOK {
+			t.Fatalf("%s: exit %d: %s", fsName, code, stderr)
+		}
+		sums, err := os.ReadFile(filepath.Join(img+metaDirSuffix, runinfo.SumsFileName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		golden := filepath.Join("testdata", "golden", fmt.Sprintf("v%d", constant.GeneratorVersion), "bulk", "one-of-each.txt")
+		if want := sumsOf(t, golden); string(sums) != want {
+			t.Errorf("%s: %s:\n%s\nwant (from %s):\n%s", fsName, runinfo.SumsFileName, sums, golden, want)
+		}
 	}
 }
 

@@ -167,6 +167,26 @@ func (a *Allocator) take(runs []Run) []Run {
 	return runs
 }
 
+// Used reports whether unit u is in use.
+func (a *Allocator) Used(u int) bool { return a.isUsed(u) }
+
+// FreeIn is how many of the n units from start are free.
+func (a *Allocator) FreeIn(start, n int) int {
+	used := 0
+	for i := start - a.first; i < start-a.first+n; {
+		if i%64 == 0 && i+64 <= start-a.first+n {
+			used += bits.OnesCount64(a.used[i/64])
+			i += 64
+			continue
+		}
+		if a.used[i/64]&(1<<(i%64)) != 0 {
+			used++
+		}
+		i++
+	}
+	return n - used
+}
+
 // Release frees units.
 func (a *Allocator) Release(units []int) {
 	for _, u := range units {

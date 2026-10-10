@@ -210,12 +210,12 @@ func Execute(ctx ExecContext, ops []compile.Op) ([]ledger.Entry, error) {
 	entries := make([]ledger.Entry, 0, len(ops))
 	observer, _ := ctx.FS.(target.OpObserver)
 	if observer != nil {
-		defer observer.BeginOp(0)
+		defer observer.BeginOp(0, time.Time{})
 	}
 	for i, op := range ops {
 		e := newEntry(i, op, ctx.Caps)
 		if observer != nil {
-			observer.BeginOp(e.N)
+			observer.BeginOp(e.N, op.When)
 		}
 		if err := recordOutcome(ctx, op, &e, digests); err != nil {
 			// The entry for a failed operation is left out: the ledger says how

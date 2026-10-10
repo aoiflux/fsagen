@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/aoiflux/fsagen/compile"
@@ -57,7 +58,7 @@ func validateImageFlags(c *config) error {
 	case c.intoExisting:
 		return usagef("--into-existing merges into a directory; an image is always made new")
 	case c.imageFS == "":
-		return usagef("--image needs --image-fs (%s)", imagepkg.FSFAT32)
+		return usagef("--image needs --image-fs (%s)", strings.Join(imagepkg.FileSystems, ", "))
 	case c.imageSize == "":
 		return usagef("--image needs --image-size")
 	case !c.checkOnly() && inputModes(c) == 0:

@@ -1,0 +1,492 @@
+# A scenario that takes an ext4 image through everything its driver does:
+# times to the nanosecond and past 2038, a directory grown past its first
+# block, deletes that wipe the entry and leave the inode and its blocks,
+# an inode reused once a minute has passed and not before, hard links and
+# symlinks kept in the inode and in a block, renames across directories,
+# an update and a truncate that free blocks, and slack. TestExt4ImageGolden
+# pins the image it makes, byte for byte. It deletes no directory: The
+# Sleuth Kit lists no orphan inode at all once one is (see docs/testing.md).
+start: "2023-03-01T09:00:00Z"
+operations:
+  - action: create
+    type: dir
+    path: home/analyst/Documents/
+    mtime: "2023-03-01T08:00:00.000000001Z"
+
+  - action: create
+    path: home/analyst/Documents/report.txt
+    content_len: 6000
+    mode: "0640"
+    mtime: "2023-03-01T10:11:12.123456789Z"
+    atime: "2023-03-01T10:11:13.987654321Z"
+
+  - action: create
+    path: home/analyst/Documents/draft.txt
+    content_len: 300
+    mtime: "2023-03-01T10:20:00.5Z"
+
+  - action: create
+    path: home/analyst/Documents/far-future.txt
+    content: "a time past the 32-bit epoch\n"
+    mtime: "2040-02-29T12:00:00.000000250Z"
+    atime: "2100-01-01T00:00:00Z"
+
+  - action: hardlink
+    path: home/analyst/Documents/report.txt
+    new_path: var/cache/report.dat
+
+  - action: symlink
+    path: home/analyst/latest
+    target: Documents/report.txt
+
+  - action: symlink
+    path: home/analyst/shared-drive
+    target: /mnt/shares/finance/quarterly-reports/2023/q1/consolidated-statements
+    allow_external_target: true
+    target_type: dir
+
+  - action: create
+    type: dir
+    path: home/analyst/Projects/alpha/
+    mtime: "2023-03-01T11:00:00Z"
+
+  - action: create
+    path: home/analyst/Projects/alpha/plan.md
+    content_len: 900
+    mtime: "2023-03-01T11:05:00Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-000.log
+    content_len: 100
+    mtime: "2023-03-01T12:00:00.000000000Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-001.log
+    content_len: 137
+    mtime: "2023-03-01T12:01:07.000000001Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-002.log
+    content_len: 174
+    mtime: "2023-03-01T12:02:14.000000002Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-003.log
+    content_len: 211
+    mtime: "2023-03-01T12:03:21.000000003Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-004.log
+    content_len: 248
+    mtime: "2023-03-01T12:04:28.000000004Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-005.log
+    content_len: 285
+    mtime: "2023-03-01T12:05:35.000000005Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-006.log
+    content_len: 322
+    mtime: "2023-03-01T12:06:42.000000006Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-007.log
+    content_len: 359
+    mtime: "2023-03-01T12:07:49.000000007Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-008.log
+    content_len: 396
+    mtime: "2023-03-01T12:08:56.000000008Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-009.log
+    content_len: 433
+    mtime: "2023-03-01T12:09:03.000000009Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-010.log
+    content_len: 470
+    mtime: "2023-03-01T12:10:10.000000010Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-011.log
+    content_len: 507
+    mtime: "2023-03-01T12:11:17.000000011Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-012.log
+    content_len: 544
+    mtime: "2023-03-01T12:12:24.000000012Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-013.log
+    content_len: 581
+    mtime: "2023-03-01T12:13:31.000000013Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-014.log
+    content_len: 618
+    mtime: "2023-03-01T12:14:38.000000014Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-015.log
+    content_len: 655
+    mtime: "2023-03-01T12:15:45.000000015Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-016.log
+    content_len: 692
+    mtime: "2023-03-01T12:16:52.000000016Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-017.log
+    content_len: 729
+    mtime: "2023-03-01T12:17:59.000000017Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-018.log
+    content_len: 766
+    mtime: "2023-03-01T12:18:06.000000018Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-019.log
+    content_len: 803
+    mtime: "2023-03-01T12:19:13.000000019Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-020.log
+    content_len: 840
+    mtime: "2023-03-01T12:20:20.000000020Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-021.log
+    content_len: 877
+    mtime: "2023-03-01T12:21:27.000000021Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-022.log
+    content_len: 914
+    mtime: "2023-03-01T12:22:34.000000022Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-023.log
+    content_len: 951
+    mtime: "2023-03-01T12:23:41.000000023Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-024.log
+    content_len: 988
+    mtime: "2023-03-01T12:24:48.000000024Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-025.log
+    content_len: 1025
+    mtime: "2023-03-01T12:25:55.000000025Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-026.log
+    content_len: 1062
+    mtime: "2023-03-01T12:26:02.000000026Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-027.log
+    content_len: 1099
+    mtime: "2023-03-01T12:27:09.000000027Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-028.log
+    content_len: 1136
+    mtime: "2023-03-01T12:28:16.000000028Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-029.log
+    content_len: 1173
+    mtime: "2023-03-01T12:29:23.000000029Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-030.log
+    content_len: 1210
+    mtime: "2023-03-01T12:30:30.000000030Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-031.log
+    content_len: 1247
+    mtime: "2023-03-01T12:31:37.000000031Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-032.log
+    content_len: 1284
+    mtime: "2023-03-01T12:32:44.000000032Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-033.log
+    content_len: 1321
+    mtime: "2023-03-01T12:33:51.000000033Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-034.log
+    content_len: 1358
+    mtime: "2023-03-01T12:34:58.000000034Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-035.log
+    content_len: 1395
+    mtime: "2023-03-01T12:35:05.000000035Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-036.log
+    content_len: 1432
+    mtime: "2023-03-01T12:36:12.000000036Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-037.log
+    content_len: 1469
+    mtime: "2023-03-01T12:37:19.000000037Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-038.log
+    content_len: 1506
+    mtime: "2023-03-01T12:38:26.000000038Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-039.log
+    content_len: 1543
+    mtime: "2023-03-01T12:39:33.000000039Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-040.log
+    content_len: 1580
+    mtime: "2023-03-01T12:40:40.000000040Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-041.log
+    content_len: 1617
+    mtime: "2023-03-01T12:41:47.000000041Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-042.log
+    content_len: 1654
+    mtime: "2023-03-01T12:42:54.000000042Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-043.log
+    content_len: 1691
+    mtime: "2023-03-01T12:43:01.000000043Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-044.log
+    content_len: 1728
+    mtime: "2023-03-01T12:44:08.000000044Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-045.log
+    content_len: 1765
+    mtime: "2023-03-01T12:45:15.000000045Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-046.log
+    content_len: 1802
+    mtime: "2023-03-01T12:46:22.000000046Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-047.log
+    content_len: 1839
+    mtime: "2023-03-01T12:47:29.000000047Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-048.log
+    content_len: 1876
+    mtime: "2023-03-01T12:48:36.000000048Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-049.log
+    content_len: 1913
+    mtime: "2023-03-01T12:49:43.000000049Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-050.log
+    content_len: 1950
+    mtime: "2023-03-01T12:50:50.000000050Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-051.log
+    content_len: 1987
+    mtime: "2023-03-01T12:51:57.000000051Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-052.log
+    content_len: 2024
+    mtime: "2023-03-01T12:52:04.000000052Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-053.log
+    content_len: 2061
+    mtime: "2023-03-01T12:53:11.000000053Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-054.log
+    content_len: 2098
+    mtime: "2023-03-01T12:54:18.000000054Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-055.log
+    content_len: 2135
+    mtime: "2023-03-01T12:55:25.000000055Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-056.log
+    content_len: 2172
+    mtime: "2023-03-01T12:56:32.000000056Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-057.log
+    content_len: 2209
+    mtime: "2023-03-01T12:57:39.000000057Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-058.log
+    content_len: 2246
+    mtime: "2023-03-01T12:58:46.000000058Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-059.log
+    content_len: 2283
+    mtime: "2023-03-01T12:59:53.000000059Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-060.log
+    content_len: 2320
+    mtime: "2023-03-01T13:00:00.000000060Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-061.log
+    content_len: 2357
+    mtime: "2023-03-01T13:01:07.000000061Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-062.log
+    content_len: 2394
+    mtime: "2023-03-01T13:02:14.000000062Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-063.log
+    content_len: 2431
+    mtime: "2023-03-01T13:03:21.000000063Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-064.log
+    content_len: 2468
+    mtime: "2023-03-01T13:04:28.000000064Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-065.log
+    content_len: 2505
+    mtime: "2023-03-01T13:05:35.000000065Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-066.log
+    content_len: 2542
+    mtime: "2023-03-01T13:06:42.000000066Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-067.log
+    content_len: 2579
+    mtime: "2023-03-01T13:07:49.000000067Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-068.log
+    content_len: 2616
+    mtime: "2023-03-01T13:08:56.000000068Z"
+
+  - action: create
+    path: var/log/application-event-with-a-rather-long-name-069.log
+    content_len: 2653
+    mtime: "2023-03-01T13:09:03.000000069Z"
+
+  - action: create
+    path: var/log/carrier.bin
+    content_len: 1000
+    slack: {kind: canary, cluster_size: 4096}
+    mtime: "2023-03-02T06:30:30Z"
+
+  - action: update
+    path: var/log/application-event-with-a-rather-long-name-069.log
+    content_len: 9000
+    mtime: "2023-03-02T07:37:43Z"
+
+  - action: truncate
+    path: var/log/application-event-with-a-rather-long-name-068.log
+    mtime: "2023-03-02T08:44:56Z"
+
+  - action: append
+    path: home/analyst/Documents/draft.txt
+    content: "one more line\n"
+    mtime: "2023-03-02T08:50:00Z"
+
+  - action: rename
+    path: home/analyst/Documents/draft.txt
+    new_path: home/analyst/Archive/draft-final.txt
+
+  - action: rename
+    path: home/analyst/Projects/alpha
+    new_path: home/analyst/Archive/alpha
+
+  - action: delete
+    path: var/log/application-event-with-a-rather-long-name-000.log
+    mtime: "2023-03-02T09:00:00Z"
+
+  - action: delete
+    path: var/log/application-event-with-a-rather-long-name-006.log
+    mtime: "2023-03-02T09:00:06Z"
+
+  - action: delete
+    path: var/log/application-event-with-a-rather-long-name-012.log
+    mtime: "2023-03-02T09:00:12Z"
+
+  - action: delete
+    path: var/log/application-event-with-a-rather-long-name-018.log
+    mtime: "2023-03-02T09:00:18Z"
+
+  - action: delete
+    path: var/log/application-event-with-a-rather-long-name-024.log
+    mtime: "2023-03-02T09:00:24Z"
+
+  - action: delete
+    path: var/log/application-event-with-a-rather-long-name-030.log
+    mtime: "2023-03-02T09:00:30Z"
+
+  - action: delete
+    path: var/log/application-event-with-a-rather-long-name-036.log
+    mtime: "2023-03-02T09:00:36Z"
+
+  - action: delete
+    path: var/log/application-event-with-a-rather-long-name-042.log
+    mtime: "2023-03-02T09:00:42Z"
+
+  - action: delete
+    path: var/log/application-event-with-a-rather-long-name-048.log
+    mtime: "2023-03-02T09:00:48Z"
+
+  - action: delete
+    path: var/log/application-event-with-a-rather-long-name-054.log
+    mtime: "2023-03-02T09:00:54Z"
+
+  - action: delete
+    path: home/analyst/Documents/report.txt
+    mtime: "2023-03-02T09:01:00Z"
+
+  - action: delete
+    path: home/analyst/latest
+    mtime: "2023-03-02T09:01:10Z"
+
+  - action: create
+    path: var/log/within-the-minute.log
+    content_len: 5000
+    mtime: "2023-03-02T09:01:30Z"
+
+  - action: create
+    path: var/log/an-hour-later.log
+    content_len: 700
+    mtime: "2023-03-02T10:01:30Z"

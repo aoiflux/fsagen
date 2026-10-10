@@ -212,6 +212,15 @@ func (x *Expected) addResidue(name string) error {
 		}
 		if !e.Overwritten {
 			x.entries[fmt.Sprint(e.Number)] = residueRef{f.Residue.Cause, f.Path, f.N}
+			// A file system that stamps the deletion on the entry (ext4) makes
+			// it the entry's change time.
+			if g := x.deletedBy(f.Path, f.N); g != nil && e.Deleted != "" {
+				t, err := time.Parse(time.RFC3339Nano, e.Deleted)
+				if err != nil {
+					return fmt.Errorf("%s line %d: deleted: %w", ledger.AnswerKeyFileName, n, err)
+				}
+				g.times[ctime] = t.UTC()
+			}
 			continue
 		}
 		if f.Residue.Cause == "delete" {

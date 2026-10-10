@@ -1,0 +1,83 @@
+# input-sha256 6ae0da1180bdb7d0a5851721310bad88b2a8abb1e37cd8585204b5ac6ebca60e
+image_sha256 c0283ce537c38e6a0bb77627003b78b1e6dab3bbfc3a49c0ae37d7f047bbafb8
+{"event":"slack","n":80,"object":85,"kind":"file","path":"var/log/carrier.bin","slack":{"kind":"canary","cluster_size":4096,"offset":1000,"length":3096,"sha256":"b9e485723b10105f714f2845198d77b42f18d57a8b92cd30a914734bbbf5d9f5","verified":true}}
+{"event":"residue","n":81,"object":84,"kind":"file","path":"var/log/application-event-with-a-rather-long-name-069.log","residue":{"cause":"overwrite","extents":[{"offset":5558272,"length":2653}],"size":2653,"sha256":"a8a010897657bef9a1d2a2393c5f9e22b6a165b29e3f150c2e189aba7996f90c","recoverable":"full"}}
+{"event":"residue","n":82,"object":83,"kind":"file","path":"var/log/application-event-with-a-rather-long-name-068.log","residue":{"cause":"overwrite","extents":[{"offset":5554176,"length":2616}],"size":2616,"sha256":"432fa8fbf2c3fb3d5c5781d43c0227ca12b53c8e8e6d83a45055b7682b8d096f","recoverable":"full"}}
+{"event":"residue","n":86,"object":15,"kind":"file","path":"var/log/application-event-with-a-rather-long-name-000.log","residue":{"cause":"delete","entry":{"type":"ext4_inode","number":26,"offset":1194240,"length":256,"deleted":"2023-03-02T09:00:00Z","overwritten":true},"extents":[{"offset":1142784,"length":100}],"size":100,"sha256":"63e7854815c1c354af891f43dabd09f76750cdf7c5c7668182ea2d8fa7ec110b","recoverable":"full"}}
+{"event":"residue","n":87,"object":21,"kind":"file","path":"var/log/application-event-with-a-rather-long-name-006.log","residue":{"cause":"delete","entry":{"type":"ext4_inode","number":32,"offset":1195776,"length":256,"deleted":"2023-03-02T09:00:06Z"},"extents":[{"offset":1167360,"length":322}],"size":322,"sha256":"734eca68f6bb7a18e06e482d5689d40a4138fb2c15c443319cde7beb481f36ad","recoverable":"full"}}
+{"event":"residue","n":88,"object":27,"kind":"file","path":"var/log/application-event-with-a-rather-long-name-012.log","residue":{"cause":"delete","entry":{"type":"ext4_inode","number":38,"offset":1197312,"length":256,"deleted":"2023-03-02T09:00:12Z"},"extents":[{"offset":5320704,"length":544}],"size":544,"sha256":"a35114c3d51b372f9c7dff846ce3ae5177fb761024cb3505782b525bf16d8517","recoverable":"full"}}
+{"event":"residue","n":89,"object":33,"kind":"file","path":"var/log/application-event-with-a-rather-long-name-018.log","residue":{"cause":"delete","entry":{"type":"ext4_inode","number":44,"offset":1198848,"length":256,"deleted":"2023-03-02T09:00:18Z"},"extents":[{"offset":5345280,"length":766}],"size":766,"sha256":"097336cac3c11a0d161947a84f7e8569082ee38c3a19b5817cf45734b34852db","recoverable":"full"}}
+{"event":"residue","n":90,"object":39,"kind":"file","path":"var/log/application-event-with-a-rather-long-name-024.log","residue":{"cause":"delete","entry":{"type":"ext4_inode","number":50,"offset":1200384,"length":256,"deleted":"2023-03-02T09:00:24Z"},"extents":[{"offset":5369856,"length":988}],"size":988,"sha256":"c191d60cffb4020d4b2ddfa8a6508d62667069ae8a7c7d08656b153e50daaa5e","recoverable":"full"}}
+{"event":"residue","n":91,"object":45,"kind":"file","path":"var/log/application-event-with-a-rather-long-name-030.log","residue":{"cause":"delete","entry":{"type":"ext4_inode","number":56,"offset":1201920,"length":256,"deleted":"2023-03-02T09:00:30Z"},"extents":[{"offset":5394432,"length":1210}],"size":1210,"sha256":"0ec08a5105333e72bc0878234cead55588d40d1546b0b0c227344fdb00dc72c8","recoverable":"full"}}
+{"event":"residue","n":92,"object":51,"kind":"file","path":"var/log/application-event-with-a-rather-long-name-036.log","residue":{"cause":"delete","entry":{"type":"ext4_inode","number":62,"offset":1203456,"length":256,"deleted":"2023-03-02T09:00:36Z"},"extents":[{"offset":5419008,"length":1432}],"size":1432,"sha256":"00f8ae2d451973700e05fa7782f3dbd290305e2ca65429e23659ec3561a28634","recoverable":"full"}}
+{"event":"residue","n":93,"object":57,"kind":"file","path":"var/log/application-event-with-a-rather-long-name-042.log","residue":{"cause":"delete","entry":{"type":"ext4_inode","number":68,"offset":1204992,"length":256,"deleted":"2023-03-02T09:00:42Z"},"extents":[{"offset":5443584,"length":1654}],"size":1654,"sha256":"3142878edada67242dcc7481f0e6c3cbca18d8eba630b08629c6bc9b526b2bea","recoverable":"full"}}
+{"event":"residue","n":94,"object":63,"kind":"file","path":"var/log/application-event-with-a-rather-long-name-048.log","residue":{"cause":"delete","entry":{"type":"ext4_inode","number":74,"offset":1206528,"length":256,"deleted":"2023-03-02T09:00:48Z"},"extents":[{"offset":5468160,"length":1876}],"size":1876,"sha256":"d4d966e5d66b03035593b0f17152fa820c15f8639f378794a6172d9ca8fe9a31","recoverable":"full"}}
+{"event":"residue","n":95,"object":69,"kind":"file","path":"var/log/application-event-with-a-rather-long-name-054.log","residue":{"cause":"delete","entry":{"type":"ext4_inode","number":80,"offset":1208064,"length":256,"deleted":"2023-03-02T09:00:54Z"},"extents":[{"offset":5492736,"length":2098}],"size":2098,"sha256":"c35cb76801d5738f0f67abb82d0e5d463adb15ef3271cda404ed62cea0d7a68b","recoverable":"full"}}
+{"event":"residue","n":97,"object":9,"kind":"symlink","path":"home/analyst/latest","residue":{"cause":"delete","entry":{"type":"ext4_inode","number":20,"offset":1192704,"length":256,"deleted":"2023-03-02T09:01:10Z","overwritten":true}}}
+24815aa9d1b0c232af4fb4da07a8220cdf23dfbf5a05d8f3b0f33b448eaa0f67  home/analyst/Archive/alpha/plan.md
+1c5a90777ee370b373f83433c64b0f75e436d8d9ab809af57ecdc64922b5bffd  home/analyst/Archive/draft-final.txt
+86f2a46fa74c47fdaf45962654a532d50333d9cdd9f84a1ffc1b98029fcb189b  home/analyst/Documents/far-future.txt
+4c7c6084384db3d9f76ac06a26341d13ddec09f243de0cafafcbd300dbdb35cb  var/cache/report.dat
+9b155c1f4a8db00a4dcdea683e7477093cc2794feb8df69226c08d1f00ef10cb  var/log/an-hour-later.log
+02f3bbd3cb126a90445b8d460e562f20e9eb1cac331f58a1f11b8366687b259c  var/log/application-event-with-a-rather-long-name-001.log
+af358e5c0314bc4bdd0bf842a68d89663542564088fd2ac1bd3937c60d1531a4  var/log/application-event-with-a-rather-long-name-002.log
+ce0a70902c7e737fa6e1b2159c767e063b8881cb756e9d7ef7f3de5587d69dbb  var/log/application-event-with-a-rather-long-name-003.log
+361bc3a76af96ae937031f00509214911bb447acfe8a8911ed0e0e8ed6ef7cb9  var/log/application-event-with-a-rather-long-name-004.log
+f774b47a0b40a36a644235b358b2e95a5d4947d7a8978b4ee293ec3b0fb3ebef  var/log/application-event-with-a-rather-long-name-005.log
+b30e8e8bd53a714f227208229797957b26c7921e23cb068fa091380f6fb28ce0  var/log/application-event-with-a-rather-long-name-007.log
+8c29d1eeade84d4e5da37ec2109563e44530dac05b76ae744a3f640315f23052  var/log/application-event-with-a-rather-long-name-008.log
+c9ab816c2af6d7364de56b4c52cf61a04133328cdc99bd64906f2b1295c2f0dd  var/log/application-event-with-a-rather-long-name-009.log
+b3a48759de2bf4520e6fc39861fb71848efe66034d398e45fb2cc08f473a0b10  var/log/application-event-with-a-rather-long-name-010.log
+267d3a593aadedca0fd29fa6fdf3b34d0cd1db9479ffe7f7f856b4ea3d87a7c2  var/log/application-event-with-a-rather-long-name-011.log
+e3c26c91e993a5ffa18a7ba91717fd186a6997ae8adcbe4a8432f0db43c6792d  var/log/application-event-with-a-rather-long-name-013.log
+3ebcaa48a0c0bca8c44243362ce50c2345937a3437e9fa088ce1646a36df58c9  var/log/application-event-with-a-rather-long-name-014.log
+e9d8d3fd76c6fcde6c8a594fe81e6e13cb33ba388a406d46d6fc39ddb212c3d6  var/log/application-event-with-a-rather-long-name-015.log
+4a63cd2f95982cc522ee6964861300fb1ebf54cd8ebb7e949313fcce5562d750  var/log/application-event-with-a-rather-long-name-016.log
+6821c14ae2ef9324e5c84f404d7e669444777101b1e25b439e9108b5c7cae958  var/log/application-event-with-a-rather-long-name-017.log
+522c042391ed1aac34e5df7b9b0380bc51d39066c0ce7e258017b454006e8972  var/log/application-event-with-a-rather-long-name-019.log
+7bd0024c52d5a8bef491a9f6becbf547b361305b627d02936a413b711e86c400  var/log/application-event-with-a-rather-long-name-020.log
+58bcc3678b9ddda020f484d10b75dc1a0fdbff8e2e08ec9b3cce7713017771a1  var/log/application-event-with-a-rather-long-name-021.log
+7b8d39a83cefb0b8613dd67d61cecb5bd57dfdd2b43ea7c91d30288d68d47c60  var/log/application-event-with-a-rather-long-name-022.log
+ff06ba02f637c6bf8ed0e06936ed91e568cfca7a58df972807d7c9ec63f0779a  var/log/application-event-with-a-rather-long-name-023.log
+11b12d0fcda66414f4c53d7dcf789022095f2b964f0444c6f6f3c3d437775ef3  var/log/application-event-with-a-rather-long-name-025.log
+6ec2c6e0a3d4c76da501422e60403e55c5c79903e3d0925985bbb861a7ef2080  var/log/application-event-with-a-rather-long-name-026.log
+f9faa39478a561ce8e8fcb3bfa95c1226ead8c98d32dfdc5729d0a69b34b103f  var/log/application-event-with-a-rather-long-name-027.log
+bb84c4cb7be8d301f1a20fa520e12f08e89ebebf3459ae6e8b65ac3e85135be2  var/log/application-event-with-a-rather-long-name-028.log
+10808c5039da64114b378f4eaf0298f44df65aa880c483de433875b74fb3f236  var/log/application-event-with-a-rather-long-name-029.log
+5a79456b46362ff4b8f0cd9d8e06f22b7b218b56f7cece8c27c277045abe2e7d  var/log/application-event-with-a-rather-long-name-031.log
+d36a12bf3964252f58ee7091b40c8314056f6e40ac4fc2ab6f7ec2e46acb3fdd  var/log/application-event-with-a-rather-long-name-032.log
+b53c0aa49def8e0ab26053556218281e92cac4b8d62f8bec93344dd845540885  var/log/application-event-with-a-rather-long-name-033.log
+098783d687c3868054e245b5ebaf3fdc48d21ab9ae8d0513a266f7f969288560  var/log/application-event-with-a-rather-long-name-034.log
+73fd46783d894e763c0eea003ac1a15a815852853b9c7bd0704b47aa682bce6b  var/log/application-event-with-a-rather-long-name-035.log
+9ec3cd16094d01b4b93347926fa9cc443d7880047948e282c0033adcb5bb1a22  var/log/application-event-with-a-rather-long-name-037.log
+c1c96a9bb5e44542f2a1f59ddf944b3abd951e2ba95d80bdd6278ac001e5cb65  var/log/application-event-with-a-rather-long-name-038.log
+a9995e30b59a823428b081faa70fe9ff216e50ce869b595b419f49b540c0e282  var/log/application-event-with-a-rather-long-name-039.log
+795342c57a5ed8e837d7208ef0b1dbba03ff6c788e862fcf9dce879293e4d169  var/log/application-event-with-a-rather-long-name-040.log
+cbc603d004c331fbcaaf4c0690abd8c00b9588255e976700f26df5d6c15b22d3  var/log/application-event-with-a-rather-long-name-041.log
+5164d184bfd28f5089b2e273baec7b7fe4ef48a75697ccea953938cd62681191  var/log/application-event-with-a-rather-long-name-043.log
+a19cf94e20878e8c02172af07978fa55b9e82c3cea223dfe0e879b8a6ca8d60c  var/log/application-event-with-a-rather-long-name-044.log
+e46193fee28804dfae906479153fb939d4d9a29b701cb6a0756f2f31a45b258a  var/log/application-event-with-a-rather-long-name-045.log
+f6dd6c025dcada29a973087be83bc4f92ea140a3965d57903129298474d50c2a  var/log/application-event-with-a-rather-long-name-046.log
+94cec9497614d2b72499e03fb6a17187b5e54bcaf06aac4363019570d00ab450  var/log/application-event-with-a-rather-long-name-047.log
+c9efefe6e71f74b9644aae347e2775164ad76b6f9e64cd6d2b1b1cae4e44b7eb  var/log/application-event-with-a-rather-long-name-049.log
+58a86e965698b7fcafbd7046e0f0091cecbdf1c2478fee3c64227e125c1c2683  var/log/application-event-with-a-rather-long-name-050.log
+3b5214c21a2a6143241c16b6cb01bf27a4f964fad1fb4a0254a5e619d678d0db  var/log/application-event-with-a-rather-long-name-051.log
+2fa7fe9b30ed455ef451a4a4f7e4f16a6a25287b9d21f30863f0f3f942761f2c  var/log/application-event-with-a-rather-long-name-052.log
+6f679ccaea493abd234e6f831fbe21f29b508c0f28699c4c473a6d093bbc0574  var/log/application-event-with-a-rather-long-name-053.log
+4c793f923187c22f861b8a9bf9416c7bdfa4371d2198ee4cc96e56b4aae7d426  var/log/application-event-with-a-rather-long-name-055.log
+d42179c4bc8dec8eeb6a782f04dd56b2db56836c26549940ca38f29da405a9af  var/log/application-event-with-a-rather-long-name-056.log
+ac2ef62282cf13130e1ffaef0761dd0e1c7f536763d44a5153a0316a1b699a89  var/log/application-event-with-a-rather-long-name-057.log
+55ea4e28b3ba05c7c08f5c7ec20b4aae8777d75cc453d24ed9131f19288caab0  var/log/application-event-with-a-rather-long-name-058.log
+eba99e2ad2f04090ee15479472bf0fc82f57c73033a5d870e632fc2a45e9c0ec  var/log/application-event-with-a-rather-long-name-059.log
+716a4525b142e86c58c3eca2a1fb9842c369718dd16615bfbf1327d41079df51  var/log/application-event-with-a-rather-long-name-060.log
+ee6e26dee6cca4ce31a01d5a877268aae1debddd8c036bc49a0df3b043739fab  var/log/application-event-with-a-rather-long-name-061.log
+3359467f985285b0696834938bedde1baa64791889240dd86450c2036de400c5  var/log/application-event-with-a-rather-long-name-062.log
+32edc0ca50dd7f0aefed8ebeae374a9fa903a54d5d53609ad1cf09000ac78ae7  var/log/application-event-with-a-rather-long-name-063.log
+eda73c0917a06e8671a4b7d9d06a2da00a69c2486b62c0256cd22cbb0043732b  var/log/application-event-with-a-rather-long-name-064.log
+1c57346b819b8e0a046555c3fecef537b3fb0fae6e86726f4a58ccb0d19a17c9  var/log/application-event-with-a-rather-long-name-065.log
+d68a16042157cb2bbdc44bfb35075f6b97cefc69790b5b591206077091d231b5  var/log/application-event-with-a-rather-long-name-066.log
+5bde5e264272adcd93478ccddf8ab378def97eb94bc1ed72f63ad7b8d48f8c50  var/log/application-event-with-a-rather-long-name-067.log
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  var/log/application-event-with-a-rather-long-name-068.log
+c697974cfe5cca8b4ea3c20ffca951d11188adb78fb1d534493cb8c85c7a6c1f  var/log/application-event-with-a-rather-long-name-069.log
+52caf0cbc2ca783319b244ccaccfca8922088c2be20eef00b601eed80167d121  var/log/carrier.bin
+960d143c438dc6aa5814ee56c0bb5f6adaf298c6f70a4200ea78bb8b0401b544  var/log/within-the-minute.log

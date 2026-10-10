@@ -83,7 +83,14 @@ func outOfRange(op *Op, caps Caps) []string {
 
 // validNames refuses a path with a name the volume cannot store.
 func validNames(p string, caps Caps) error {
-	if p == "" || caps.ValidName == nil {
+	if p == "" {
+		return nil
+	}
+	top, _, _ := strings.Cut(p, "/")
+	if slices.Contains(caps.Reserved, top) {
+		return fmt.Errorf("%q at the root of the volume is the file system's own; use another name", top)
+	}
+	if caps.ValidName == nil {
 		return nil
 	}
 	for c := range strings.SplitSeq(p, "/") {

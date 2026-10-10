@@ -1017,13 +1017,14 @@ Disk image (instead of <output-path>):
                             its name only once the run succeeds
   --image-fs FS             %s
   --image-size SIZE         bytes, or with K, M, G or T (powers of 1024)
-  --cluster-size N          cluster size in bytes (default: Windows' for the size)
+  --cluster-size N          cluster or block size in bytes (default: what
+                            Windows' format or mke2fs gives the size)
   --partition P             mbr (default: one partition 1 MiB in) or none
   --image-label L           volume label
   --image-time T            RFC 3339 time the image's own structures are
                             stamped with (default 2021-01-01T00:00:00Z)
   --alloc A                 next-fit (default, as Windows allocates) or
-                            first-fit (freed clusters are reused at once)
+                            first-fit (freed space is reused at once)
 
 Checking without writing:
   --validate                check the input and exit
@@ -1057,6 +1058,7 @@ Examples:
   fsagen --playbook adversary.yaml --dry-run
   fsagen --seed 7 --bulk 3 --depth 2 ./quick-bulk
   fsagen --playbook adversary.yaml --image case.vhd --image-fs fat32 --image-size 512M
+  fsagen --manifest basic.yaml --image case.img --image-fs ext4 --image-size 256M
   fsagen --timeline existing.csv ./existing-artifacts
   fsagen diff-oracle --meta ./scene.fsagen fls.bodyfile
 `, strings.Join(imagepkg.FileSystems, ", "), strings.Join(timelinepkg.Formats, ", "), strings.Join(timelinepkg.Extensions(), " "))

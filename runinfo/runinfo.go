@@ -97,11 +97,13 @@ type Image struct {
 	Format    string `json:"format"`
 	Partition string `json:"partition"`
 	// PartitionOffset is where the file system starts in the image file.
-	PartitionOffset int64  `json:"partition_offset"`
-	Size            int64  `json:"size"`
-	ClusterSize     int    `json:"cluster_size"`
-	Serial          string `json:"serial"`
-	Label           string `json:"label,omitempty"`
+	PartitionOffset int64 `json:"partition_offset"`
+	Size            int64 `json:"size"`
+	ClusterSize     int   `json:"cluster_size"`
+	// Serial is a FAT volume's serial number, and UUID an ext4 volume's.
+	Serial string `json:"serial,omitempty"`
+	UUID   string `json:"uuid,omitempty"`
+	Label  string `json:"label,omitempty"`
 	// Time is the image clock: what the file system stamps before the
 	// scenario sets its times.
 	Time  string `json:"time"`
