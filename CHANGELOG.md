@@ -790,6 +790,7 @@ Deviations from the plan:
   in an index block, so this landing writes one. Splitting it, for a directory
   bigger than one 4 KiB block, is M4.2.3b. Until then such a directory stops
   the run when it fills, and no image is written; three examples do that.
+  _NTFS directory indexes_, below, lifts this.
 - **No boot code.** mkntfs's is GPL; fsagen writes none, so Windows cannot boot
   from the volume, which it could not anyway.
 - **Records count from 64, and `$MFT` grows 16 records at a time,** as
@@ -807,6 +808,127 @@ Deviations from the plan:
   administrator, and ntfs-3g's `ntfssecaudit` needs root; neither is available
   here. Which names Windows files in the Win32 and DOS namespace with short
   names off is taken from its documented behaviour, not observed.
+
+### NTFS directory indexes
+
+The second NTFS landing (M4.2.3b). A directory's `$I30` index is now a B-tree
+of 4 KiB index blocks, as deep as it needs to be, so an NTFS directory holds
+any number of entries. The three examples that stopped on NTFS
+(`playbook-comprehensive-ransomware`, `playbook-insider-threat-exfil` and
+`playbook-malware-lifecycle`) now make images, and `TestImagesTakeEveryExample`
+runs every example on NTFS.
+
+**The index changes as libntfs-3g changes one.** Where Windows splits and
+merges blocks cannot be read without an administrator, so libntfs-3g
+2022.10.3's `index.c` is the reference, as it already was for where records
+go. `TestIndexMatchesLibntfs3g` shows the result is libntfs-3g's, node for
+node.
+- **Root.** The root's entries stay in the record while it keeps 120 bytes
+  free (it used to be until the record was full). Past that, they move to a
+  new block, and the root points there.
+- **Splits.** A full block splits at its median entry, counted by entries:
+  the entries after it go to a new block, the median goes up into the parent
+  in front of the entry that pointed to the block, and the block keeps those
+  before it. A full parent is split first, and a full root moves to a block,
+  which makes the tree a level deeper. The insert then starts over.
+- **Removals.**
+  - An entry in a node with children is replaced by its successor, the first
+    entry of the leftmost leaf after it.
+  - A leaf left empty is freed. The parent's entry that pointed to it is
+    taken out and filed again from the top; if that is the end entry, the
+    entry before it takes its place.
+  - A parent left with no entries goes too. The root becomes a leaf again,
+    keeping its `$BITMAP` and `$INDEX_ALLOCATION`.
+- **Blocks.**
+  - A new block takes the lowest VCN free in `$BITMAP`, which grows 8 bytes
+    at a time. `$INDEX_ALLOCATION` grows after its last cluster when a block
+    is first written, and never shrinks.
+  - A new block is written whole, from zeros, with update sequence number 2,
+    as libntfs-3g first writes one.
+  - A changed block is written once per operation, over its last image, with
+    the next number.
+  - A freed block is not written again. It stays on disk with every name it
+    held.
+- **Records.** A directory's record is written when its root, its times or
+  the attributes that map its blocks change. A file's write no longer
+  rewrites its parent's record when its entry is in a block.
+
+**Reader.** fsagen's NTFS reader also checks, for every block it walks, that
+`$BITMAP` marks it in use and that it names its own VCN. It checks that each
+entry points to a block exactly when its node says it has children.
+
+**The NTFS image golden is re-recorded.** The fixture's `image_sha256` moved.
+Its residue and `SHA256SUMS` did not. The bytes moved because:
+- a root moves to a block with 120 bytes still free;
+- new blocks start at update sequence number 2;
+- a change in a block no longer rewrites the directory's record.
+
+NTFS images have not been released, so the generator version stays 7.
+
+**Tests.**
+- `TestIndexMatchesLibntfs3g` runs a seeded workload of about 6,000
+  operations in five phases:
+  - 150 names at the root;
+  - 3,000 in one directory, three levels deep;
+  - 60 in a nested directory;
+  - thousands of removals and re-adds;
+  - emptying a directory.
+
+  After each phase, every directory's tree is compared with libntfs-3g's:
+  - each block's entries (how many, a checksum of their names and the
+    first);
+  - the VCNs;
+  - `$BITMAP`;
+  - the size of `$INDEX_ALLOCATION`;
+  - the root's allocated size.
+
+  `volume/ntfs/testdata/libntfs3g-index.txt` records libntfs-3g's trees. A
+  small C harness in `volume/ntfs/testdata/libntfs3g` (its header has the
+  `gcc` line) runs the workload with libntfs-3g's `ntfs_create` and
+  `ntfs_delete`. With `FSAGEN_NTFS_HARNESS` naming the built harness and
+  `mkntfs` on the path, the test runs libntfs-3g live, and `-update`
+  re-records the file.
+- `TestIndexGrowsAndShrinks` grows a directory of long names to three levels
+  and back to empty, reading it back at every step. It checks that freed
+  blocks are cleared in `$BITMAP` and still hold their names, and that the
+  lowest freed VCN is the next one taken.
+- `TestIndexSuccessorThatDoesNotFit` removes entries whose successors are too
+  long for their node or for the root's record, so that a block must split,
+  or the root move, before the removal.
+- `TestIndexMovesToBlock` now checks the 120-byte rule.
+- `TestNTFSReadByGoNTFS` adds an image of 700 long names in two directories,
+  234 of them deleted. go-ntfs reads it whole and finds the big directory's
+  index spanning 20 blocks or more.
+- `fls` and `ntfsls` read every volume the driver's tests make, the
+  multi-level ones included.
+- Six deliberate breakages were each caught:
+  - splitting one entry early;
+  - no 120-byte reserve;
+  - zeroing freed blocks;
+  - dropping an entry taken out for re-filing;
+  - always putting new blocks at the end;
+  - a split keeping its block's old end pointer.
+
+Deviations from the plan:
+
+- **libntfs-3g, not Windows, is the reference** for splits and merges, as for
+  record numbers. chkdsk would need an administrator.
+- **The comparison's names are at most 15 characters.** A longer name can grow
+  a directory's record past 1 KiB in one step. libntfs-3g then moves
+  `$INDEX_ROOT` out to an extension record, behind an `$ATTRIBUTE_LIST`, and
+  `ntfsinfo` reports the result as corrupt. fsagen moves the root's entries to
+  a block instead, as it does when 120 bytes would not stay free. Long names
+  are covered by fsagen's own tests, and by go-ntfs, The Sleuth Kit and
+  ntfs-3g reading the result.
+- **The harness opens a directory once per operation.** Looking up a whole
+  path opened the directory a second time. libntfs-3g's inode cache then kept
+  a stale copy of the directory's record, and a later removal wrote it back.
+  The result was an entry for a deleted record in place of a live one; it
+  surfaced at the 929th removal of the comparison. The harness looks the name
+  up in the directory it already has open, and libntfs-3g agrees with fsagen
+  from then on.
+- **Index slack and freed blocks are still not residue facts**, as in the
+  first NTFS landing.
 
 ## v0.2.0 — the bulk corpus becomes answerable for itself (2026-10-02)
 

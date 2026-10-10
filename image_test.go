@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
@@ -119,9 +118,7 @@ func TestImageGolden(t *testing.T) {
 // the volume's capabilities, and whose ledger is that run's: the image
 // holds the whole scenario, and its reader reads it all back. On FAT32 and
 // NTFS, the one example with a hard link is refused before anything is
-// written; ext4 takes it. On NTFS, whose directories hold no more than one
-// index block of entries yet, the three examples with a bigger directory
-// stop when it fills, and leave no image.
+// written; ext4 takes it.
 func TestImagesTakeEveryExample(t *testing.T) {
 	for _, v := range []struct {
 		fs   string
@@ -130,10 +127,6 @@ func TestImagesTakeEveryExample(t *testing.T) {
 		t.Run(v.fs, func(t *testing.T) { imagesTakeEveryExample(t, v.fs, v.caps) })
 	}
 }
-
-// bigDirectories are the examples with a directory of more entries than
-// one NTFS index block holds.
-var bigDirectories = []string{"playbook-comprehensive-ransomware", "playbook-insider-threat-exfil", "playbook-malware-lifecycle"}
 
 func imagesTakeEveryExample(t *testing.T, fsName string, caps target.Caps) {
 	for _, path := range exampleFiles(t) {
@@ -152,15 +145,6 @@ func imagesTakeEveryExample(t *testing.T, fsName string, caps target.Caps) {
 				}
 				if names := entries(t, dir); len(names) != 0 {
 					t.Errorf("a refused run left %q", names)
-				}
-				return
-			}
-			if fsName == "ntfs" && slices.Contains(bigDirectories, name) {
-				if code != exitRuntime || !strings.Contains(stderr, "deeper index") {
-					t.Fatalf("exit %d: %s", code, stderr)
-				}
-				if _, err := os.Stat(img); err == nil {
-					t.Error("a failed run left an image")
 				}
 				return
 			}

@@ -248,6 +248,9 @@ func (r *Reader) content(n *rnode) ([]byte, error) {
 
 // indexEntries lists directory d's entries, in index order: its
 // $INDEX_ROOT's, each preceded by those of the index block it points to.
+// Each block must be the one its VCN names and marked in use in $BITMAP,
+// and each entry must point to a block exactly when its node says it has
+// children.
 func (r *Reader) indexEntries(d *rnode) ([]fileEntryRef, error) {
 	_, _, _, attrs, err := r.record(d.num)
 	if err != nil {
@@ -257,7 +260,7 @@ func (r *Reader) indexEntries(d *rnode) ([]fileEntryRef, error) {
 	if ir == nil || len(ir.value) < 32 {
 		return nil, fmt.Errorf("ntfs: directory record %d has no $I30 index", d.num)
 	}
-	ia := findAttr(attrs, atIndexAlloc, "$I30")
+	ia, bm := findAttr(attrs, atIndexAlloc, "$I30"), findAttr(attrs, atBitmap, "$I30")
 	le := binary.LittleEndian
 	h := ir.value[16:]
 	var out []fileEntryRef
@@ -270,6 +273,7 @@ func (r *Reader) indexEntries(d *rnode) ([]fileEntryRef, error) {
 		if eo < 16 || il > len(h) || eo > il {
 			return errors.New("a malformed index node")
 		}
+		node := h[12]&ihLarge != 0
 		for p := eo; ; {
 			if p+16 > il {
 				return errors.New("an index node with no end entry")
@@ -279,24 +283,20 @@ func (r *Reader) indexEntries(d *rnode) ([]fileEntryRef, error) {
 			if n < 16 || p+n > il || 16+kl > n {
 				return errors.New("a malformed index entry")
 			}
-			if flags&ieNode != 0 {
-				if ia == nil {
+			if (flags&ieNode != 0) != node {
+				return errors.New("an index entry out of step with its node")
+			}
+			if node {
+				if ia == nil || bm == nil {
 					return errors.New("an index entry points at an index block, but there are none")
 				}
 				vcn := int64(le.Uint64(e[n-8:]))
-				pos := vcn * r.cs
-				if r.cs > indexSize {
-					pos = vcn * sectorSize
+				if bit := r.blockPos(vcn) / indexSize; vcn < 0 || bit/8 >= int64(len(bm.value)) || bm.value[bit/8]&(1<<(bit%8)) == 0 {
+					return fmt.Errorf("index block %d is not in use", vcn)
 				}
-				blk, err := r.readRuns(ia.runs, pos, indexSize)
+				blk, err := r.indexBlock(ia.runs, vcn)
 				if err != nil {
 					return err
-				}
-				if string(blk[:4]) != "INDX" {
-					return fmt.Errorf("index block %d is not an INDX block", vcn)
-				}
-				if err := unprotect(blk); err != nil {
-					return fmt.Errorf("index block %d: %w", vcn, err)
 				}
 				if err := walk(blk[0x18:], depth+1); err != nil {
 					return err
@@ -317,6 +317,33 @@ func (r *Reader) indexEntries(d *rnode) ([]fileEntryRef, error) {
 		return nil, fmt.Errorf("ntfs: directory record %d: %w", d.num, err)
 	}
 	return out, nil
+}
+
+// blockPos is where index block vcn starts in $INDEX_ALLOCATION.
+func (r *Reader) blockPos(vcn int64) int64 {
+	if r.cs > indexSize {
+		return vcn * sectorSize
+	}
+	return vcn * r.cs
+}
+
+// indexBlock reads index block vcn of the $INDEX_ALLOCATION runs map, and
+// checks it is the block its VCN names.
+func (r *Reader) indexBlock(runs []run, vcn int64) ([]byte, error) {
+	blk, err := r.readRuns(runs, r.blockPos(vcn), indexSize)
+	if err != nil {
+		return nil, err
+	}
+	if string(blk[:4]) != "INDX" {
+		return nil, fmt.Errorf("index block %d is not an INDX block", vcn)
+	}
+	if err := unprotect(blk); err != nil {
+		return nil, fmt.Errorf("index block %d: %w", vcn, err)
+	}
+	if got := int64(binary.LittleEndian.Uint64(blk[16:])); got != vcn {
+		return nil, fmt.Errorf("index block %d says it is block %d", vcn, got)
+	}
+	return blk, nil
 }
 
 // fileEntryRef is an entry of a directory's index.

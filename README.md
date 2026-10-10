@@ -1163,9 +1163,22 @@ Windows writes it:
   for clusters it stays in clusters. A file rewritten after it was
   truncated gets new clusters, the old ones keeping its old content. The
   rest of the last cluster is zeroed, as the cache manager writes it.
-- **Directories.** A directory's entries are kept in its `$INDEX_ROOT`, in
-  `$UpCase` order, until the record is full. Then they all move to one 4
-  KiB index block, as Windows moves them, and the root points there.
+- **Directories.** A directory's index is a B-tree of 4 KiB index blocks
+  under its `$INDEX_ROOT`, in `$UpCase` order, built and changed as
+  libntfs-3g 2022.10.3 builds and changes one (`TestIndexMatchesLibntfs3g`).
+  Where Windows splits a block cannot be read without an administrator.
+  - Entries stay in `$INDEX_ROOT` while the record keeps 120 bytes free.
+    Then they move to an index block, and the root points there.
+  - A full block splits at its median entry: the entries after it go to a
+    new block, and the median goes up into the parent. A full parent splits
+    first; a full root moves to a block, and the tree is a level deeper.
+  - A removed entry in a node with children is replaced by the next name,
+    from the leftmost leaf after it. A leaf left empty is freed, and the
+    parent's entry that pointed to it is filed again from the top. A root
+    left with no entries is a leaf again.
+  - A new block takes the lowest VCN free in `$BITMAP`, which grows 8 bytes
+    at a time, and is written whole. `$INDEX_ALLOCATION` grows after its
+    last cluster and never shrinks.
 - **Names** are what Windows takes: up to 255 UTF-16 code units, with no
   control character and none of `"*/:<>?\|`. Case is kept but does not
   count. `$MFT`, `$Extend` and NTFS's other names at the root are the file
@@ -1182,6 +1195,8 @@ Windows writes it:
     it, and their old bytes stay past the index's end, as index slack.
   - A renamed object's entry moves; its old bytes may stay behind as slack
     in the same way.
+  - A freed index block is left on disk as it was last written, with every
+    name it held.
 - **Allocation** is `next-fit` or `first-fit` as for FAT32, from the end of
   the MFT zone, which only `$MFT` grows into while the rest of the volume
   has room.
@@ -1189,8 +1204,6 @@ Windows writes it:
 What NTFS images cannot hold yet is refused before anything is written:
 streams, links and junctions, slack, a timestomp's `$FILE_NAME` times, a
 time before 1601, and a name Windows forbids (`TestNTFSRefusesWhatItCannotHold`).
-A directory with more entries than one index block holds stops the run when
-it fills, and no image is written.
 
 **Residue in the answer key.** Each thing a write left behind is a `residue`
 fact, tied to the operation that left it:
@@ -1228,8 +1241,7 @@ Slack on an image is written into the cluster itself and recorded
 - **Every example.** Each example a file system can hold makes an image whose
   `SHA256SUMS` and ledger are, byte for byte, those of the same run in
   memory (`TestImagesTakeEveryExample`). On FAT32 and NTFS, the one
-  example with a hard link is refused; ext4 takes it. On NTFS, the three
-  examples with a directory bigger than one index block stop there.
+  example with a hard link is refused; ext4 takes it.
 - **Pinned images.** `testdata/image/fat32.yaml`, `testdata/image/ext4.yaml`
   and `testdata/image/ntfs.yaml` take each driver through every path above.
   Their images, residue and `SHA256SUMS` are pinned, the same on Windows and
@@ -1245,7 +1257,14 @@ Slack on an image is written into the cluster itself and recorded
   - go-ntfs walks the NTFS image's indexes and reads every name, byte,
     record number, link count and time to the 100 ns, bare and in a VHD,
     and every deleted record the answer key names, with its sequence number
-    (`TestNTFSReadByGoNTFS`).
+    (`TestNTFSReadByGoNTFS`). It reads a directory whose index spans dozens
+    of blocks the same way.
+  - libntfs-3g runs a workload that grows directories three levels deep and
+    shrinks them again, through a small C harness
+    (`volume/ntfs/testdata/libntfs3g`). After every phase, each directory's
+    B-tree is fsagen's node for node: the same entries in each block, the
+    same VCNs and the same `$BITMAP` (`TestIndexMatchesLibntfs3g`, recorded
+    in `volume/ntfs/testdata/libntfs3g-index.txt`).
   - 7-Zip extracts every file of the FAT32 and NTFS images through the VHD
     and the MBR (`TestImageReadBy7Zip`).
   - `fsck.vfat -n` and `e2fsck -fn` find nothing to fix
@@ -1267,8 +1286,8 @@ deleted directory's inode, and TSK fails to open it while looking for
 orphans, so it drops them all. The ext4 fixture deletes no directory for
 that reason; deleting one is tested in the driver's own tests.
 
-On NTFS images, directories bigger than one index block come next, then
-streams, links, `$FILE_NAME` times a timestomp sets, and slack.
+On NTFS images, streams, links, `$FILE_NAME` times a timestomp sets, and
+slack come next.
 
 ## Sharing values across scenarios
 
@@ -1526,11 +1545,15 @@ What fsagen does not control, and what can change its output after it finishes:
 - An NTFS image's `$LogFile` is as mkntfs left it, all `0xFF`, and no
   record carries a log sequence number: Windows starts the log afresh when
   it mounts the volume.
-  - A directory holds no more entries than one 4 KiB index block, and an
-    image has no streams, links, reparse points, slack or `$FILE_NAME`
+  - An image has no streams, links, reparse points, slack or `$FILE_NAME`
     times of the scenario's own yet.
-  - Clusters are placed by fsagen's allocator and records counted from 64,
-    as libntfs-3g counts, which is not where Windows would put them.
+  - Clusters are placed by fsagen's allocator, and records counted from 64
+    and directory indexes split and merged as libntfs-3g does it, which may
+    not be how Windows does it.
+  - Where a directory's record would not hold its `$INDEX_ROOT` at all,
+    libntfs-3g moves the root out to an extension record. fsagen moves its
+    entries to an index block instead, as it does when the record would
+    keep less than 120 bytes free.
   - Every file and directory has one of two security descriptors, as a
     file and a folder an administrator makes at the root inherit, owned by
     the Administrators rather than a user.

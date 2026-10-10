@@ -210,13 +210,19 @@ func (r *record) encode() ([]byte, error) {
 		num = 0
 	}
 	le.PutUint32(b[44:], num)
-	r.usn++
-	if r.usn == 0 || r.usn == 0xFFFF {
-		r.usn = 1
-	}
+	r.usn = nextUSN(r.usn)
 	out := slices.Clone(b)
 	protect(out, r.usn)
 	return out, nil
+}
+
+// nextUSN is the update sequence number to write with after u: never 0 or
+// 0xFFFF.
+func nextUSN(u uint16) uint16 {
+	if u++; u == 0 || u == 0xFFFF {
+		return 1
+	}
+	return u
 }
 
 // fits reports whether the record holds its attributes.

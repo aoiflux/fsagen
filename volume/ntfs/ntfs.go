@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"time"
 
@@ -366,7 +367,12 @@ func (f *FS) format() error {
 	}
 
 	slices.SortFunc(rootEntries, func(a, b entry) int { return collate(a.name, b.name) })
-	f.root = &node{rec: root, fn: rootFN, si: allAt(clock), attrs: faSysHidden | faArchive, dir: &dirIndex{entries: rootEntries, large: true, block: make([]byte, indexSize), usn: 2}}
+	rootIndex := &dirIndex{
+		root:   &inode{end: 0, vcn: -1},
+		blocks: map[int64]*inode{0: {es: rootEntries, end: -1, raw: make([]byte, indexSize), usn: 2}},
+		bitmap: root.find(atBitmap, "$I30").value, dirty: map[int64]bool{0: true}, rootDirty: true,
+	}
+	f.root = &node{rec: root, fn: rootFN, si: allAt(clock), attrs: faSysHidden | faArchive, dir: rootIndex}
 	for _, fill := range []struct {
 		runs []run
 		data []byte
@@ -576,38 +582,80 @@ func (f *FS) putRecord(r *record) ([]byte, error) {
 	return b, nil
 }
 
-// writeIndex writes directory d's index: in its $INDEX_ROOT while the
-// record holds it, else in its index block. A directory whose entries
-// outgrow the record moves them all to a new index block, as Windows does,
-// and its root points there from then on.
+// writeIndex writes what changed of directory d's index: each changed
+// index block, over its last image and with the next update sequence
+// number, in VCN order; then the record, if the root or the attributes
+// that map the blocks changed.
 func (f *FS) writeIndex(d *node) error {
-	r, ix := d.rec, d.dir
-	ir := r.find(atIndexRoot, "$I30")
-	if !ix.large {
-		ir.value = indexRoot(atFileName, collFileName, f.g, entries(ix.entries, -1), false)
-		if r.fits() {
-			return f.writeRecord(r)
+	ix := d.dir
+	for _, vcn := range slices.Sorted(maps.Keys(ix.dirty)) {
+		b := ix.blocks[vcn]
+		block, err := indexBlock(b.raw, vcn, b.body(), !b.leaf())
+		if err != nil {
+			return fmt.Errorf("record %d's index block %d: %w", d.rec.num, vcn, err)
 		}
-		runs, err := f.allocate(f.g.indexClusters(), -1)
+		b.usn = nextUSN(b.usn)
+		out := slices.Clone(block)
+		protect(out, b.usn)
+		if err := f.writeRuns(d.rec.find(atIndexAlloc, "$I30").runs, f.blockPos(vcn), out); err != nil {
+			return err
+		}
+	}
+	clear(ix.dirty)
+	if !ix.rootDirty {
+		return nil
+	}
+	ix.rootDirty = false
+	d.rec.find(atIndexRoot, "$I30").value = ix.rootValue(f.g)
+	return f.writeRecord(d.rec)
+}
+
+// blockPos is where index block vcn starts in $INDEX_ALLOCATION: VCNs
+// count clusters, or 512-byte blocks when a cluster is bigger than an
+// index block.
+func (f *FS) blockPos(vcn int64) int64 {
+	if f.g.ClusterSize > indexSize {
+		return vcn * sectorSize
+	}
+	return vcn * int64(f.g.ClusterSize)
+}
+
+// cover grows directory d's $INDEX_ALLOCATION to hold index block vcn,
+// with clusters after its last ones if they are free, as libntfs-3g grows
+// it when it first writes the block.
+func (f *FS) cover(d *node, vcn int64) error {
+	ia := d.rec.find(atIndexAlloc, "$I30")
+	end := f.blockPos(vcn) + indexSize
+	if end <= ia.size {
+		return nil
+	}
+	cs := int64(f.g.ClusterSize)
+	if need := ceil(end, cs) - clusters(ia.runs); need > 0 {
+		near := -1
+		if k := len(ia.runs); k > 0 {
+			near = int(ia.runs[k-1].lcn + ia.runs[k-1].length)
+		}
+		runs, err := f.allocate(need, near)
 		if err != nil {
 			return err
 		}
-		r.add(&attr{typ: atBitmap, name: "$I30", resident: true, value: []byte{1, 0, 0, 0, 0, 0, 0, 0}})
-		r.add(nonresident(atIndexAlloc, "$I30", 0, runs, clusters(runs)*int64(f.g.ClusterSize), indexSize, indexSize))
-		ix.large, ix.block = true, make([]byte, indexSize)
+		ia.runs = extend(ia.runs, runs)
+		ia.alloc = clusters(ia.runs) * cs
 	}
-	ir.value = indexRoot(atFileName, collFileName, f.g, endEntry(0), true)
-	block, err := indexBlock(ix.block, 0, entries(ix.entries, -1))
-	if err != nil {
-		return fmt.Errorf("a directory with more entries than one index block holds needs a deeper index, which this writer does not make yet: %w", err)
+	ia.size, ia.init = end, end
+	return nil
+}
+
+// extend appends more to runs, joining runs that meet.
+func extend(runs, more []run) []run {
+	for _, x := range more {
+		if k := len(runs) - 1; k >= 0 && runs[k].lcn+runs[k].length == x.lcn {
+			runs[k].length += x.length
+		} else {
+			runs = append(runs, x)
+		}
 	}
-	ix.usn++
-	out := slices.Clone(block)
-	protect(out, ix.usn)
-	if err := f.writeRuns(r.find(atIndexAlloc, "$I30").runs, 0, out); err != nil {
-		return err
-	}
-	return f.writeRecord(r)
+	return runs
 }
 
 // allocate takes n clusters for a file's content or an index, after

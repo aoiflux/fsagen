@@ -26,12 +26,38 @@ type ntfsObject struct {
 	times target.Times
 }
 
-// buildNTFS writes testdata/image/ntfs.yaml into an NTFS image at path,
-// and returns its tree as fsagen's own reader saw it once finished, and
-// the residue its writes left.
-func buildNTFS(t *testing.T, path, partition string) (map[string]ntfsObject, []target.Residue) {
+// ntfsFixture is the NTFS image fixture.
+var ntfsFixture = filepath.Join("..", "..", "testdata", "image", "ntfs.yaml")
+
+// bigDirectory writes a manifest that fills a directory, and one inside
+// it, with hundreds of long names, several levels of index blocks deep,
+// and then deletes most of them, and returns its path.
+func bigDirectory(t *testing.T) string {
 	t.Helper()
-	prog, err := compile.Load(compile.ModeManifest, filepath.Join("..", "..", "testdata", "image", "ntfs.yaml"), compile.Options{Seed: 1, FoldCase: true})
+	var b strings.Builder
+	b.WriteString("start: \"2023-03-01T09:00:00Z\"\noperations:\n")
+	name := func(i int) string {
+		return fmt.Sprintf("Big/%s%04d-%s.dat", []string{"", "Sub/"}[i%2], i, strings.Repeat("evidence-", 1+i%13))
+	}
+	for i := range 700 {
+		fmt.Fprintf(&b, "  - action: create\n    path: %q\n    content_len: %d\n", name(i), 1+i%3*700)
+	}
+	for i := 0; i < 700; i += 3 {
+		fmt.Fprintf(&b, "  - action: delete\n    path: %q\n", name(i))
+	}
+	p := filepath.Join(t.TempDir(), "big.yaml")
+	if err := os.WriteFile(p, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// buildNTFS writes the manifest at fixture into an NTFS image at path, and
+// returns its tree as fsagen's own reader saw it once finished, and the
+// residue its writes left.
+func buildNTFS(t *testing.T, fixture, path, partition string) (map[string]ntfsObject, []target.Residue) {
+	t.Helper()
+	prog, err := compile.Load(compile.ModeManifest, fixture, compile.Options{Seed: 1, FoldCase: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,12 +109,25 @@ func buildNTFS(t *testing.T, path, partition string) (map[string]ntfsObject, []t
 // every byte fsagen's own reader found, each name's record and link count,
 // and its four $STANDARD_INFORMATION times to the 100 ns; and it reads
 // each deleted record the answer key names as deleted, with the sequence
-// number and name the key gives.
+// number and name the key gives. Besides the fixture, it reads a directory
+// whose index is several levels of blocks deep, most of it deleted.
 func TestNTFSReadByGoNTFS(t *testing.T) {
+	type image struct {
+		file, partition string
+		offset          int64
+		fixture         string
+		// big names a directory whose index must span 20 blocks or more.
+		big string
+	}
+	var images []image
 	for _, c := range ext4Images {
+		images = append(images, image{c.file, c.partition, c.offset, ntfsFixture, ""})
+	}
+	images = append(images, image{"big.img", ext4Images[0].partition, 0, bigDirectory(t), "Big"})
+	for _, c := range images {
 		t.Run(c.file, func(t *testing.T) {
 			p := filepath.Join(t.TempDir(), c.file)
-			ours, residue := buildNTFS(t, p, c.partition)
+			ours, residue := buildNTFS(t, c.fixture, p, c.partition)
 			f, err := os.Open(p)
 			if err != nil {
 				t.Fatal(err)
@@ -118,6 +157,23 @@ func TestNTFSReadByGoNTFS(t *testing.T) {
 				return out
 			}
 			compareNTFS(t, plain(ours), plain(got))
+			if c.big != "" {
+				var num int64
+				fmt.Sscan(got[c.big].ino, &num)
+				mft, err := ctx.GetMFT(num)
+				if err != nil {
+					t.Fatalf("go-ntfs: %v", err)
+				}
+				var blocks int64
+				for _, a := range mft.EnumerateAttributes(ctx) {
+					if a.Type().Value == ntfs.ATTR_TYPE_INDEX_ALLOCATION {
+						blocks = a.DataSize() / 4096
+					}
+				}
+				if blocks < 20 {
+					t.Errorf("go-ntfs reads %d index blocks in %s", blocks, c.big)
+				}
+			}
 			for name, o := range ours {
 				if g := got[name]; g.times != o.times {
 					t.Errorf("%s: go-ntfs reads times %+v; fsagen %+v", name, g.times, o.times)

@@ -467,7 +467,7 @@ func TestDeleteAsWindows(t *testing.T) {
 		t.Error("the deleted records are still in use")
 	}
 	// The root's index block keeps the last entry's old bytes past its end.
-	ix := v.fs.root.dir.block
+	ix := v.fs.root.dir.blocks[0].raw
 	if end := 0x18 + int(le.Uint32(ix[0x1C:])); !bytes.Contains(ix[end:], utf16le("zz-gone.bin")) {
 		t.Error("the deleted name is not in the index block's slack")
 	}
@@ -543,19 +543,31 @@ func TestMFTGrows(t *testing.T) {
 	}
 }
 
-// A directory's entries move from its record to an index block when they
-// no longer fit, and the index reads back in order; a directory that
-// outgrows the block is refused for now.
+// A directory's entries move from its record to an index block once the
+// record would keep less than 120 bytes free, as libntfs-3g moves them,
+// and the index reads back in order.
 func TestIndexMovesToBlock(t *testing.T) {
 	v := newVolume(t, 16<<20, 0, volume.NextFit)
 	must(t, v.MkdirAll("d", target.DirMode))
 	dir := nodeOf(must2(v.Node("d")))
 	n := 0
-	for ; !dir.dir.large; n++ {
+	for ; dir.dir.root.leaf(); n++ {
 		must(t, v.WriteFile(fmt.Sprintf("d/file-%02d.txt", 99-n), nil, target.FileMode))
 	}
-	if n < 4 || dir.rec.find(atIndexAlloc, "$I30") == nil || dir.rec.find(atBitmap, "$I30") == nil {
+	if dir.rec.find(atIndexAlloc, "$I30") == nil || dir.rec.find(atBitmap, "$I30") == nil {
 		t.Fatalf("after %d entries: %+v", n, dir.rec.attrs)
+	}
+	// Each entry takes 104 bytes; the record held the root with n-1 of
+	// them and 120 bytes to spare, but not with n.
+	used := dir.rec.used() + align8(64+16+(n-1)*104)
+	for _, a := range []*attr{dir.rec.find(atIndexRoot, "$I30"), dir.rec.find(atIndexAlloc, "$I30"), dir.rec.find(atBitmap, "$I30")} {
+		used -= len(a.encode())
+	}
+	if used+120 > recordSize || used+104+120 <= recordSize {
+		t.Errorf("the root moved after %d entries, with the record using %d bytes", n, used)
+	}
+	if b := dir.dir.blocks[0]; len(b.es) != n || !b.leaf() || dir.dir.root.end != 0 || len(dir.dir.root.es) != 0 {
+		t.Fatalf("after %d entries: block %+v, root %+v", n, b, dir.dir.root)
 	}
 	for ; n < 30; n++ {
 		must(t, v.WriteFile(fmt.Sprintf("d/file-%02d.txt", 99-n), nil, target.FileMode))
@@ -565,14 +577,6 @@ func TestIndexMovesToBlock(t *testing.T) {
 	must(t, err)
 	if len(entries) != 30 || entries[0].Name() != "file-70.txt" || entries[29].Name() != "file-99.txt" {
 		t.Errorf("d lists %d entries", len(entries))
-	}
-	w := newVolume(t, 16<<20, 0, volume.NextFit)
-	var full error
-	for i := 0; full == nil && i < 100; i++ {
-		full = w.WriteFile(fmt.Sprintf("full/a-long-file-name-%03d.txt", i), nil, target.FileMode)
-	}
-	if full == nil || !strings.Contains(full.Error(), "deeper index") {
-		t.Errorf("100 entries in one directory: %v", full)
 	}
 }
 
@@ -594,8 +598,8 @@ func TestRenameRewritesFileName(t *testing.T) {
 		t.Errorf("$FILE_NAME %+v", fn)
 	}
 	from := nodeOf(must2(v.Node("from")))
-	if len(from.dir.entries) != 0 || len(to.dir.entries) != 1 || !bytes.Equal(to.dir.entries[0].key, fn.encode()) {
-		t.Errorf("indexes: from %d entries, to %+v", len(from.dir.entries), to.dir.entries)
+	if len(from.dir.root.es) != 0 || len(to.dir.root.es) != 1 || !bytes.Equal(to.dir.root.es[0].key, fn.encode()) {
+		t.Errorf("indexes: from %d entries, to %+v", len(from.dir.root.es), to.dir.root.es)
 	}
 	if from.si.modified != t2 || to.si.changed != t2 {
 		t.Errorf("directories' times: from %+v, to %+v", from.si, to.si)

@@ -171,7 +171,7 @@ func (f *FS) Create(parent *volume.Node, name string, vn *volume.Node) error {
 	if dir {
 		r.flags |= recDir
 		n.fn.flags = faI30Index
-		n.dir = &dirIndex{}
+		n.dir = newDirIndex()
 	} else {
 		n.attrs = faArchive
 		if vn.Mode&0o200 == 0 {
@@ -190,7 +190,9 @@ func (f *FS) Create(parent *volume.Node, name string, vn *volume.Node) error {
 		return err
 	}
 	vn.Sys = n
-	p.dir.insert(fileEntry(r.ref(), n.fn))
+	if err := f.indexAdd(p, fileEntry(r.ref(), n.fn)); err != nil {
+		return err
+	}
 	return f.touchDir(p)
 }
 
@@ -200,6 +202,7 @@ func (f *FS) touchDir(d *node) error {
 	now := f.clock()
 	d.si.modified, d.si.changed = now, now
 	f.putStdInfo(d)
+	d.dir.rootDirty = true
 	return f.writeIndex(d)
 }
 
@@ -211,13 +214,9 @@ func (f *FS) putStdInfo(n *node) {
 }
 
 // putFileName puts n's $FILE_NAME in its record and in its parent's index.
-func (f *FS) putFileName(n *node) {
+func (f *FS) putFileName(n *node) error {
 	n.rec.find(atFileName, "").value = n.fn.encode()
-	for i, e := range n.parent.dir.entries {
-		if e.name == n.fn.name {
-			n.parent.dir.entries[i] = fileEntry(n.rec.ref(), n.fn)
-		}
-	}
+	return f.indexUpdate(n.parent, fileEntry(n.rec.ref(), n.fn))
 }
 
 // Commit writes n's content: in the record while it fits there, which
@@ -258,13 +257,7 @@ func (f *FS) Commit(vn *volume.Node, truncated bool) error {
 			if err != nil {
 				return err
 			}
-			for _, x := range runs {
-				if k := len(d.runs) - 1; k >= 0 && d.runs[k].lcn+d.runs[k].length == x.lcn {
-					d.runs[k].length += x.length
-				} else {
-					d.runs = append(d.runs, x)
-				}
-			}
+			d.runs = extend(d.runs, runs)
 		}
 		padded := make([]byte, need*cs)
 		copy(padded, vn.Data)
@@ -280,7 +273,9 @@ func (f *FS) Commit(vn *volume.Node, truncated bool) error {
 	now := f.clock()
 	n.si.modified, n.si.changed = now, now
 	f.putStdInfo(n)
-	f.putFileName(n)
+	if err := f.putFileName(n); err != nil {
+		return err
+	}
 	if err := f.writeRecord(r); err != nil {
 		return err
 	}
@@ -328,8 +323,8 @@ func (f *FS) cut(d *attr, keep int64, cause string) error {
 // keeps everything else; its clusters are freed with their bytes in place.
 func (f *FS) Remove(parent *volume.Node, name string, vn *volume.Node) error {
 	p, n := nodeOf(parent), nodeOf(vn)
-	if !p.dir.remove(n.fn.name) {
-		return fmt.Errorf("record %d has no entry %q", p.rec.num, name)
+	if err := f.indexRemove(p, n.fn.name); err != nil {
+		return err
 	}
 	if err := f.touchDir(p); err != nil {
 		return err
@@ -372,8 +367,8 @@ func (f *FS) Remove(parent *volume.Node, name string, vn *volume.Node) error {
 // the rename has changed its record, as NTFS writes it.
 func (f *FS) Rename(from *volume.Node, oldName string, to *volume.Node, newName string, vn *volume.Node) error {
 	src, dst, n := nodeOf(from), nodeOf(to), nodeOf(vn)
-	if !src.dir.remove(n.fn.name) {
-		return fmt.Errorf("record %d has no entry %q", src.rec.num, oldName)
+	if err := f.indexRemove(src, n.fn.name); err != nil {
+		return err
 	}
 	n.si.changed = f.clock()
 	f.putStdInfo(n)
@@ -387,7 +382,9 @@ func (f *FS) Rename(from *volume.Node, oldName string, to *volume.Node, newName 
 	if err := f.writeRecord(n.rec); err != nil {
 		return err
 	}
-	dst.dir.insert(fileEntry(n.rec.ref(), n.fn))
+	if err := f.indexAdd(dst, fileEntry(n.rec.ref(), n.fn)); err != nil {
+		return err
+	}
 	if err := f.touchDir(src); err != nil {
 		return err
 	}

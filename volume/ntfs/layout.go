@@ -10,10 +10,10 @@
 // at a security descriptor in $Secure, one $FILE_NAME in the Win32
 // namespace (Win32 and DOS when the name is a valid upper-case 8.3 name,
 // as Windows with short names off leaves it), and $DATA kept in the record
-// until it no longer fits, then in clusters for good. A directory keeps its
-// entries in $INDEX_ROOT until the record is full, then in one 4 KiB index
-// block. Times are to 100 ns, and every record and index block is
-// protected by its update sequence array.
+// until it no longer fits, then in clusters for good. A directory's index
+// is a B-tree of 4 KiB index blocks under its $INDEX_ROOT, grown, split and
+// shrunk as libntfs-3g changes one. Times are to 100 ns, and every record
+// and index block is protected by its update sequence array.
 //
 // Deleting does what Windows does: the record loses its in-use flag and
 // its sequence number goes up, but keeps its attributes, names and
@@ -240,11 +240,9 @@ func (g Geometry) mftClusters() int64 { return ceil(g.MFTRecords*recordSize, int
 // offset is where cluster c starts on the volume.
 func (g Geometry) offset(c int64) int64 { return c * int64(g.ClusterSize) }
 
-// indexClusters is how many clusters an index block takes, and indexVCN
-// how many VCNs one index block is apart from the next: clusters, or
-// 512-byte blocks when a cluster is bigger than an index block.
-func (g Geometry) indexClusters() int64 { return ceil(indexSize, int64(g.ClusterSize)) }
-
+// perIndexBlock is how many VCNs one index block is apart from the next:
+// clusters, or 512-byte blocks when a cluster is bigger than an index
+// block.
 func (g Geometry) perIndexBlock() byte {
 	if indexSize >= g.ClusterSize {
 		return byte(indexSize / g.ClusterSize)

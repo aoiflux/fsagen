@@ -1,5 +1,5 @@
 # input-sha256 3a127d4a94568ffd4d6ab074f093194fa1fe6ee1167bd5b5a1ae788db478ffa8
-image_sha256 dbe2bfb9fd40ff6b3254076b51247243fe6d9a8bce9c9356aa3141d543a25c8d
+image_sha256 f1e24df3f1997f35fe04d490346541d149a6fb88f93afe7ff7136f6054c6cbdd
 {"event":"residue","n":33,"object":30,"kind":"file","path":"Logs/application-event-019.log","residue":{"cause":"overwrite","extents":[{"offset":9822208,"length":3230}],"size":3230,"sha256":"cbe865bc6efc4f0579c90115f406d9436c05882e8c03fce93151c1509aece653","recoverable":"full"}}
 {"event":"residue","n":38,"object":11,"kind":"file","path":"Logs/application-event-000.log","residue":{"cause":"delete","entry":{"type":"ntfs_mft_record","number":74,"seq":2,"offset":1140736,"length":1024}}}
 {"event":"residue","n":39,"object":17,"kind":"file","path":"Logs/application-event-006.log","residue":{"cause":"delete","entry":{"type":"ntfs_mft_record","number":80,"seq":2,"offset":1146880,"length":1024},"extents":[{"offset":9768960,"length":1020}],"size":1020,"sha256":"bdde93e219cbe48111ac325b3faf86560bdd2c9a4bf8ec3ce304e6d8a5077aeb","recoverable":"full"}}
