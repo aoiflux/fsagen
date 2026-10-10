@@ -42,8 +42,14 @@ type Entry struct {
 	// Moved is, for a rotate, the object renamed to new_path; object is then
 	// the empty file that takes its place at path.
 	Moved int `json:"moved,omitempty"`
-	// Kind is "file" or "dir".
+	// Kind is "file", "dir", "symlink" or "junction".
 	Kind string `json:"kind,omitempty"`
+	// Target is what a symlink or junction points at, as written.
+	Target string `json:"target,omitempty"`
+	// Links is the number of names the object has afterwards, written when
+	// it has more than one, and for a delete when it keeps any: the delete
+	// then unlinked one name rather than deleting the file.
+	Links int `json:"links,omitempty"`
 	// Stream is the stream an ads or motw operation wrote.
 	Stream       string `json:"stream,omitempty"`
 	SHA256Before string `json:"sha256_before,omitempty"`
@@ -56,13 +62,18 @@ type Entry struct {
 	// Times are the object's intended times after the operation (for a
 	// delete, just before it).
 	Times *Times `json:"times,omitempty"`
+	// FnTimes are, for a timestomp, the object's intended $FILE_NAME times
+	// after it.
+	FnTimes *Times `json:"fn_times,omitempty"`
 	// Explicit lists the times the operation stated itself (atime, mtime,
-	// ctime, crtime) and that were applied; the rest were derived from the
-	// operation's time. A delete's explicit times are the times of the
-	// directory it deleted from.
+	// ctime, crtime, and a timestomp's fn_ times) and that were applied; the
+	// rest were derived from the operation's time. A delete's explicit times
+	// are the times of the directory it deleted from.
 	Explicit []string `json:"explicit,omitempty"`
 	// Uncontrolled lists the times of the object the file system keeps as
 	// it likes: the scenario does not say, or this platform cannot set them.
+	// A timestomp's lists the $FILE_NAME times too (fn_atime and so on) when
+	// they are not on disk.
 	Uncontrolled []string `json:"uncontrolled,omitempty"`
 	Outcome      string   `json:"outcome"`
 	Reason       string   `json:"reason,omitempty"`

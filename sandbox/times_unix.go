@@ -31,11 +31,13 @@ func volumeGranularity(r *os.Root, fsName string) Granularity {
 	return Granularity{time.Microsecond, time.Microsecond, time.Microsecond, time.Microsecond}
 }
 
+// setTimes never follows a final symlink: a link's own times are part of
+// the scenario, and its target's are not this name's to set.
 func setTimes(r *os.Root, name string, t Times, _ TimeCaps) error {
 	if t.Atime.IsZero() && t.Mtime.IsZero() {
 		return nil
 	}
-	return r.Chtimes(name, t.Atime, t.Mtime)
+	return setTimesNoFollow(r, name, t.Atime, t.Mtime)
 }
 
 func getMeta(r *os.Root, name, _ string) (Meta, error) { return statMeta(r, name) }

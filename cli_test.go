@@ -387,7 +387,7 @@ func TestRunManifestTimeCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"filename_times_controlled": false`, `"root_times_controlled": false`, `"birth_time": `, `"change_time": `} {
+	for _, want := range []string{`"filename_times_controlled": false`, `"root_times_controlled": false`, `"birth_time": `, `"change_time": `, `"slack": "`, `"hardlinks": `, `"symlinks": `, `"junctions": `} {
 		if !strings.Contains(string(raw), want) {
 			t.Errorf("run manifest lacks %s:\n%s", want, raw)
 		}
@@ -395,6 +395,9 @@ func TestRunManifestTimeCapabilities(t *testing.T) {
 	rm := readManifest(t, out+".fsagen")
 	if runtime.GOOS == "windows" && (!rm.Capabilities.BirthTime || !rm.Capabilities.ChangeTime) {
 		t.Errorf("capabilities on Windows: %+v", rm.Capabilities)
+	}
+	if fs := linkCaps(t); rm.Capabilities.Hardlinks != fs.Hard || rm.Capabilities.Symlinks != fs.Sym || rm.Capabilities.Junctions != fs.Junction {
+		t.Errorf("link capabilities %+v, the volume's %+v", rm.Capabilities, fs)
 	}
 	led, err := os.ReadFile(filepath.Join(out+".fsagen", ledger.FileName))
 	if err != nil {

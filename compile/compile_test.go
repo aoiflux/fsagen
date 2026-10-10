@@ -229,7 +229,7 @@ func TestValueRules(t *testing.T) {
 	mustFail(t, ModeManifest, "operations:\n  - action: create\n    path: a\n    content_len: 0\n", "content_len", "at least 1")
 	mustFail(t, ModeManifest, "operations:\n  - action: create\n    path: a\n    content: x\n    content_len: 5\n", "content_len", "no effect")
 	mustFail(t, ModeManifest, "operations:\n  - action: create\n    path: z.exe\n    content: MZ\n  - action: motw\n    path: z.exe\n    host_url: \"http://x\\r\\nZoneId=0\"\n", "host_url", "line breaks")
-	mustFail(t, ModeManifest, "operations:\n  - action: create\n    path: a.pdf\n    content: x\n    format: xlsx\n", "unknown format \"xlsx\"")
+	mustFail(t, ModeManifest, "operations:\n  - action: create\n    path: a.pdf\n    content: x\n    format: pptx\n", "unknown format \"pptx\"")
 	mustFail(t, ModeManifest, "operations:\n  - action: create\n    path: a\n    type: folder\n", "unknown type")
 	mustFail(t, ModeManifest, "operations:\n  - action: Create\n    path: a\n", `unknown action "Create"`)
 	mustFail(t, ModeManifest, "operations:\n  - action: create\n    path: a\n    stream: s\n    content: x\n", "stream", "does not apply to create")
@@ -289,6 +289,7 @@ func TestTypedExtensionInfersOrRefuses(t *testing.T) {
 		{"a/exfil.zip", spec.FormatZip}, {"app.jar", spec.FormatZip},
 		{"img.PNG", spec.FormatPNG}, {"img.JPG", spec.FormatJPEG}, {"scan.jpeg", spec.FormatJPEG},
 		{"notes.docx", spec.FormatDOCX}, {"clip.mp4", spec.FormatMP4},
+		{"Invoice.docm", spec.FormatDOCM}, {"book.xlsx", spec.FormatXLSX}, {"budget.XLSM", spec.FormatXLSM},
 	} {
 		p := mustLoad(t, ModeManifest, "start: 2026-01-01T00:00:00Z\noperations:\n  - action: create\n    path: "+tc.path+"\n    content_len: 4096\n")
 		if got := p.Ops[0].Format; got != tc.format {
@@ -299,7 +300,6 @@ func TestTypedExtensionInfersOrRefuses(t *testing.T) {
 		{"History.sqlite", "chrome_history"},
 		{"places.db", "firefox_places"},
 		{"a.pdf", "format: pdf"},
-		{"book.xlsx", "spreadsheet"},
 		{"deck.pptx", "presentation"},
 		{"anim.gif", "GIF"},
 		{"msg.eml", "action: email"},
@@ -362,6 +362,7 @@ func TestEveryStringFieldRenders(t *testing.T) {
 	var op spec.Operation
 	op.Pdf, op.Email, op.Vault = &spec.PdfSpec{}, &spec.EmailSpec{Headers: []spec.Header{{}}, Attachments: []spec.Attachment{{}}}, &spec.VaultSpec{}
 	op.Email.To, op.Email.Cc, op.Email.Bcc, op.Email.References = []string{""}, []string{""}, []string{""}, []string{""}
+	op.Docx, op.Xlsx, op.Vba = &spec.DocxSpec{}, &spec.DocxSpec{}, &spec.VbaSpec{}
 	op.Lnk = &spec.LnkSpec{TargetAttributes: []string{""}}
 	op.Prefetch = &spec.PrefetchSpec{LastRunTimes: []string{""}, ReferencedFiles: []string{""}, Volumes: []spec.PrefetchVolume{{}}}
 	op.Evtx = &spec.EvtxSpec{Events: []spec.EvtxEvent{{Data: map[string]string{"Name": ""}}}}

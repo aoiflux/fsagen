@@ -27,6 +27,9 @@ var inferredFormats = map[string]spec.Format{
 	".zip": spec.FormatZip, ".jar": spec.FormatZip,
 	".png": spec.FormatPNG, ".jpg": spec.FormatJPEG, ".jpeg": spec.FormatJPEG,
 	".docx": spec.FormatDOCX,
+	".docm": spec.FormatDOCM,
+	".xlsx": spec.FormatXLSX,
+	".xlsm": spec.FormatXLSM,
 	".mp4":  spec.FormatMP4,
 	".lnk":  spec.FormatLNK,
 	".pf":   spec.FormatPrefetch,
@@ -38,8 +41,8 @@ var inferredFormats = map[string]spec.Format{
 // the whole point: a file named .xlsx holding random text would be reported
 // as a corrupt spreadsheet by every tool that opened it.
 var refusedExtensions = map[string]string{
-	".xlsx": "an OOXML spreadsheet", ".pptx": "an OOXML presentation",
-	".gif": "a GIF image", ".bmp": "a BMP image", ".mov": "a QuickTime video",
+	".pptx": "an OOXML presentation",
+	".gif":  "a GIF image", ".bmp": "a BMP image", ".mov": "a QuickTime video",
 	".pdf":    "a PDF (use format: pdf to render text into one)",
 	".sqlite": "an SQLite database (use format: chrome_history or firefox_places for a browser profile)",
 	".db":     "an SQLite database (use format: chrome_history or firefox_places for a browser profile)",
@@ -63,15 +66,21 @@ func inferredByName(base string) (spec.Format, bool) {
 }
 
 // DocumentText reports a format whose content is the document's text rather
-// than filler bytes.
+// than filler bytes: a workbook's is its cells, a line to a row.
 func DocumentText(format spec.Format) bool {
-	return format == spec.FormatPDF || format == spec.FormatDOCX
+	switch format {
+	case spec.FormatPDF, spec.FormatDOCX, spec.FormatDOCM, spec.FormatXLSX, spec.FormatXLSM:
+		return true
+	}
+	return false
 }
 
 // blockFormats says which formats each typed block belongs to.
 var blockFormats = map[string][]spec.Format{
 	"pdf":      {spec.FormatPDF},
-	"docx":     {spec.FormatDOCX},
+	"docx":     {spec.FormatDOCX, spec.FormatDOCM},
+	"xlsx":     {spec.FormatXLSX, spec.FormatXLSM},
+	"vba":      {spec.FormatDOCM, spec.FormatXLSM},
 	"pe":       {spec.FormatPE},
 	"history":  {spec.FormatChromeHistory, spec.FormatFirefoxPlaces},
 	"lnk":      {spec.FormatLNK},
@@ -171,6 +180,10 @@ func checkTyped(op *Op, at func(field, format string, args ...any)) {
 	if op.Docx != nil {
 		checkBlockTimes(at, "docx", field{"created", op.Docx.Created}, field{"modified", op.Docx.Modified})
 	}
+	if op.Xlsx != nil {
+		checkBlockTimes(at, "xlsx", field{"created", op.Xlsx.Created}, field{"modified", op.Xlsx.Modified})
+	}
+	checkOffice(op, at)
 	if op.Archive != nil {
 		checkArchive(op, at)
 	}
@@ -360,6 +373,14 @@ func cloneTyped(op *spec.Operation) {
 	if op.Docx != nil {
 		v := *op.Docx
 		op.Docx = &v
+	}
+	if op.Xlsx != nil {
+		v := *op.Xlsx
+		op.Xlsx = &v
+	}
+	if op.Vba != nil {
+		v := *op.Vba
+		op.Vba = &v
 	}
 	if op.Vault != nil {
 		v := *op.Vault

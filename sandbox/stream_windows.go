@@ -15,19 +15,24 @@ import (
 
 // probeVolume asks the volume holding the root whether it stores named
 // streams (FAT and exFAT do not) and what it is called.
-func probeVolume(r *os.Root) (bool, string) {
+func probeVolume(r *os.Root) volume {
 	d, err := r.Open(".")
 	if err != nil {
-		return false, ""
+		return volume{}
 	}
 	defer d.Close()
 
 	var flags uint32
 	name := make([]uint16, windows.MAX_PATH+1)
 	if err := windows.GetVolumeInformationByHandle(windows.Handle(d.Fd()), nil, 0, nil, nil, &flags, &name[0], uint32(len(name))); err != nil {
-		return false, ""
+		return volume{}
 	}
-	return flags&windows.FILE_NAMED_STREAMS != 0, windows.UTF16ToString(name)
+	return volume{
+		name:      windows.UTF16ToString(name),
+		streams:   flags&windows.FILE_NAMED_STREAMS != 0,
+		hardlinks: flags&windows.FILE_SUPPORTS_HARD_LINKS != 0,
+		reparse:   flags&windows.FILE_SUPPORTS_REPARSE_POINTS != 0,
+	}
 }
 
 // openStream opens ":stream:$DATA" relative to a handle on the base object,

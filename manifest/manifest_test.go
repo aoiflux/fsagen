@@ -365,8 +365,8 @@ func TestUnknownFormatIsRejected(t *testing.T) {
 	writeFile(t, baseDir, "manifest.yaml", `
 operations:
   - action: create
-    path: out.xlsx
-    format: xlsx
+    path: out.bin
+    format: pptx
     content: "x"
 `)
 	err := ExecuteManifest(root, filepath.Join(baseDir, "manifest.yaml"), compile.Options{})

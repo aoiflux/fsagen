@@ -102,12 +102,22 @@ type Capabilities struct {
 	// be set. Access and modification times always can.
 	BirthTime  bool `json:"birth_time"`
 	ChangeTime bool `json:"change_time"`
-	// FilenameTimesControlled is always false: NTFS keeps a second set of
-	// times in each $FILE_NAME attribute, which no user-mode call sets.
+	// FilenameTimesControlled: the times NTFS keeps in each $FILE_NAME
+	// attribute can be set. Never on a live volume, where Windows sets them
+	// itself and no call a program can make changes them.
 	FilenameTimesControlled bool `json:"filename_times_controlled"`
 	// RootTimesControlled is always false: the output directory itself is
 	// the caller's, and its times are never stamped.
 	RootTimesControlled bool `json:"root_times_controlled"`
+	// Slack is how far the volume keeps bytes past the end of a file (none,
+	// best_effort or exact), and ClusterSize its clusters' size when known.
+	Slack       string `json:"slack"`
+	ClusterSize int    `json:"cluster_size,omitempty"`
+	// Hardlinks, Symlinks and Junctions: the volume stores them and this
+	// process may make them.
+	Hardlinks bool `json:"hardlinks"`
+	Symlinks  bool `json:"symlinks"`
+	Junctions bool `json:"junctions"`
 }
 
 // Skipped is one operation the platform could not perform, left out because
@@ -129,6 +139,9 @@ type Outputs struct {
 	SHA256SUMS string `json:"sha256sums"` // SHA-256 of the SHA256SUMS file
 	Files      int    `json:"files"`
 	Streams    int    `json:"streams"`
+	// Links counts the symlinks and junctions, which SHA256SUMS leaves out:
+	// a link has no content of its own, and is never read through.
+	Links      int    `json:"links,omitempty"`
 	Ledger     string `json:"ledger_sha256,omitempty"`      // SHA-256 of ledger.jsonl
 	AnswerKey  string `json:"answer_key_sha256,omitempty"`  // SHA-256 of answer-key.jsonl
 	MitreLayer string `json:"mitre_layer_sha256,omitempty"` // SHA-256 of mitre-layer.json, when the run wrote one
@@ -293,7 +306,8 @@ func WriteAnswerKey(dir string, facts []ledger.Fact) (string, error) {
 
 // buildSums lists the SHA-256 of every file and named stream under fsys in
 // sha256sum's format ("<hex>  <path>"), with slash paths, a stream written
-// as path:stream, sorted by path.
+// as path:stream, sorted by path. Each name of a hard-linked file is listed;
+// a link is counted, not followed.
 func buildSums(fsys *sandbox.FS) ([]byte, Outputs, error) {
 	s := &sums{fsys: fsys}
 	if err := fsys.WalkDir(s.visit); err != nil {
@@ -321,6 +335,11 @@ func (s *sums) visit(name string, d fs.DirEntry, err error) error {
 		return err
 	}
 	if name == "." {
+		return nil
+	}
+	if !d.IsDir() && !d.Type().IsRegular() {
+		// A symlink, or a junction, which Windows reports as irregular.
+		s.out.Links++
 		return nil
 	}
 	if !d.IsDir() {

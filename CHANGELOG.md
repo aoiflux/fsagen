@@ -2,10 +2,16 @@
 
 ## Unreleased
 
-Generator version stays **6**: nothing below changes a byte that an existing
-input produces. Every v6 golden for an untouched input is byte-identical; the
-four examples that gained tags re-recorded only their ledger, answer key and
-dry-run listing, and their corpora and modelled bodyfiles are unchanged.
+Generator version is **7**. Through the work below, until the last section,
+nothing changed a byte an existing input produces, and every v6 golden for an
+untouched input stayed byte-identical (the four examples that gained tags
+re-recorded only their ledger, answer key and dry-run listing). The one planned
+bump, described under _Generator version 7_, comes last; `testdata/golden/v6/`
+stays beside `v7/` until the owner retires it.
+
+**Inputs that used to be refused are now accepted.** `.xlsx` was refused as a
+format fsagen could not build; it now builds one (see _Macro-enabled Office
+documents_).
 
 **Inputs that used to be accepted are now refused.** An extension or a name
 that promises a format fsagen now builds means that format, so the same name
@@ -207,6 +213,142 @@ a 4624's would make the block unusable. EVTX writes one template per event
 rather than Windows' nested event-data template. The prefetch block has no
 `device_path`: a volume's name follows from its serial and creation time, and
 the hash's volume number is `harddisk_volume`.
+
+### Timestomp
+
+A new action, `timestomp`, sets times the way anti-forensic tools do: its
+`atime`, `mtime`, `ctime` and `crtime` are the `$STANDARD_INFORMATION` times,
+set as `mace` sets them, and `fn_atime`, `fn_mtime`, `fn_ctime` and `fn_crtime`
+are the `$FILE_NAME` times beside them. The model now carries `$FILE_NAME`
+times for every object, following NTFS: all four at the time the object is
+born, copied from its own times when it is renamed (which is how the
+double-rename trick makes the two sets agree), and moved otherwise only by a
+`timestomp`.
+
+No live volume lets a program set a `$FILE_NAME` time, so the new capability
+`FilenameTimes` is false on every one (the run manifest's
+`filename_times_controlled` now reports it rather than a constant). An `fn_`
+time is a pre-flight error there, or with `--on-unsupported=skip` is dropped
+and recorded while the rest of the stomp runs.
+
+The `stomped` fact of a `timestomp` adds `fn_times`, `fn_controlled` (false on
+a live volume: the times are what the scenario means, not what is on disk),
+`delta` (each `$STANDARD_INFORMATION` time minus its `$FILE_NAME` time, in
+seconds, as an exact decimal) and `timestomp_detected` (the creation times
+compared as MFTECmd's `SI<FN` column compares them). Its ledger entry and
+`--dry-run` line carry `fn_times`. A `mace`'s fact, entry and line are
+unchanged.
+
+**Deviations from the plan.** The fact keeps `times` for the
+`$STANDARD_INFORMATION` times, as `mace`'s does, rather than a new `si_times`.
+Modelled timelines do not yet write `($FILE_NAME)` lines: they would only
+appear where those times are controlled, which no live run is, and the csv
+timeline would need a column for them. They come with the NTFS image target.
+
+### Macro-enabled Office documents
+
+`format: docm`, `xlsx` and `xlsm`, inferred from their extensions, write a Word
+document with a VBA project, an Excel workbook (one sheet, its column A
+holding the text a line to a row, at most 32767 characters a cell), and the
+same workbook with a VBA project. `.xlsx` is no longer refused. The `docx`
+block now also applies to `docm`, and a new `xlsx` block carries the same
+properties for workbooks.
+
+The project holds one macro, and it is inert: it assigns a marker string to a
+local variable and does nothing else, and the new `vba` block can only choose
+its entry point (`AutoOpen` or `Document_Open`; `Auto_Open` or
+`Workbook_Open`), the standard module it sits in, and the marker, printable
+ASCII without a double quote. It is written from [MS-OVBA] on a new
+compound-file writer (`libgen/cfb.go`, [MS-CFB] version 3, every time zero,
+an all-black tree) and a compressor that reproduces the specification's three
+worked examples byte for byte. There is no p-code; Office compiles the source.
+
+Read back by Windows' own structured storage (`StgOpenStorageEx`, in every
+run of the suite on Windows), by mscfb in the conformance module, by Word and
+Excel (opt-in, `FSAGEN_OFFICE=1`: both open every kind with macros forcibly
+disabled and find the project; Word compiles the source and saves it back
+unchanged), and by olevba where it is installed (it extracts each macro and
+reports only its entry point; on Excel projects it also reports the class
+GUIDs every Excel project carries as hex strings, as it does for a workbook
+Excel wrote).
+
+**Deviations from the plan.** Spreadsheets get an `xlsx` block of their own
+rather than sharing `docx`. The PROJECT stream's encrypted fields, the module
+list and the dir stream were checked against a project Excel wrote
+(XlsxWriter's sample), which is how the project-key rule (the byte sum of the
+project's ID, braces included) was confirmed before Word confirmed the whole.
+
+### Hard links, symlinks and junctions
+
+Three new actions make links, and fsagen never follows one. `hardlink` gives a
+file a second name; `symlink` writes a target relative to the link's directory
+(dangling allowed; outside the output only with `allow_external_target`), its
+`target_type` deciding on Windows whether it is a directory link;
+`junction` (Windows) points at a directory in the output.
+
+The model gained a layer of names: an object has one or more, each with its
+own `$FILE_NAME` times, ids tag names rather than objects, and deleting a name
+the file is not left without only unlinks it. Nothing is written, read,
+copied or streamed through a link, and every walk of the output stops at one:
+SHA256SUMS lists a hard-linked file under each name and counts links in
+`outputs.links` instead of reading them; the observed timeline types a
+junction as a link from its reparse tag rather than as an irregular file; the
+golden fingerprint writes `l <target> <path>`; `--into-existing` seeds links
+and hard-linked names as such. On Unix times are now set with
+`AT_SYMLINK_NOFOLLOW` (`os.Root.Chtimes` followed a final symlink), so a
+link's times are its own.
+
+On Windows the symlink and junction reparse points are written by fsagen,
+relative to their parent opened through the root, laid out as
+`CreateSymbolicLinkW` and `mklink /J` lay them out; the junction's data
+matches `mklink /J`'s byte for byte. Symlinks need Developer Mode or the
+privilege, which is tried once in a temporary directory. Loops of every kind
+are written and every walk ends. All of it runs on Windows 11 and on Linux
+(ext4).
+
+The ledger's `kind` adds `symlink` and `junction`, with `target`, and `links`
+counts a hard-linked file's names; the answer key adds `linked`, `unlinked`,
+and `created` with a link's `target`; timelines name a link `path -> target`
+and give `links` and `link_target` in JSON lines.
+
+**Deviations from the plan.** A link the platform cannot make is a pre-flight
+error even with `--on-unsupported=skip`: later actions and the settle pass
+would act on a name that is not there. A junction's target is a path in the
+output, written as `path` is, while a symlink's is relative to the link, as
+the file system stores it. Directory descent is not guarded by a set of
+visited file IDs: no walk descends through a link in the first place, which
+the loop test proves.
+
+### Generator version 7
+
+`constant.GeneratorVersion` is **7**, the single bump this release planned. It
+bundles three changes to covered output:
+
+- **Bulk mode gains the forensic artefacts**: a shortcut, a prefetch file named
+  for its program and path hash, an event log, `NTUSER.DAT` (in a profile
+  directory), `wtmp` and `audit.log` (in a host directory), and a `.docm` and
+  `.xlsm` with an inert macro, each from the builder its format uses
+  (`TestBulkForensicKindsParse`). Files are still rendered in parallel but are
+  now written in the plan's order, so a target that places every byte itself
+  gets the same order every run.
+- **The answer key gives each `created` and `modified` fact its `md5`**, as
+  timelines and most tools report it beside the SHA-256.
+- **The run manifest records more of what the target can do**: `slack` and
+  `cluster_size`, `hardlinks`, `symlinks` and `junctions`, and
+  `filename_times_controlled` from the target rather than as a constant.
+
+A new example, `playbook-macro-phish`, puts a `.docm`, a `timestomp`, a
+`hardlink` and an `.xlsx` through every golden and the determinism harness;
+it uses no feature a platform lacks, so it runs everywhere. Its
+`mtime_before_crtime` fact names the payload by its first name, not the hard
+link that sorts before it.
+
+The goldens were recorded under `testdata/golden/v7/` on Windows 11 and under
+WSL Ubuntu, and each platform then reproduced them without `-update`. Against
+v6, on both platforms, every example's corpus fingerprint, ledger, modelled
+bodyfile and dry-run listing is byte-identical; every answer key differs only
+by the new `md5` fields; and the two bulk corpora differ only by the files of
+the new kinds, every existing bulk file keeping its name and bytes.
 
 ## v0.2.0 — the bulk corpus becomes answerable for itself (2026-10-02)
 

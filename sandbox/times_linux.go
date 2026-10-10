@@ -73,9 +73,24 @@ func statMeta(r *os.Root, name string) (Meta, error) {
 		ID:    strconv.FormatUint(st.Ino, 10),
 		UID:   int(st.Uid),
 		GID:   int(st.Gid),
+		Links: int(st.Nlink),
 	}
 	if st.Mask&unix.STATX_BTIME != 0 {
 		m.Btime = ts(st.Btime)
 	}
+	if st.Mode&unix.S_IFMT == unix.S_IFLNK {
+		m.Link = LinkSymlink
+		buf := make([]byte, st.Size+1)
+		if n, err := unix.Readlinkat(int(parent.Fd()), leaf, buf); err == nil {
+			m.Target = string(buf[:n])
+		}
+	}
 	return m, nil
+}
+
+// setTimesNoFollow sets the times of name itself, a symlink's own rather
+// than its target's, relative to its parent opened through the root. A zero
+// time is left as it is.
+func setTimesNoFollow(r *os.Root, name string, atime, mtime time.Time) error {
+	return utimesNoFollow(r, name, atime, mtime)
 }

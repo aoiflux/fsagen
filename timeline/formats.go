@@ -250,6 +250,10 @@ type jsonEntry struct {
 	Crtime  string `json:"crtime,omitempty"`
 	MD5     string `json:"md5,omitempty"`
 	Deleted bool   `json:"deleted,omitempty"`
+	// LinkTarget and Links are left out for an entry that is not a link
+	// and has one name, so they add nothing to any other.
+	LinkTarget string `json:"link_target,omitempty"`
+	Links      int    `json:"links,omitempty"`
 }
 
 // WriteJSONL writes one JSON object per entry. The mode is octal; an
@@ -263,7 +267,7 @@ func (tl *Timeline) WriteJSONL(w io.Writer) error {
 			Path: e.Path, Stream: e.Stream, Type: e.Type, Size: e.Size, Mode: e.octal(),
 			UID: e.UID, GID: e.GID, Inode: e.Inode,
 			Atime: rfc(e.Atime), Mtime: rfc(e.Mtime), Ctime: rfc(e.Ctime), Crtime: rfc(e.Btime),
-			MD5: e.MD5, Deleted: e.Deleted,
+			MD5: e.MD5, Deleted: e.Deleted, LinkTarget: e.LinkTarget, Links: e.Links,
 		}); err != nil {
 			return err
 		}

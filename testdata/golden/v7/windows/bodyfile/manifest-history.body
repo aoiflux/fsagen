@@ -1,0 +1,8 @@
+# input-sha256 860f94d6577cd62152c3e8bc412760aca89e893b809af3fb74be43d8f4eb4f4e
+0|/Chrome|1|d/drwxr-xr-x|0|0|0|0|0|0|0
+0|/Firefox|4|d/drwxr-xr-x|0|0|0|0|0|0|0
+0|/Firefox/Profiles|5|d/drwxr-xr-x|0|0|0|0|0|0|0
+0|/Chrome/Default|2|d/drwxr-xr-x|0|0|0|0|1698674400|1698674400|0
+c5f88584941d7f3dfe58891e2405ddef|/Chrome/Default/History|3|r/rrw-r--r--|0|0|53248|1698676200|1698674400|1698674400|1698674400
+0|/Firefox/Profiles/default|6|d/drwxr-xr-x|0|0|0|0|1698678000|1698678000|0
+683cd6b41928ba0fe65b0cd5dad0b65f|/Firefox/Profiles/default/places.sqlite|7|r/rrw-r--r--|0|0|28672|1698679800|1698678000|1698678000|1698678000

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -103,6 +104,13 @@ type Meta struct {
 	// UID and GID own the object on Unix. Windows has no numeric owner, and
 	// they are 0 there, as The Sleuth Kit writes them for NTFS.
 	UID, GID int
+	// Links is the number of names the object has (0 where the platform
+	// does not say).
+	Links int
+	// Link is LinkSymlink or LinkJunction for a link, and Target what it
+	// points at: for a symlink as stored, with '/' between names; for a
+	// junction a path in the output when it points into it.
+	Link, Target string
 }
 
 // Meta reads name's times, identity and owner without following a final
@@ -111,6 +119,12 @@ func (f *FS) Meta(name string) (Meta, error) {
 	m, err := getMeta(f.root, native(name), f.fsName)
 	if err != nil {
 		return Meta{}, &os.PathError{Op: "read metadata", Path: name, Err: err}
+	}
+	switch m.Link {
+	case LinkSymlink:
+		m.Target = filepath.ToSlash(m.Target)
+	case LinkJunction:
+		m.Target = f.relativeTarget(m.Target)
 	}
 	return m, nil
 }

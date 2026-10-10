@@ -79,6 +79,14 @@ type Entry struct {
 	MD5 string
 	// Deleted marks an object the scenario deleted (modelled timelines only).
 	Deleted bool
+	// LinkTarget is what a symlink or junction points at.
+	LinkTarget string
+	// Links is the number of names the object has, when it has more than
+	// one: each name of a hard-linked file is an entry of its own.
+	Links int
+	// alias marks, in a modelled timeline, an entry for a name other than
+	// its object's first.
+	alias bool
 }
 
 // Timeline holds all entries, sorted.
@@ -192,6 +200,14 @@ func (w *walker) entryFor(name string, d fs.DirEntry) (Entry, error) {
 		Inode: meta.ID,
 		Atime: meta.Atime, Mtime: meta.Mtime, Ctime: meta.Ctime, Btime: meta.Btime,
 	}
+	// A junction reads as an irregular file; what makes both kinds a link
+	// is the metadata, and a link is never read through.
+	if meta.Link != "" {
+		e.Type, e.LinkTarget = TypeLink, meta.Target
+	}
+	if meta.Links > 1 {
+		e.Links = meta.Links
+	}
 	if e.Type != TypeFile || !hashable(e.Size, w.opts) {
 		return e, nil
 	}
@@ -296,11 +312,15 @@ func sortEntries(entries []Entry) {
 }
 
 // Name is the entry's name as The Sleuth Kit writes it: a leading slash,
-// ":stream" for a stream, and " (deleted)" for a deleted object.
+// ":stream" for a stream, " -> target" for a link, and " (deleted)" for a
+// deleted object, in that order.
 func (e Entry) Name() string {
 	n := "/" + e.Path
 	if e.Type == TypeStream {
 		n += ":" + e.Stream
+	}
+	if e.Type == TypeLink && e.LinkTarget != "" {
+		n += " -> " + e.LinkTarget
 	}
 	if e.Deleted {
 		n += " (deleted)"

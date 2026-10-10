@@ -46,12 +46,23 @@ type Options struct {
 }
 
 // kind is one type of bulk file. gen renders a file's bytes from its own
-// stream; name, when set, replaces the default random name.
+// stream; name, when set, replaces the default random name; genNamed, when
+// set, renders from the file's name too, for a file whose name records what
+// is inside it (a prefetch file names its program).
 type kind struct {
-	id   string
-	ext  string
-	name func(s *prng.Stream) string
-	gen  func(s *prng.Stream, start time.Time) ([]byte, error)
+	id       string
+	ext      string
+	name     func(s *prng.Stream) string
+	gen      func(s *prng.Stream, start time.Time) ([]byte, error)
+	genNamed func(s *prng.Stream, start time.Time, file string) ([]byte, error)
+}
+
+// render is the kind's bytes for the file at p.
+func (k kind) render(s *prng.Stream, start time.Time, p string) ([]byte, error) {
+	if k.genNamed != nil {
+		return k.genNamed(s, start, path.Base(p))
+	}
+	return k.gen(s, start)
 }
 
 // kinds is every file type bulk mode writes, once per item in every
@@ -84,6 +95,16 @@ var kinds = []kind{
 		name: func(s *prng.Stream) string {
 			return "Firefox-" + s.Text(6) + "/Profiles/" + s.Text(8) + ".default-release/places" + constant.SQLiteExtension
 		}},
+	{id: "lnk", ext: constant.LnkExtension, gen: genLnk},
+	{id: "pf", name: bulkPrefetchName, genNamed: genPrefetch},
+	{id: "evtx", ext: constant.EvtxExtension, gen: genEvtx},
+	// A hive, a login record and an audit log are known by their names, so
+	// each keeps it, in a profile or host directory invented around it.
+	{id: "ntuser", gen: genNTUser, name: func(s *prng.Stream) string { return "Profile-" + s.Text(6) + "/NTUSER.DAT" }},
+	{id: "wtmp", gen: genWtmp, name: func(s *prng.Stream) string { return "Host-" + s.Text(6) + "/var/log/wtmp" }},
+	{id: "audit", gen: genAudit, name: func(s *prng.Stream) string { return "Host-" + s.Text(6) + "/var/log/audit/audit.log" }},
+	{id: "docm", ext: constant.DocmExtension, gen: genDocm},
+	{id: "xlsm", ext: constant.XlsmExtension, gen: genXlsm},
 }
 
 // Job is one planned file.
@@ -167,7 +188,14 @@ func (k kind) fileName(s *prng.Stream) string {
 	return s.Text(constant.FileNameLen) + k.ext
 }
 
-// Generate writes a bulk corpus into fsys.
+// commitBatch is how many files are rendered at once before they are written:
+// enough to keep every worker busy, few enough to hold in memory.
+const commitBatch = 64
+
+// Generate writes a bulk corpus into fsys. Files are rendered in parallel
+// but written in the plan's order, one at a time, so the order a file
+// system allocates in (and so its file IDs) is the plan's too; a target
+// that places every byte itself depends on that.
 func Generate(fsys *sandbox.FS, limit, depth int, opts Options) error {
 	if opts.Start.IsZero() {
 		opts.Start = DefaultStart
@@ -178,14 +206,31 @@ func Generate(fsys *sandbox.FS, limit, depth int, opts Options) error {
 			return err
 		}
 	}
-	return runJobs(len(jobs), opts.Workers, func(i int) error {
-		j := jobs[i]
-		data, err := kinds[j.kind].gen(j.key.Derive("content").Stream(), opts.Start.UTC())
-		if err != nil {
-			return fmt.Errorf("%s: %w", j.Path, err)
+	for first := 0; first < len(jobs); first += commitBatch {
+		batch := jobs[first:min(first+commitBatch, len(jobs))]
+		data := make([][]byte, len(batch))
+		done := make([]bool, len(batch))
+		renderErr := runJobs(len(batch), opts.Workers, func(i int) error {
+			j := batch[i]
+			b, err := kinds[j.kind].render(j.key.Derive("content").Stream(), opts.Start.UTC(), j.Path)
+			if err != nil {
+				return fmt.Errorf("%s: %w", j.Path, err)
+			}
+			data[i], done[i] = b, true
+			return nil
+		})
+		// Every job before the first that failed has been rendered, so
+		// writing stops exactly where the plan's first failure is.
+		for i, j := range batch {
+			if !done[i] {
+				return renderErr
+			}
+			if err := fsys.WriteFile(j.Path, data[i], sandbox.FileMode); err != nil {
+				return err
+			}
 		}
-		return fsys.WriteFile(j.Path, data, sandbox.FileMode)
-	})
+	}
+	return nil
 }
 
 // runJobs runs do(0..n-1) on at most workers goroutines. Jobs are handed out in

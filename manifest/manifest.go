@@ -153,7 +153,11 @@ func Caps(fsys *sandbox.FS) compile.Caps {
 	if fsys.SlackBestEffort() {
 		slack = compile.SlackBestEffort
 	}
-	return compile.Caps{NamedStreams: fsys.SupportsStreams(), BirthTime: tc.Birth, ChangeTime: tc.Change, Slack: slack, ClusterSize: fsys.ClusterSize()}
+	links := fsys.LinkCaps()
+	return compile.Caps{
+		NamedStreams: fsys.SupportsStreams(), BirthTime: tc.Birth, ChangeTime: tc.Change, Slack: slack, ClusterSize: fsys.ClusterSize(),
+		Hardlinks: links.Hard, Symlinks: links.Sym, Junctions: links.Junction,
+	}
 }
 
 // Execute applies the operations in order, leaving out those marked NoOp
@@ -271,6 +275,19 @@ func newEntry(i int, op compile.Op, caps compile.Caps) ledger.Entry {
 	if op.Object != 0 {
 		e.Uncontrolled = uncontrolled(op.Times, caps)
 	}
+	if op.Action == spec.ActionSymlink || op.Action == spec.ActionJunction {
+		e.Target = op.Target
+	}
+	if op.Links > 1 || op.Action == spec.ActionDelete {
+		e.Links = op.Links
+	}
+	if op.Action == spec.ActionTimestomp {
+		if t := compile.TimesOf(op.FN); t != nil {
+			lt := ledger.Times(*t)
+			e.FnTimes = &lt
+		}
+		e.Uncontrolled = append(e.Uncontrolled, uncontrolledFileNameTimes(op.FN, caps)...)
+	}
 	return e
 }
 
@@ -280,6 +297,10 @@ func kindName(k model.Kind) string {
 		return "file"
 	case model.Dir:
 		return "dir"
+	case model.Symlink:
+		return "symlink"
+	case model.Junction:
+		return "junction"
 	}
 	return ""
 }
@@ -288,9 +309,9 @@ func kindName(k model.Kind) string {
 // platform cannot set them.
 func explicit(op compile.Op) []string {
 	var out []string
-	for i, v := range []string{op.Atime, op.Mtime, op.Ctime, op.Crtime} {
-		f := compile.TimeFields[i]
-		if strings.TrimSpace(v) != "" && !slices.Contains(op.Dropped, f) {
+	fields := append(slices.Clone(compile.TimeFields), compile.FileNameTimeFields...)
+	for i, v := range []string{op.Atime, op.Mtime, op.Ctime, op.Crtime, op.FnAtime, op.FnMtime, op.FnCtime, op.FnCrtime} {
+		if f := fields[i]; strings.TrimSpace(v) != "" && !slices.Contains(op.Dropped, f) {
 			out = append(out, f)
 		}
 	}
@@ -316,11 +337,24 @@ func uncontrolled(t model.Times, caps compile.Caps) []string {
 	return out
 }
 
+// uncontrolledFileNameTimes lists the $FILE_NAME times that are not on disk:
+// all four where caps cannot set them, which is every live volume, and
+// otherwise those the scenario does not say.
+func uncontrolledFileNameTimes(t model.Times, caps compile.Caps) []string {
+	var out []string
+	for i, v := range []time.Time{t.Atime, t.Mtime, t.Ctime, t.Btime} {
+		if v.IsZero() || !caps.FilenameTimes {
+			out = append(out, compile.FileNameTimeFields[i])
+		}
+	}
+	return out
+}
+
 // target is the path of the object an operation leaves behind, or "" for a
 // delete.
 func target(op compile.Op) string {
 	switch op.Action {
-	case spec.ActionRename, spec.ActionCopy:
+	case spec.ActionRename, spec.ActionCopy, spec.ActionHardlink:
 		return op.NewPath
 	case spec.ActionDelete:
 		return ""
@@ -330,12 +364,19 @@ func target(op compile.Op) string {
 
 // describe records the object's digest, size and streams after the
 // operation. Reads go through quiet handles, which leave access times alone
-// where the platform allows.
+// where the platform allows. A link has neither content nor streams of its
+// own, and is never read through.
 func describe(fs *sandbox.FS, op compile.Op, e *ledger.Entry, digests map[int]string) error {
 	e.SHA256Before = digests[op.Object]
 	p := target(op)
 	if p == "" {
-		delete(digests, op.Object)
+		// A hard-linked file that keeps a name keeps its content.
+		if op.Links == 0 {
+			delete(digests, op.Object)
+		}
+		return nil
+	}
+	if op.Kind.IsLink() {
 		return nil
 	}
 	if op.Kind == model.File {
@@ -529,22 +570,38 @@ func within(a, b time.Time, res time.Duration) bool {
 // executors say how each action writes itself into the output. Every name in
 // spec.Actions has an entry, which TestEveryActionExecutes proves.
 var executors = map[spec.ActionName]func(ExecContext, compile.Op) error{
-	spec.ActionCreate:   execCreate,
-	spec.ActionUpdate:   execWrite,
-	spec.ActionAppend:   execAppend,
-	spec.ActionEdit:     execEdit,
-	spec.ActionDelete:   execDelete,
-	spec.ActionMACE:     execMace,
-	spec.ActionRename:   execRename,
-	spec.ActionCopy:     execCopy,
-	spec.ActionTruncate: execTruncate,
-	spec.ActionRotate:   execRotate,
-	spec.ActionArchive:  writeArchive,
-	spec.ActionEmail:    execEmail,
-	spec.ActionVault:    execVault,
-	spec.ActionADS:      execStream,
-	spec.ActionMOTW:     execStream,
+	spec.ActionCreate:    execCreate,
+	spec.ActionUpdate:    execWrite,
+	spec.ActionAppend:    execAppend,
+	spec.ActionEdit:      execEdit,
+	spec.ActionDelete:    execDelete,
+	spec.ActionMACE:      execMace,
+	spec.ActionTimestomp: execTimestomp,
+	spec.ActionRename:    execRename,
+	spec.ActionCopy:      execCopy,
+	spec.ActionTruncate:  execTruncate,
+	spec.ActionRotate:    execRotate,
+	spec.ActionArchive:   writeArchive,
+	spec.ActionEmail:     execEmail,
+	spec.ActionVault:     execVault,
+	spec.ActionADS:       execStream,
+	spec.ActionMOTW:      execStream,
+	spec.ActionHardlink:  execHardlink,
+	spec.ActionSymlink:   execSymlink,
+	spec.ActionJunction:  execJunction,
 }
+
+// execHardlink gives the file a second name.
+func execHardlink(ctx ExecContext, c compile.Op) error { return ctx.FS.Link(c.Path, c.NewPath) }
+
+// execSymlink writes a symlink: its target as given, its type as compile
+// settled it.
+func execSymlink(ctx ExecContext, c compile.Op) error {
+	return ctx.FS.Symlink(c.Path, c.Target, c.TargetType == "dir")
+}
+
+// execJunction writes a junction to a directory in the output.
+func execJunction(ctx ExecContext, c compile.Op) error { return ctx.FS.Junction(c.Path, c.Target) }
 
 func executeOp(ctx ExecContext, c compile.Op) error {
 	run, ok := executors[c.Action]
@@ -590,6 +647,11 @@ func execDelete(ctx ExecContext, c compile.Op) error { return ctx.FS.Remove(c.Pa
 func execMace(ctx ExecContext, c compile.Op) error {
 	return applyMode(ctx.FS, c.Operation, c.Path)
 }
+
+// execTimestomp has nothing to do of its own: the times it sets are the
+// operation's stamps, and the $FILE_NAME times it states are never on a live
+// volume (pre-flight refused or dropped them).
+func execTimestomp(ExecContext, compile.Op) error { return nil }
 
 func execRename(ctx ExecContext, c compile.Op) error {
 	if err := ctx.FS.MkdirParent(c.NewPath); err != nil {

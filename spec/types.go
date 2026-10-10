@@ -20,21 +20,25 @@ type ActionName string
 // The closed set of actions. Actions is the published order, so adding one
 // means adding it here, and compile.Fields says which keys it takes.
 const (
-	ActionCreate   ActionName = "create"
-	ActionUpdate   ActionName = "update"
-	ActionAppend   ActionName = "append"
-	ActionEdit     ActionName = "edit"
-	ActionDelete   ActionName = "delete"
-	ActionMACE     ActionName = "mace"
-	ActionRename   ActionName = "rename"
-	ActionCopy     ActionName = "copy"
-	ActionTruncate ActionName = "truncate"
-	ActionRotate   ActionName = "rotate"
-	ActionArchive  ActionName = "archive"
-	ActionEmail    ActionName = "email"
-	ActionVault    ActionName = "ansible-vault"
-	ActionADS      ActionName = "ads"
-	ActionMOTW     ActionName = "motw"
+	ActionCreate    ActionName = "create"
+	ActionUpdate    ActionName = "update"
+	ActionAppend    ActionName = "append"
+	ActionEdit      ActionName = "edit"
+	ActionDelete    ActionName = "delete"
+	ActionMACE      ActionName = "mace"
+	ActionTimestomp ActionName = "timestomp"
+	ActionRename    ActionName = "rename"
+	ActionCopy      ActionName = "copy"
+	ActionTruncate  ActionName = "truncate"
+	ActionRotate    ActionName = "rotate"
+	ActionArchive   ActionName = "archive"
+	ActionEmail     ActionName = "email"
+	ActionVault     ActionName = "ansible-vault"
+	ActionADS       ActionName = "ads"
+	ActionMOTW      ActionName = "motw"
+	ActionHardlink  ActionName = "hardlink"
+	ActionSymlink   ActionName = "symlink"
+	ActionJunction  ActionName = "junction"
 )
 
 // Actions is the closed set of action names, in documentation order. It sits
@@ -42,8 +46,9 @@ const (
 // holds cannot drift apart.
 var Actions = []ActionName{
 	ActionCreate, ActionUpdate, ActionAppend, ActionEdit, ActionDelete,
-	ActionMACE, ActionRename, ActionCopy, ActionTruncate, ActionRotate,
-	ActionArchive, ActionEmail, ActionVault, ActionADS, ActionMOTW,
+	ActionMACE, ActionTimestomp, ActionRename, ActionCopy, ActionTruncate,
+	ActionRotate, ActionArchive, ActionEmail, ActionVault, ActionADS, ActionMOTW,
+	ActionHardlink, ActionSymlink, ActionJunction,
 }
 
 // ActionNames is Actions as plain strings, for the messages and schemas that
@@ -69,6 +74,9 @@ const (
 	FormatText          Format = "text"
 	FormatPDF           Format = "pdf"
 	FormatDOCX          Format = "docx"
+	FormatDOCM          Format = "docm"
+	FormatXLSX          Format = "xlsx"
+	FormatXLSM          Format = "xlsm"
 	FormatPE            Format = "pe"
 	FormatZip           Format = "zip"
 	FormatPNG           Format = "png"
@@ -118,6 +126,13 @@ type Operation struct {
 	Mtime       string `yaml:"mtime" json:"mtime"`   // RFC3339, modification time
 	Ctime       string `yaml:"ctime" json:"ctime"`   // RFC3339, metadata change time (Windows NTFS/ReFS only)
 	Crtime      string `yaml:"crtime" json:"crtime"` // RFC3339, creation (birth) time (Windows only)
+	// The $FILE_NAME times a timestomp sets, RFC3339. NTFS keeps a second
+	// set of the four times in each name of a file, which Windows sets itself
+	// and no program can change on a live volume.
+	FnAtime  string `yaml:"fn_atime" json:"fn_atime"`
+	FnMtime  string `yaml:"fn_mtime" json:"fn_mtime"`
+	FnCtime  string `yaml:"fn_ctime" json:"fn_ctime"`
+	FnCrtime string `yaml:"fn_crtime" json:"fn_crtime"`
 
 	// Authoring extras
 	ContentFile string `yaml:"content_file" json:"content_file"` // load content from a file relative to the manifest/playbook
@@ -130,7 +145,9 @@ type Operation struct {
 
 	// Typed generators
 	Pdf     *PdfSpec     `yaml:"pdf" json:"pdf"`         // metadata for format: pdf
-	Docx    *DocxSpec    `yaml:"docx" json:"docx"`       // metadata for format: docx
+	Docx    *DocxSpec    `yaml:"docx" json:"docx"`       // metadata for format: docx or docm
+	Xlsx    *DocxSpec    `yaml:"xlsx" json:"xlsx"`       // metadata for format: xlsx or xlsm
+	Vba     *VbaSpec     `yaml:"vba" json:"vba"`         // the inert macro of format: docm or xlsm
 	Pe      *PeSpec      `yaml:"pe" json:"pe"`           // for format: pe
 	History *HistorySpec `yaml:"history" json:"history"` // for format: chrome_history or firefox_places
 	Lnk     *LnkSpec     `yaml:"lnk" json:"lnk"`         // for format: lnk
@@ -152,6 +169,19 @@ type Operation struct {
 	Archive *ArchiveSpec `yaml:"archive" json:"archive"` // for the archive action
 	Edit    *EditSpec    `yaml:"edit" json:"edit"`       // for the edit action
 
+	// Links. A symlink or junction is written and never followed.
+
+	// Target is what a symlink or junction points at: for a symlink a path
+	// relative to the link's directory (or, with allow_external_target, any
+	// path at all), for a junction a directory in the output.
+	Target string `yaml:"target" json:"target"`
+	// TargetType says whether a symlink points at a file or a directory,
+	// which Windows records in the link; by default, what the target is.
+	TargetType string `yaml:"target_type" json:"target_type"`
+	// AllowExternalTarget lets a symlink point outside the output. fsagen
+	// writes the target as given and never follows it.
+	AllowExternalTarget bool `yaml:"allow_external_target" json:"allow_external_target"`
+
 	// Windows-only extras
 	Stream      string `yaml:"stream" json:"stream"`             // for ads: stream name (e.g., Zone.Identifier)
 	ZoneID      int    `yaml:"zone_id" json:"zone_id"`           // for motw: ZoneId value (0-4)
@@ -166,13 +196,29 @@ type Operation struct {
 	Mitre []string `yaml:"mitre" json:"mitre" render:"-"`
 }
 
-// DocxSpec carries the document properties a .docx keeps inside itself, which
-// is what a metadata tool reports and what survives a copy.
+// DocxSpec carries the document properties an Office document keeps inside
+// itself, which is what a metadata tool reports and what survives a copy.
 type DocxSpec struct {
 	Title    string `yaml:"title" json:"title"`
 	Author   string `yaml:"author" json:"author"`
 	Created  string `yaml:"created" json:"created"`   // RFC3339; defaults to the operation time
 	Modified string `yaml:"modified" json:"modified"` // RFC3339; defaults to created
+}
+
+// VbaSpec is the macro a macro-enabled document carries. Its body is fixed
+// and inert: it assigns the marker to a local variable and does nothing
+// else, and no key can change that.
+type VbaSpec struct {
+	// EntryPoint is the macro Office runs as the document opens: AutoOpen
+	// (the default) or Document_Open for docm, Auto_Open (the default) or
+	// Workbook_Open for xlsm.
+	EntryPoint string `yaml:"entry_point" json:"entry_point"`
+	// ModuleName is the standard module that holds an AutoOpen or
+	// Auto_Open: NewMacros or Module1 unless given.
+	ModuleName string `yaml:"module_name" json:"module_name"`
+	// Marker is the string the macro assigns, printable ASCII; by default
+	// FSAGEN-VBA: and sixteen letters drawn from the seed.
+	Marker string `yaml:"marker" json:"marker"`
 }
 
 // PeSpec describes a Windows executable. What fsagen writes is a container

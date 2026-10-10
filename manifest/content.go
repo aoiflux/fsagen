@@ -49,12 +49,32 @@ func buildContent(c compile.Op) ([]byte, error) {
 		}
 		return libgen.RenderPDF(string(body), meta)
 
-	case spec.FormatDOCX:
-		meta, err := docxMeta(op, c.When)
+	case spec.FormatDOCX, spec.FormatDOCM:
+		meta, err := officeMeta(op.Docx, "docx", c.When)
 		if err != nil {
 			return nil, err
 		}
-		return libgen.Docx(string(body), meta)
+		if op.Format == spec.FormatDOCX {
+			return libgen.Docx(string(body), meta)
+		}
+		vba, err := buildVBA(c)
+		if err != nil {
+			return nil, err
+		}
+		return libgen.Docm(string(body), meta, vba)
+
+	case spec.FormatXLSX, spec.FormatXLSM:
+		meta, err := officeMeta(op.Xlsx, "xlsx", c.When)
+		if err != nil {
+			return nil, err
+		}
+		var vba []byte
+		if op.Format == spec.FormatXLSM {
+			if vba, err = buildVBA(c); err != nil {
+				return nil, err
+			}
+		}
+		return libgen.Xlsx(string(body), meta, vba)
 
 	case spec.FormatPE:
 		return buildPE(c, body)
@@ -103,24 +123,46 @@ func buildContent(c compile.Op) ([]byte, error) {
 	return nil, fmt.Errorf("unknown format %q (want one of: %s)", op.Format, strings.Join(spec.FormatNames(compile.TypedFormats), ", "))
 }
 
-func docxMeta(op spec.Operation, when time.Time) (libgen.DocxMeta, error) {
-	if op.Docx == nil {
+// officeMeta is a Word or Excel document's properties from its docx or
+// xlsx block (named block), its dates defaulting to the operation's time.
+func officeMeta(d *spec.DocxSpec, block string, when time.Time) (libgen.DocxMeta, error) {
+	if d == nil {
 		return libgen.DocxMeta{Created: when, Modified: when}, nil
 	}
-	created, err := timeOr(op.Docx.Created, "docx.created", when)
+	created, err := timeOr(d.Created, block+".created", when)
 	if err != nil {
 		return libgen.DocxMeta{}, err
 	}
-	modified, err := timeOr(op.Docx.Modified, "docx.modified", created)
+	modified, err := timeOr(d.Modified, block+".modified", created)
 	if err != nil {
 		return libgen.DocxMeta{}, err
 	}
 	return libgen.DocxMeta{
-		Title:    op.Docx.Title,
-		Author:   op.Docx.Author,
+		Title:    d.Title,
+		Author:   d.Author,
 		Created:  created,
 		Modified: modified,
 	}, nil
+}
+
+// markerLetters are the letters a drawn marker is made of: none of them a
+// hex digit, so a scanner looking for hex strings in the macro finds none.
+const markerLetters = "ghijklmnopqrstuv"
+
+// buildVBA is the VBA project a macro-enabled document carries. A marker
+// the scenario does not give is FSAGEN-VBA: and sixteen letters drawn from
+// the seed; the project's ID and the bytes obscuring its protection fields
+// come from a stream of their own, so giving a marker changes nothing else.
+func buildVBA(c compile.Op) ([]byte, error) {
+	s := compile.VBAOf(c.Operation)
+	if s.Marker == "" {
+		b := c.Rand.Derive("vba", "marker").Stream().Bytes(16)
+		for i := range b {
+			b[i] = markerLetters[b[i]&15]
+		}
+		s.Marker = "FSAGEN-VBA:" + string(b)
+	}
+	return libgen.BuildVBAProject(s, c.Rand.Derive("vba").Stream())
 }
 
 // timeOr reads an optional RFC 3339 time, falling back when the scenario does

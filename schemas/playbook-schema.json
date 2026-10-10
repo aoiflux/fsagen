@@ -22,6 +22,9 @@
                   "text",
                   "pdf",
                   "docx",
+                  "docm",
+                  "xlsx",
+                  "xlsm",
                   "pe",
                   "zip",
                   "png",
@@ -70,7 +73,9 @@
                 "slack",
                 "template",
                 "type",
-                "utmp"
+                "utmp",
+                "vba",
+                "xlsx"
               ]
             },
             "required": [
@@ -109,6 +114,9 @@
                   "text",
                   "pdf",
                   "docx",
+                  "docm",
+                  "xlsx",
+                  "xlsm",
                   "pe",
                   "zip",
                   "png",
@@ -155,7 +163,9 @@
                 "render",
                 "slack",
                 "template",
-                "utmp"
+                "utmp",
+                "vba",
+                "xlsx"
               ]
             }
           }
@@ -364,6 +374,98 @@
                 "ctime",
                 "mitre",
                 "mode",
+                "mtime",
+                "offset",
+                "path",
+                "ref",
+                "refs"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "timestomp"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "anyOf": [
+              {
+                "required": [
+                  "atime"
+                ]
+              },
+              {
+                "required": [
+                  "mtime"
+                ]
+              },
+              {
+                "required": [
+                  "ctime"
+                ]
+              },
+              {
+                "required": [
+                  "crtime"
+                ]
+              },
+              {
+                "required": [
+                  "fn_atime"
+                ]
+              },
+              {
+                "required": [
+                  "fn_mtime"
+                ]
+              },
+              {
+                "required": [
+                  "fn_ctime"
+                ]
+              },
+              {
+                "required": [
+                  "fn_crtime"
+                ]
+              }
+            ],
+            "oneOf": [
+              {
+                "required": [
+                  "path"
+                ]
+              },
+              {
+                "required": [
+                  "ref"
+                ]
+              },
+              {
+                "required": [
+                  "refs"
+                ]
+              }
+            ],
+            "propertyNames": {
+              "enum": [
+                "action",
+                "atime",
+                "condition",
+                "crtime",
+                "ctime",
+                "fn_atime",
+                "fn_crtime",
+                "fn_ctime",
+                "fn_mtime",
+                "mitre",
                 "mtime",
                 "offset",
                 "path",
@@ -765,6 +867,115 @@
           }
         },
         {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "hardlink"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "oneOf": [
+              {
+                "required": [
+                  "path"
+                ]
+              },
+              {
+                "required": [
+                  "ref"
+                ]
+              }
+            ],
+            "propertyNames": {
+              "enum": [
+                "action",
+                "condition",
+                "id",
+                "mitre",
+                "new_path",
+                "offset",
+                "path",
+                "ref"
+              ]
+            },
+            "required": [
+              "new_path"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "symlink"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "propertyNames": {
+              "enum": [
+                "action",
+                "allow_external_target",
+                "atime",
+                "condition",
+                "crtime",
+                "ctime",
+                "id",
+                "mitre",
+                "mtime",
+                "offset",
+                "path",
+                "target",
+                "target_type"
+              ]
+            },
+            "required": [
+              "target",
+              "path"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "junction"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "propertyNames": {
+              "enum": [
+                "action",
+                "atime",
+                "condition",
+                "crtime",
+                "ctime",
+                "id",
+                "mitre",
+                "mtime",
+                "offset",
+                "path",
+                "target"
+              ]
+            },
+            "required": [
+              "target",
+              "path"
+            ]
+          }
+        },
+        {
           "not": {
             "required": [
               "content",
@@ -800,6 +1011,10 @@
       "properties": {
         "action": {
           "$ref": "#/$defs/OperationAction"
+        },
+        "allow_external_target": {
+          "description": "symlink: let the target lie outside the output. It is written as given and never followed.",
+          "type": "boolean"
         },
         "archive": {
           "$ref": "#/$defs/ArchiveSpec"
@@ -858,12 +1073,31 @@
           "pattern": "^\\.[^/\\\\:]+$",
           "type": "string"
         },
+        "fn_atime": {
+          "$ref": "#/$defs/Rfc3339Time",
+          "description": "timestomp: a $FILE_NAME time. No live volume lets a program set one; a pre-flight error unless --on-unsupported=skip."
+        },
+        "fn_crtime": {
+          "$ref": "#/$defs/Rfc3339Time",
+          "description": "timestomp: a $FILE_NAME time. No live volume lets a program set one; a pre-flight error unless --on-unsupported=skip."
+        },
+        "fn_ctime": {
+          "$ref": "#/$defs/Rfc3339Time",
+          "description": "timestomp: a $FILE_NAME time. No live volume lets a program set one; a pre-flight error unless --on-unsupported=skip."
+        },
+        "fn_mtime": {
+          "$ref": "#/$defs/Rfc3339Time",
+          "description": "timestomp: a $FILE_NAME time. No live volume lets a program set one; a pre-flight error unless --on-unsupported=skip."
+        },
         "format": {
           "enum": [
             "raw",
             "text",
             "pdf",
             "docx",
+            "docm",
+            "xlsx",
+            "xlsm",
             "pe",
             "zip",
             "png",
@@ -951,6 +1185,18 @@
         "stream": {
           "type": "string"
         },
+        "target": {
+          "description": "symlink: what it points at, relative to the link's directory (outside the output only with allow_external_target); junction: a directory in the output, written as path is.",
+          "type": "string"
+        },
+        "target_type": {
+          "description": "symlink: whether it points at a file or a directory; by default, what the target is.",
+          "enum": [
+            "file",
+            "dir"
+          ],
+          "type": "string"
+        },
         "template": {
           "$ref": "#/$defs/Template"
         },
@@ -966,6 +1212,12 @@
         },
         "vault": {
           "$ref": "#/$defs/VaultSpec"
+        },
+        "vba": {
+          "$ref": "#/$defs/VbaSpec"
+        },
+        "xlsx": {
+          "$ref": "#/$defs/DocxSpec"
         },
         "zone_id": {
           "maximum": 4,
@@ -1686,6 +1938,7 @@
         "edit",
         "delete",
         "mace",
+        "timestomp",
         "rename",
         "copy",
         "truncate",
@@ -1694,7 +1947,10 @@
         "email",
         "ansible-vault",
         "ads",
-        "motw"
+        "motw",
+        "hardlink",
+        "symlink",
+        "junction"
       ],
       "type": "string"
     },
@@ -2268,6 +2524,30 @@
       "required": [
         "password"
       ],
+      "type": "object"
+    },
+    "VbaSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "entry_point": {
+          "description": "AutoOpen (the default) or Document_Open for docm; Auto_Open (the default) or Workbook_Open for xlsm.",
+          "enum": [
+            "AutoOpen",
+            "Document_Open",
+            "Auto_Open",
+            "Workbook_Open"
+          ],
+          "type": "string"
+        },
+        "marker": {
+          "pattern": "^[ !#-~]{1,200}$",
+          "type": "string"
+        },
+        "module_name": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_]{0,30}$",
+          "type": "string"
+        }
+      },
       "type": "object"
     }
   },

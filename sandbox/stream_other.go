@@ -7,7 +7,7 @@ import "os"
 // Named streams are an NTFS/ReFS feature; elsewhere every stream operation
 // reports ErrStreamsUnsupported and the capability pre-flight refuses (or,
 // with --on-unsupported=skip, skips) the ads and motw actions.
-func probeVolume(r *os.Root) (bool, string) { return false, fsNameOf(r) }
+func probeVolume(r *os.Root) volume { return volume{name: fsNameOf(r)} }
 
 func writeStream(*os.Root, string, string, []byte) error { return ErrStreamsUnsupported }
 

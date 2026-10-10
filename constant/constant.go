@@ -3,15 +3,17 @@
 // that says which bytes those add up to.
 //
 // The types a bulk run or a manifest can create:
-//   - Text and documents: .txt, .md, .docx, .pdf
+//   - Text and documents: .txt, .md, .docx, .pdf, and .docm and .xlsm with
+//     one inert macro (a manifest can also write .xlsx)
 //   - Images and media: .png, .jpg, .mp4
 //   - Data and markup: .csv, .json, .jsonl, .xml, .html
-//   - Logs: .log, .syslog
+//   - Logs: .log, .syslog, .evtx, and Linux's wtmp and audit.log
 //   - Archives: .zip
 //   - Email: .eml, .mbox
 //   - Browser history: .db (Chrome urls and visits), .sqlite (Firefox places)
 //   - Windows artifacts: .reg, .exe (a real PE image with headers, sections of
-//     filler, an import table and a version resource, holding no code)
+//     filler, an import table and a version resource, holding no code), .lnk,
+//     .pf and NTUSER.DAT
 //
 // Every one is built to be read by a forensic tool rather than used by the
 // application that owns it: the structure a parser walks is there, and the
@@ -48,8 +50,13 @@ const (
 // copy of each: a generated message carries canonical folded headers and a
 // Message-ID, an mbox escapes a body line beginning "From " and dates its
 // separator the way mbox does, and a pdf is paginated with margins and with
-// its first line on the page.
-const GeneratorVersion = 6
+// its first line on the page. Version 7 adds the forensic artefacts to bulk
+// mode (a shortcut, a prefetch file, an event log, NTUSER.DAT, wtmp,
+// audit.log, and a .docm and .xlsm with an inert macro) and writes a bulk
+// corpus in the plan's order; gives each created and modified fact in the
+// answer key its MD5; and records the slack, link and $FILE_NAME
+// capabilities in the run manifest.
+const GeneratorVersion = 7
 
 const (
 	TxtExtension    = ".txt"
@@ -73,4 +80,8 @@ const (
 	JpgExtension    = ".jpg"
 	DBExtension     = ".db"
 	SQLiteExtension = ".sqlite"
+	LnkExtension    = ".lnk"
+	EvtxExtension   = ".evtx"
+	DocmExtension   = ".docm"
+	XlsmExtension   = ".xlsm"
 )

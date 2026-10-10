@@ -396,6 +396,7 @@ func operationFrom(a spec.Action, actor spec.Actor) spec.Operation {
 	op := a.Operation
 	op.Path = joinPath(actor.Base, a.Path)
 	op.NewPath = joinPath(actor.Base, a.NewPath)
+	op.Target = linkTargetDir(a.Operation, actor.Base)
 	return op
 }
 

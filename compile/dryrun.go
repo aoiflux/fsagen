@@ -21,6 +21,7 @@ type dryRunOp struct {
 	Action        spec.ActionName `json:"action"`
 	Path          string          `json:"path,omitempty"`
 	NewPath       string          `json:"new_path,omitempty"`
+	Target        string          `json:"target,omitempty"`
 	Dir           bool            `json:"dir,omitempty"`
 	ID            string          `json:"id,omitempty"`
 	Mitre         []string        `json:"mitre,omitempty"`
@@ -30,6 +31,7 @@ type dryRunOp struct {
 	Format        spec.Format     `json:"format,omitempty"`
 	Mode          string          `json:"mode,omitempty"`
 	Times         *TimesJSON      `json:"times,omitempty"`
+	FnTimes       *TimesJSON      `json:"fn_times,omitempty"`
 	Members       []string        `json:"members,omitempty"`
 	ContentKind   string          `json:"content_kind,omitempty"`
 	Stream        string          `json:"stream,omitempty"`
@@ -79,6 +81,7 @@ func WriteDryRun(w io.Writer, p *Program) error {
 			Action:      op.Action,
 			Path:        op.Path,
 			NewPath:     op.NewPath,
+			Target:      op.Target,
 			Dir:         op.Dir,
 			ID:          op.ID,
 			Mitre:       op.Techniques(),
@@ -103,6 +106,9 @@ func WriteDryRun(w io.Writer, p *Program) error {
 			line.ContentSHA256 = hex.EncodeToString(sum[:])
 		case op.Random > 0:
 			line.RandomBytes = op.Random
+		}
+		if op.Action == spec.ActionTimestomp {
+			line.FnTimes = TimesOf(op.FN)
 		}
 		if op.Action == spec.ActionMOTW {
 			z := op.ZoneID

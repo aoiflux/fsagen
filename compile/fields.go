@@ -16,21 +16,25 @@ import (
 // also takes "mitre", which annotates it without changing what it does; see
 // allowed.
 var Fields = map[spec.ActionName][]string{
-	spec.ActionCreate:   {"path", "id", "type", "ext", "content", "content_len", "content_kind", "content_file", "render", "template", "mode", "format", "pdf", "docx", "pe", "history", "lnk", "prefetch", "evtx", "registry", "utmp", "auditd", "slack", "atime", "mtime", "ctime", "crtime"},
-	spec.ActionUpdate:   {"path", "ref", "content", "content_len", "content_kind", "content_file", "render", "template", "mode", "format", "pdf", "docx", "pe", "history", "lnk", "prefetch", "evtx", "registry", "utmp", "auditd", "slack", "atime", "mtime", "ctime", "crtime"},
-	spec.ActionAppend:   {"path", "ref", "id", "content", "content_len", "content_kind", "content_file", "render", "template", "mode", "atime", "mtime", "ctime", "crtime"},
-	spec.ActionEdit:     {"path", "ref", "refs", "edit", "mode", "atime", "mtime", "ctime", "crtime"},
-	spec.ActionDelete:   {"path", "ref", "refs", "missing_ok", "atime", "mtime"},
-	spec.ActionMACE:     {"path", "ref", "refs", "mode", "atime", "mtime", "ctime", "crtime"},
-	spec.ActionRename:   {"path", "ref", "new_path", "id"},
-	spec.ActionCopy:     {"path", "ref", "new_path", "id", "mode", "atime", "mtime", "ctime", "crtime"},
-	spec.ActionTruncate: {"path", "ref", "refs", "mode", "atime", "mtime", "ctime", "crtime"},
-	spec.ActionRotate:   {"path", "ref", "new_path", "mode", "atime", "mtime"},
-	spec.ActionArchive:  {"path", "id", "archive", "mode", "atime", "mtime", "ctime", "crtime"},
-	spec.ActionEmail:    {"path", "id", "email", "format", "mode", "atime", "mtime", "ctime", "crtime"},
-	spec.ActionVault:    {"path", "id", "vault", "content", "content_file", "render", "mode", "atime", "mtime", "ctime", "crtime"},
-	spec.ActionADS:      {"path", "ref", "refs", "stream", "content", "content_len", "content_kind", "content_file", "render", "atime", "mtime"},
-	spec.ActionMOTW:     {"path", "ref", "refs", "zone_id", "host_url", "referrer_url", "atime", "mtime"},
+	spec.ActionCreate:    {"path", "id", "type", "ext", "content", "content_len", "content_kind", "content_file", "render", "template", "mode", "format", "pdf", "docx", "xlsx", "vba", "pe", "history", "lnk", "prefetch", "evtx", "registry", "utmp", "auditd", "slack", "atime", "mtime", "ctime", "crtime"},
+	spec.ActionUpdate:    {"path", "ref", "content", "content_len", "content_kind", "content_file", "render", "template", "mode", "format", "pdf", "docx", "xlsx", "vba", "pe", "history", "lnk", "prefetch", "evtx", "registry", "utmp", "auditd", "slack", "atime", "mtime", "ctime", "crtime"},
+	spec.ActionAppend:    {"path", "ref", "id", "content", "content_len", "content_kind", "content_file", "render", "template", "mode", "atime", "mtime", "ctime", "crtime"},
+	spec.ActionEdit:      {"path", "ref", "refs", "edit", "mode", "atime", "mtime", "ctime", "crtime"},
+	spec.ActionDelete:    {"path", "ref", "refs", "missing_ok", "atime", "mtime"},
+	spec.ActionMACE:      {"path", "ref", "refs", "mode", "atime", "mtime", "ctime", "crtime"},
+	spec.ActionTimestomp: {"path", "ref", "refs", "atime", "mtime", "ctime", "crtime", "fn_atime", "fn_mtime", "fn_ctime", "fn_crtime"},
+	spec.ActionRename:    {"path", "ref", "new_path", "id"},
+	spec.ActionCopy:      {"path", "ref", "new_path", "id", "mode", "atime", "mtime", "ctime", "crtime"},
+	spec.ActionTruncate:  {"path", "ref", "refs", "mode", "atime", "mtime", "ctime", "crtime"},
+	spec.ActionRotate:    {"path", "ref", "new_path", "mode", "atime", "mtime"},
+	spec.ActionArchive:   {"path", "id", "archive", "mode", "atime", "mtime", "ctime", "crtime"},
+	spec.ActionEmail:     {"path", "id", "email", "format", "mode", "atime", "mtime", "ctime", "crtime"},
+	spec.ActionVault:     {"path", "id", "vault", "content", "content_file", "render", "mode", "atime", "mtime", "ctime", "crtime"},
+	spec.ActionADS:       {"path", "ref", "refs", "stream", "content", "content_len", "content_kind", "content_file", "render", "atime", "mtime"},
+	spec.ActionMOTW:      {"path", "ref", "refs", "zone_id", "host_url", "referrer_url", "atime", "mtime"},
+	spec.ActionHardlink:  {"path", "ref", "new_path", "id"},
+	spec.ActionSymlink:   {"path", "id", "target", "target_type", "allow_external_target", "atime", "mtime", "ctime", "crtime"},
+	spec.ActionJunction:  {"path", "id", "target", "atime", "mtime", "ctime", "crtime"},
 }
 
 // field is a YAML key together with the value given for it, for the checks
@@ -54,16 +58,23 @@ const ZoneIdentifierStream = "Zone.Identifier"
 // change, birth.
 var TimeFields = []string{"atime", "mtime", "ctime", "crtime"}
 
+// FileNameTimeFields are a timestomp's $FILE_NAME time keys, in the same
+// order.
+var FileNameTimeFields = []string{"fn_atime", "fn_mtime", "fn_ctime", "fn_crtime"}
+
 // Required lists the keys an action cannot do without (beyond a target).
 var Required = map[spec.ActionName][]string{
-	spec.ActionArchive: {"archive"},
-	spec.ActionEdit:    {"edit"},
-	spec.ActionRename:  {"new_path"},
-	spec.ActionCopy:    {"new_path"},
-	spec.ActionRotate:  {"new_path"},
-	spec.ActionEmail:   {"email"},
-	spec.ActionVault:   {"vault"},
-	spec.ActionADS:     {"stream"},
+	spec.ActionArchive:  {"archive"},
+	spec.ActionEdit:     {"edit"},
+	spec.ActionRename:   {"new_path"},
+	spec.ActionCopy:     {"new_path"},
+	spec.ActionRotate:   {"new_path"},
+	spec.ActionEmail:    {"email"},
+	spec.ActionVault:    {"vault"},
+	spec.ActionADS:      {"stream"},
+	spec.ActionHardlink: {"new_path"},
+	spec.ActionSymlink:  {"target"},
+	spec.ActionJunction: {"target"},
 }
 
 // Closed value sets.
@@ -87,6 +98,7 @@ var (
 	// TypedFormats are the file types a create or an update can build.
 	TypedFormats = []spec.Format{
 		spec.FormatRaw, spec.FormatText, spec.FormatPDF, spec.FormatDOCX,
+		spec.FormatDOCM, spec.FormatXLSX, spec.FormatXLSM,
 		spec.FormatPE, spec.FormatZip, spec.FormatPNG, spec.FormatJPEG,
 		spec.FormatMP4, spec.FormatChromeHistory, spec.FormatFirefoxPlaces,
 		spec.FormatLNK, spec.FormatPrefetch, spec.FormatEvtx, spec.FormatRegistry,
@@ -193,6 +205,9 @@ func checkTargets(r reporter, k keys, action spec.ActionName) {
 func checkKeyCombinations(r reporter, k keys, action spec.ActionName) {
 	if action == spec.ActionMACE && !slices.ContainsFunc(TimeFields, k.has) {
 		r.whole("mace needs at least one of atime, mtime, ctime and crtime")
+	}
+	if action == spec.ActionTimestomp && !slices.ContainsFunc(TimeFields, k.has) && !slices.ContainsFunc(FileNameTimeFields, k.has) {
+		r.whole("timestomp needs at least one of atime, mtime, ctime, crtime, fn_atime, fn_mtime, fn_ctime and fn_crtime")
 	}
 	if k.has("template") && (k.has("content") || k.has("content_file")) {
 		r.at("template", "cannot be combined with content or content_file; the template would silently replace them")

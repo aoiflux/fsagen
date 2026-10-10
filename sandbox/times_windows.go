@@ -204,6 +204,7 @@ func getMeta(r *os.Root, name, fsName string) (Meta, error) {
 	if err := windows.GetFileInformationByHandleEx(h, windows.FileIdInfo, (*byte)(unsafe.Pointer(&id)), uint32(unsafe.Sizeof(id))); err == nil {
 		m.ID = fileID(id.FileID, fsName)
 	}
+	linkMeta(h, &m)
 	return m, nil
 }
 

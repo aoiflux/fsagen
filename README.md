@@ -70,14 +70,15 @@ is recorded rather than silently dropped.
 - Deterministic output with `--seed`: the same seed and inputs give
   byte-identical files (see _Determinism contract_)
 - Manifest mode: simple, declarative file operations
-  (create/update/append/edit/delete/mace/rename/copy/truncate/rotate/archive/ads/motw/email/ansible-vault)
+  (create/update/append/edit/delete/mace/timestomp/rename/copy/truncate/rotate/archive/ads/motw/email/ansible-vault/hardlink/symlink/junction)
 - Playbook mode: complex timelines with actors, timed steps, and templating
 - Bulk mode: super-simple synthetic corpus generation with `--bulk` and
   `--depth`
 - Author content in real files with `content_file`, shared across scenarios with
   `--vars-file`
 - Files a tool can actually parse: PE executables, zip, PNG, JPEG, MP4, docx,
-  PDF, Windows shortcuts (`.lnk`), Prefetch files, event logs (`.evtx`),
+  macro-enabled Word and Excel documents (`.docm`, `.xlsm`) whose one macro is
+  inert, `.xlsx` workbooks, PDF, Windows shortcuts (`.lnk`), Prefetch files, event logs (`.evtx`),
   registry hives (with Run keys, UserAssist and USB history), Linux login
   records (`wtmp`, `utmp`, `btmp`) and audit logs, and Chrome and Firefox
   history databases. Every one of them is read back in the test suite — by
@@ -267,7 +268,9 @@ corpus.fsagen/             (or wherever --meta points)
 ```
 
 - `run-manifest.json`: generator version, Go version, seed, SHA-256 of every
-  input read, options, capabilities (including which times can be set), skipped
+  input read, options, capabilities (which times can be set, whether
+  `$FILE_NAME` times are, how far slack is kept and the cluster size, and which
+  links can be made), skipped
   operations and dropped time fields, the digests of `SHA256SUMS`,
   `ledger.jsonl` and `answer-key.jsonl`, the timeline written after the run (its
   source and format, and for a modelled one its digest), and a status that reads
@@ -275,22 +278,28 @@ corpus.fsagen/             (or wherever --meta points)
   manifest does not say `complete` is not a finished corpus. It holds no
   absolute path, host name or wall-clock time, so it is itself reproducible.
 - `SHA256SUMS`: the SHA-256 of every file and NTFS stream in the output
-  (`path:stream`), in `sha256sum` format, sorted by path. Check a corpus with
+  (`path:stream`), in `sha256sum` format, sorted by path; every name of a
+  hard-linked file, and no link. Check a corpus with
   `sha256sum -c` from inside the output directory.
 - `ledger.jsonl` (manifest and playbook runs): one line per operation: the
   object it acted on (a number that survives renames; for a rotate, also the
-  object it moved aside), its kind, its content SHA-256 before and after (and
+  object it moved aside), its kind (and a link's `target`), its content SHA-256 before and after (and
   MD5 after), its size and streams, the stream an `ads` or `motw` wrote, the
   times the scenario intends it to have, which of them the operation stated
   itself (`explicit`), which were left to the file system (`uncontrolled`), and
-  whether it was done, a no-op or skipped. A failed run still writes the ledger
-  up to the failing operation.
+  whether it was done, a no-op or skipped; `links` counts the names of a
+  hard-linked file. A failed run still writes the ledger up to the failing
+  operation.
 - `answer-key.jsonl` (complete manifest and playbook runs): what a tool
   examining the output should find, derived from the ledger and the model, one
-  fact per line: each object `created`, `modified` (content), `renamed` (with
-  `from`), `deleted`, `stomped` (a `mace`, with the fields it set), each named
-  `stream` written, and each object that ends with an `mtime_before_crtime` (a
-  copy has one without being stomped, as copies do). Directories made only as
+  fact per line: each object `created` or `modified` (content, with its size,
+  SHA-256 and MD5), `renamed` (with
+  `from`), `deleted`, `stomped` (a `mace` or `timestomp`, with the fields it
+  set; a `timestomp`'s also gives the `$FILE_NAME` times — see _Timestomp_), each named
+  `stream` written, each name a file is `linked` under, each name `unlinked`
+  from a file that keeps another (see _Links_), and each object that ends with
+  an `mtime_before_crtime` (a copy has one without being stomped, as copies
+  do). A symlink or junction is `created` with its `target`. Directories made only as
   missing parents are not listed as created. `TestAnswerKeyEntries` checks every
   kind of fact. A fact from a tagged operation carries its `mitre`
   techniques.
@@ -357,11 +366,12 @@ YAML with an optional `start` and a sequence of operations:
 
 | Field          | Meaning                                                                                                                              |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `action`       | `create` `update` `append` `edit` `truncate` `rotate` `delete` `mace` `rename` `copy` `archive` `ads` `motw` `email` `ansible-vault` |
+| `action`       | `create` `update` `append` `edit` `truncate` `rotate` `delete` `mace` `timestomp` `rename` `copy` `archive` `ads` `motw` `email` `ansible-vault` `hardlink` `symlink` `junction` |
 | `path`         | target path relative to the output root (see _Paths_ below)                                                                          |
 | `id`           | name for what this action creates or renames, so a later action can refer to it                                                      |
 | `ref` / `refs` | instead of `path`, act on the one path (`ref`) or every path (`refs`) created under an `id` that still exists; ids follow renames    |
-| `new_path`     | new location for `rename`, `rotate` or `copy`                                                                                        |
+| `new_path`     | new location for `rename`, `rotate` or `copy`, or the new name a `hardlink` gives a file                                             |
+| `target`       | what a `symlink` or `junction` points at — see _Links_                                                                               |
 | `type`         | `file` or `dir` (for `create`)                                                                                                       |
 | `ext`          | file extension to append if `path` has no extension                                                                                  |
 | `missing_ok`   | for `delete`, a path that does not exist is a recorded no-op instead of an error                                                     |
@@ -373,11 +383,11 @@ YAML with an optional `start` and a sequence of operations:
 | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `content`      | literal content (optional); `content: ''` writes an empty file                                                                                                                                                                                                                                                                                                                                                                                |
 | `content_file` | load content from a file inside the manifest's directory (optional)                                                                                                                                                                                                                                                                                                                                                                           |
-| `content_len`  | how much deterministic filler the file carries, at least 1. With no content of any kind the default is 1024 characters (256 for `append`, 128 for `ads`). For a structured format it is the size of the _filler region_, not of the file: the PE overlay, the zip member, the PNG chunk, the JPEG comments, the MP4 `mdat`, the PDF or docx text (see _File formats_). A structured format with no `content_len` gets the smallest valid file |
+| `content_len`  | how much deterministic filler the file carries, at least 1. With no content of any kind the default is 1024 characters (256 for `append`, 128 for `ads`). For a structured format it is the size of the _filler region_, not of the file: the PE overlay, the zip member, the PNG chunk, the JPEG comments, the MP4 `mdat`, the PDF or Word document's text, a workbook's one cell (see _File formats_). A structured format with no `content_len` gets the smallest valid file |
 | `content_kind` | what invented bytes look like — `text` (the default: base32), `bytes` (uniform random), `zeros`, `pattern` (a counting ramp) or `lorem` (words). It only applies to bytes fsagen invents, so giving it beside `content`, `content_file` or `template` is an error                                                                                                                                                                             |
 | `render`       | run `${...}` substitution over the content. Defaults to `true` for inline `content` and `false` for `content_file`, because scripts and PEM keys contain `${...}` sequences of their own that must survive verbatim                                                                                                                                                                                                                           |
 | `mode`         | octal file permissions, e.g. `"0600"` (default 0644 files, 0755 directories)                                                                                                                                                                                                                                                                                                                                                                  |
-| `format`       | what to build — `raw` (default) or `text` writes the content through; `pdf`, `docx`, `pe`, `zip`, `png`, `jpeg`, `mp4`, `lnk`, `prefetch`, `evtx`, `regf`, `utmp`, `auditd`, `chrome_history` and `firefox_places` build a file of that type. With no `format` and no content of its own, the extension picks one (see _File formats_). For the `email` action, `eml` or `mbox`                                                                                                                    |
+| `format`       | what to build — `raw` (default) or `text` writes the content through; `pdf`, `docx`, `docm`, `xlsx`, `xlsm`, `pe`, `zip`, `png`, `jpeg`, `mp4`, `lnk`, `prefetch`, `evtx`, `regf`, `utmp`, `auditd`, `chrome_history` and `firefox_places` build a file of that type. With no `format` and no content of its own, the extension picks one (see _File formats_). For the `email` action, `eml` or `mbox`                                                                                                                    |
 
 **Typed blocks** — each belongs to one `format` or action, and is an error
 beside any other
@@ -385,7 +395,9 @@ beside any other
 | Field     | Meaning                                                                                                          |
 | --------- | ---------------------------------------------------------------------------------------------------------------- |
 | `pdf`     | document metadata for `format: pdf` — see _`format: pdf`_                                                        |
-| `docx`    | `title`, `author`, `created`, `modified` for `format: docx`                                                      |
+| `docx`    | `title`, `author`, `created`, `modified` for `format: docx` or `docm`                                            |
+| `xlsx`    | the same, for `format: xlsx` or `xlsm`                                                                           |
+| `vba`     | the inert macro of `format: docm` or `xlsm`: its entry point, module and marker — see _`vba:`_                   |
 | `pe`      | machine, subsystem, dll, timestamp, sections, imports and version resource for `format: pe` — see _File formats_ |
 | `history` | `visits` and (Chrome) `downloads` for `format: chrome_history` or `firefox_places` — see _File formats_          |
 | `lnk`     | the target and what the link records about it, for `format: lnk` — see _`lnk:`_                                  |
@@ -426,7 +438,7 @@ operation or step/action, and the field). All of these are errors:
   non-empty directory. `append` creates a missing file, as a log comes into
   being.
 - random content (`content_len`, or no content at all) under an extension that
-  promises a format fsagen cannot build: `.xlsx`, `.pptx`, `.gif`, `.bmp`,
+  promises a format fsagen cannot build: `.pptx`, `.gif`, `.bmp`,
   `.mov`, `.sqlite`, `.db`, `.eml`, `.mbox`, and `.pdf` without `format: pdf`.
   The error says what the extension promises and what to use instead
   (`action: email` for a message, `format: chrome_history` for a profile). Add
@@ -503,7 +515,7 @@ name two different files: give the first an `id` and refer to it with
 `ref`/`refs`.
 
 Operations supported:
-`create|update|append|edit|truncate|rotate|delete|mace|rename|copy|archive|ads|motw|email|ansible-vault`
+`create|update|append|edit|truncate|rotate|delete|mace|timestomp|rename|copy|archive|ads|motw|email|ansible-vault|hardlink|symlink|junction`
 (all operations work in both manifest and playbook). `ads` and `motw` are
 Windows-only. Each action happens at its scheduled time, which sets the times of
 what it creates or changes (see _Timestamps_); explicit
@@ -600,6 +612,9 @@ Available templates: `email`, `log`, `script`, `doc`
   and truncation
 - `examples/playbook-windows-ads-motw.yaml` - Adds NTFS ADS and Mark-of-the-Web
   (Windows-only)
+- `examples/playbook-macro-phish.yaml` - A macro-enabled invoice (`.docm`, its
+  macro inert), a payload whose times are stomped with `timestomp`, a hard link
+  hiding a second name for it, and an `.xlsx`
 - `examples/playbook-email-thread.yaml` - Four-message RFC 5322 thread as `.eml`
   and `.mbox`, with a generated PDF attachment
 - `examples/playbook-comprehensive-ransomware.yaml` - **Advanced**: Full
@@ -784,6 +799,127 @@ steps:
   whose parent is not tagged brings an unscored parent entry, so the layer
   opens with every tagged ID visible (`TestLayerContent`, `TestLayerGolden`).
 
+## Timestomp
+
+`timestomp` sets times the way anti-forensic tools do. Its `atime`, `mtime`,
+`ctime` and `crtime` are the `$STANDARD_INFORMATION` times, which Explorer,
+`dir` and `stat` show, and it sets them exactly as `mace` does. Its
+`fn_atime`, `fn_mtime`, `fn_ctime` and `fn_crtime` are the `$FILE_NAME` times
+beside them, which only a raw read of the MFT shows. It needs at least one of
+the eight.
+
+```yaml
+- action: timestomp
+  path: Users/victim/AppData/Local/Temp/payload.exe
+  crtime: "2019-03-07T10:12:44Z"
+  mtime: "2019-03-07T10:12:44Z"
+  mitre: [T1070.006]
+```
+
+What a tool should find is in its `stomped` fact in the answer key:
+
+- `times` and `fields`, as for `mace`: the `$STANDARD_INFORMATION` times
+  afterwards and the ones the action set.
+- `fn_times`: the `$FILE_NAME` times the scenario means, from the rules under
+  _Timestamps_. A stomp of `$STANDARD_INFORMATION` alone leaves them at the
+  times the file was born or last renamed.
+- `fn_controlled`: whether `fn_times` are on disk. **On a live volume they never
+  are**: Windows writes them itself, at the moment fsagen actually creates the
+  file, and no call a program can make changes them. `fn_times` is then what
+  the scenario intends, for comparison with what a tool reads, not a claim
+  about the disk. Asking for an `fn_` time is a pre-flight error there; with
+  `--on-unsupported=skip` the action sets the other times, its ledger entry
+  lists the `fn_` fields as `uncontrolled`, and the run manifest records each
+  one skipped (`TestFileNameTimesPreflight`, `TestTimestompOnLiveVolume`).
+- `delta`: for each time, `$STANDARD_INFORMATION` minus `$FILE_NAME`, in
+  seconds, written exactly (`-258454860`, `0.75`) so a stomp decades away keeps
+  its 100-nanosecond ticks (`TestSecondsBetween`).
+- `timestomp_detected`: whether the `$STANDARD_INFORMATION` creation time is
+  earlier than the `$FILE_NAME` one, the comparison MFTECmd's `SI<FN` column
+  makes (`TestTimestompFact`).
+
+The fact describes the file as the stomp left it. A later `rename` copies the
+stomped times into `$FILE_NAME`, as NTFS does, after which the two sets agree
+and `SI<FN` sees nothing: the double-rename trick. The model follows it
+(`TestFileNameTimeRules`), but only a `timestomp`'s own fact reports
+`$FILE_NAME` times. The ledger entry carries `fn_times` too, and so does the
+`--dry-run` listing (`TestDryRunListsFileNameTimes`).
+
+## Links
+
+Three actions make links. fsagen writes each and **never follows one**:
+nothing is written, read, copied or streamed through a link, no walk of the
+output descends through one, and a time set on a link is the link's own.
+
+```yaml
+- action: hardlink # a second name for a file: same bytes, same times
+  path: Users/victim/Desktop/payroll.xlsx
+  new_path: Users/Public/Libraries/cache.dat
+- action: symlink
+  path: Users/victim/Desktop/notes # the link
+  target: ../Documents/notes.txt # relative to the link's directory
+- action: symlink
+  path: tmp/shadow
+  target: /etc/shadow # outside the output: written as given, never followed
+  allow_external_target: true
+- action: symlink
+  path: staging/next
+  target: ../exfil # not there yet; Windows records the type, so say it
+  target_type: dir
+- action: junction # Windows only
+  path: Users/Public/Libraries/docs
+  target: Users/victim/Documents # a directory in the output, written as path is
+```
+
+- `hardlink` takes `path` (or `ref`) and `new_path`. Only a file can be
+  hard-linked. It is one object under two names: an update through either is
+  seen through both, the file's change time moves as its link count does,
+  and each name keeps its own `$FILE_NAME` times, the new one written with
+  the file's times at that moment. Deleting a name the file is not left
+  without only unlinks it; the file goes with its last name.
+- `symlink` takes `path`, `target`, `target_type` and `allow_external_target`.
+  A target relative to the link's directory that stays inside the output is
+  checked and stored as written, and may be dangling. Any other target (an
+  absolute path, a drive, a share, or a relative one that climbs out) needs
+  `allow_external_target: true`. `target_type` (`file` or `dir`) defaults to
+  what the target is, and a file where it is not there; on Windows it decides
+  whether the link is a directory link, which fsagen writes itself, as
+  `CreateSymbolicLinkW` writes it, rather than letting the target decide.
+- `junction` takes `path` and `target`, a directory that exists in the output
+  by then. Windows stores a junction's target as an absolute path, so it
+  names the directory wherever the output is; fsagen writes the reparse data
+  exactly as `mklink /J` does (`TestWindowsLinksAsWindowsMakesThem`).
+- `mace`, `timestomp`, `rename` and `delete` act on a link itself. `update`,
+  `append`, `edit`, `truncate`, `copy`, `rotate`, `ads`, `motw`, a typed
+  create over a link, or a path through one are compile errors.
+- A link this platform or volume cannot make stops the run, with
+  `--on-unsupported=skip` too: later actions, and the settle pass, would act
+  on a name that is not there. Symlinks on Windows need Developer Mode or the
+  privilege, tried once in a temporary directory.
+
+What it leaves:
+
+- SHA256SUMS lists every name of a hard-linked file, and leaves links out
+  (they have no content of their own); `outputs.links` in the run manifest
+  counts them.
+- The ledger's `kind` is `symlink` or `junction` with its `target`, and
+  `links` counts a hard-linked file's names. The answer key says `linked`
+  (with `from`), `unlinked`, or `created` with the link's `target`.
+- A modelled timeline has an entry for each name of a hard-linked file, with
+  `links`, and names a link `path -> target`, as The Sleuth Kit does. An
+  observed one reads both kinds back as links with their targets (a junction
+  pointing into the output as a path in it), and never hashes or descends
+  through one.
+- `--into-existing` seeds links as links and a hard-linked file's names as
+  one object, so a run into such a tree unlinks rather than deletes, and
+  refuses to write through a link it finds (`TestIntoExistingSeedsLinks`).
+- Loops (two symlinks pointing at each other, one pointing at its own
+  directory, a junction inside the directory it names) are written and every
+  walk ends (`TestLinkLoopsTerminate`).
+
+`TestHardLinksEndToEnd`, `TestSymlinksEndToEnd`, `TestLinkRules` and
+`TestLinkSimulation` cover the rest; all of them run on Windows 11 and Linux.
+
 ## Slack
 
 A `create` or `update` can leave bytes in the file's **slack** — between the
@@ -872,15 +1008,27 @@ always wins:
 | `create`, `archive`, `ansible-vault`, `email` to an `.eml`                     | born at T: all four times are T (creating a file that exists makes it anew)                                                                                                                                                        |
 | `update`, `append`, `edit`, `truncate`, a later message appended to an `.mbox` | access, modification and change become T; creation is kept                                                                                                                                                                         |
 | `mace`                                                                         | only the times it names (at least one)                                                                                                                                                                                             |
+| `timestomp`                                                                    | only the times it names, as `mace`, and the `$FILE_NAME` times it names (see _Timestomp_)                                                                                                                                         |
 | `ads`, `motw`                                                                  | the file's times do not change                                                                                                                                                                                                     |
 | `rename`                                                                       | the object keeps its times; its change time becomes T                                                                                                                                                                              |
 | `rotate`                                                                       | the rotated file is renamed (keeps its times); the empty file left at the old path is born at T                                                                                                                                    |
 | `copy`                                                                         | the copy is born at T but keeps its source's modification time, and its named streams                                                                                                                                              |
-| `delete`                                                                       | the object is stamped with its final times just before it is removed; `atime`/`mtime` on a delete set the directory it leaves                                                                                                      |
+| `hardlink`                                                                     | the file keeps its times; its change time becomes T (its link count changed)                                                                                                                                                       |
+| `symlink`, `junction`                                                          | the link is born at T, as a create; its target's times do not change                                                                                                                                                               |
+| `delete`                                                                       | the object is stamped with its final times just before it is removed; `atime`/`mtime` on a delete set the directory it leaves; a hard-linked file that keeps a name stays, its change time T                                     |
 | directories                                                                    | born with the operation that creates them, explicitly or as a missing parent; every entry added, removed or renamed in them sets their modification and change times to T; a `mace` on a directory holds until the next such event |
 
 A manifest operation with no time of its own and no `start` has no T: its times
 are left to the file system, and the ledger lists them as uncontrolled.
+
+Each object also has the four times NTFS keeps in its `$FILE_NAME` attribute,
+which Windows sets itself. fsagen models them as Windows does: all four are T
+when the object is born (an explicit time on the create does not reach them,
+being set the way a program sets times, which leaves `$FILE_NAME` alone); a
+`rename` copies the object's times into them; writes and `mace` leave them as
+they are; and only a `timestomp`'s `fn_` times set them
+(`TestFileNameTimeRules`). No live volume lets fsagen write them, so they
+appear only in a `timestomp`'s ledger entry and answer-key fact.
 
 After each operation fsagen stamps what it touched. After the last one it
 settles the whole tree, files first and then directories deepest first, and
@@ -996,7 +1144,10 @@ operation is listed in `run-manifest.json`
 | birth time read into a timeline           | yes                          | yes                        | `statx` `STATX_BTIME` where the filesystem reports one, else unknown                                  | `Birthtimespec`       |
 | named streams listed in a timeline        | yes, one record each         | none to list               | n/a                                                                                                   | n/a                   |
 | timeline read without moving access times | yes, suspended per handle    | the same                   | `O_NOATIME` when the caller owns the file, else restored, which moves the change time and is recorded | best effort, recorded |
-| `$FILE_NAME` times                        | never controlled             | n/a                        | n/a                                                                                                   | n/a                   |
+| `$FILE_NAME` times                        | never controlled; a `timestomp`'s `fn_` times are a pre-flight error | n/a | n/a                                                                                     | n/a                   |
+| `hardlink`                                | yes                          | no                         | yes, but not on FAT or exFAT                                                                          | compiled, never run   |
+| `symlink`                                 | with Developer Mode or the privilege | no                 | yes, but not on FAT or exFAT                                                                          | compiled, never run   |
+| `junction`                                | yes                          | no                         | no                                                                                                    | no                    |
 
 A "no" for something the input asks for outright is a pre-flight error; a "no"
 for a default the scenario only implies is recorded as `uncontrolled` in the run
@@ -1018,7 +1169,11 @@ What fsagen does not control, and what can change its output after it finishes:
 - NTFS keeps a second set of times in each `$FILE_NAME` attribute, which no
   user-mode call can set. The run manifest says
   `filename_times_controlled:
-  false`.
+  false`, and a `timestomp` that names one is refused (or, with
+  `--on-unsupported=skip`, sets the other times only and records the rest).
+  Windows sets them when fsagen actually writes each file, so a tool that
+  compares the two sets (MFTECmd's `SI<FN`) flags every file whose scenario
+  creation time is earlier than the run, not only the stomped ones.
 - The output directory's own times are never set
   (`root_times_controlled:
   false`).
@@ -1077,6 +1232,9 @@ type whose extension is ambiguous.
 | `jpeg`           | `.jpg` `.jpeg`              | a 64×64 baseline JPEG                                                                                                | `COM` segments after `SOI`          | `image/jpeg` (`TestJPEGDecodesAndCarriesPadding`)                        |
 | `mp4`            | `.mp4`                      | `ftyp` + `moov` (`mvhd`, one video `trak`) + `mdat`, 320×240, 3 s                                                    | the `mdat` payload                  | a box walk (`TestMP4HasFtypMoovMdat`, `TestMP4DurationAndDimensions`)    |
 | `docx`           | `.docx`                     | an OOXML package: `[Content_Types].xml`, `word/document.xml`, `docProps/core.xml` and `app.xml`, stored uncompressed | the document's text                 | `archive/zip` + the properties (`TestDocxOpensWithParts`)                |
+| `docm`           | `.docm`                     | the same, macro-enabled, with a VBA project (`word/vbaProject.bin`) holding one inert macro                            | the document's text                 | Word, which compiles the macro; Windows' structured storage; mscfb; olevba (see _`vba:`_) |
+| `xlsx`           | `.xlsx`                     | a workbook with one sheet, `Sheet1`, its column A holding the text a line to a row                                   | one line, so one cell               | Excel; `archive/zip` (`TestOfficeDocumentsParse`)                        |
+| `xlsm`           | `.xlsm`                     | the same, macro-enabled, with a VBA project (`xl/vbaProject.bin`) holding one inert macro                              | one line, so one cell               | Excel; Windows' structured storage; mscfb; olevba (see _`vba:`_)          |
 | `lnk`            | `.lnk`                      | a Windows shell link: header, ID list down to the target, LinkInfo (volume and path), strings, a link-tracking block  | not accepted                        | Windows' own shell and golnk (see _`lnk:`_)                              |
 | `prefetch`       | `.pf`                       | a Windows 10 or 11 prefetch file (SCCA version 30 or 31), MAM-compressed with XPRESS Huffman                         | not accepted                        | Windows' own decompressor and go-prefetch (see _`prefetch:`_)            |
 | `evtx`           | `.evtx`                     | a Windows event log: file header, 64 KiB chunks, binary XML records with templates, every CRC                        | not accepted                        | `Get-WinEvent` and Velocidex evtx (see _`evtx:`_)                         |
@@ -1098,8 +1256,9 @@ an error rather than a fake — see _Input is strict_.
 Filler is base32 text unless `content_kind` says otherwise (`TestFillerKinds`,
 `TestBytesEntropyAbove7_9At64KiB`, `TestContentKindShapesTheBytes`). A
 structured format is built by fsagen, so it takes no `content`, `content_file`,
-`template` or `render`; `pdf` and `docx` are the exceptions, because there the
-content _is_ the document's text.
+`template` or `render`; `pdf` and the Office formats (`docx`, `docm`, `xlsx`,
+`xlsm`) are the exceptions, because there the content _is_ the document's text
+(a workbook's, a line to a cell, at most 32767 characters each).
 
 ### `pe:` — Windows executables
 
@@ -1184,6 +1343,61 @@ has been checked against a named forensic tool.
 A history database is as big as its contents make it, so it takes no
 `content_len`. `examples/manifest-history.yaml` and
 `examples/playbook-browsing.yaml` are worked profiles.
+
+### `vba:` — macro-enabled documents
+
+A `.docm` or `.xlsm` carries a VBA project with exactly one macro, and that
+macro is inert: it assigns a marker string to a local variable and does
+nothing else. Nothing in the block can change that; there is no way to give
+it code.
+
+```yaml
+- action: create
+  path: Users/victim/Downloads/Invoice_4471.docm
+  format: docm # needed here because the action gives content
+  content: Please enable editing and content to view this invoice.
+  docx: { author: Accounts }
+  vba:
+    entry_point: Document_Open # AutoOpen (default) or Document_Open; Auto_Open (default) or Workbook_Open for xlsm
+    marker: FSAGEN-VBA:invoice-4471 # default: FSAGEN-VBA: and 16 letters from the seed
+  mitre: [T1204.002]
+- action: create
+  path: Users/victim/Downloads/budget.xlsm # inferred; the defaults throughout
+  vba: { module_name: Loader } # the standard module holding Auto_Open; Module1 by default
+```
+
+- The entry point is one Office runs when the document opens, so a scanner
+  reports it: `AutoOpen` (in a standard module, `NewMacros` unless
+  `module_name` says otherwise) or `Document_Open` (in `ThisDocument`) for
+  Word; `Auto_Open` (in `Module1` unless named) or `Workbook_Open` (in
+  `ThisWorkbook`) for Excel. `module_name` is a VBA name, and only applies to
+  the standard-module entry points.
+- The marker is printable ASCII without a double quote, up to 200 characters,
+  so it can only ever be a string. A marker the scenario does not give is
+  drawn from letters that are not hex digits, so a scanner hunting hex
+  strings finds none in it.
+- The project is what [MS-OVBA] describes: a compound file (version 3,
+  written by fsagen's own `libgen/cfb.go`) holding `PROJECT`, `PROJECTwm`, and
+  under `VBA` the `dir` stream, `_VBA_PROJECT` and one stream per module, the
+  source compressed with the specification's algorithm, which reproduces its
+  three worked examples byte for byte (`TestOVBASpecExamples`). There is no
+  compiled p-code: `_VBA_PROJECT` says so, as the specification requires of a
+  writer, and Office compiles the source as it opens the document. The
+  project's protection fields say unprotected, no password, visible, obscured
+  as the specification's data encryption obscures them, which the tests
+  reverse (`TestVBAProjectReadBack`).
+- Windows' own structured storage reads every stream back
+  (`TestCFBReadByWindows`), and so does mscfb in the conformance module.
+  With `FSAGEN_OFFICE=1`, `TestMacroDocumentsOpenInOffice` opens each kind in
+  Word and Excel with every macro forcibly disabled: both find the project,
+  Excel the code names, and Word compiles the source and saves it back
+  unchanged. Where `olevba` is installed, `TestVBAReadByOlevba` checks that it
+  extracts each macro and reports only its entry point (AutoExec); on an
+  Excel project it also reports hex strings, which are the class GUIDs on the
+  `Attribute VB_Base` lines that every Excel project carries, and which it
+  reports in a workbook Excel wrote too.
+- A `.xlsx` is the same workbook with no project. Neither is inferred from
+  content given beside it: give `format:` then, as for `.docx`.
 
 ### `lnk:` — Windows shortcuts
 
@@ -1500,9 +1714,12 @@ range past the end of the file is an error (`TestEditDeleteLines40to60`,
 Bulk mode writes `--bulk` files of every one of these types in each directory it
 makes, all structurally valid:
 
-- **Documents**: .txt, .md, .docx, .pdf
+- **Documents**: .txt, .md, .docx, .pdf; .docm and .xlsm, each with one inert
+  macro (see _`vba:`_)
 - **Data**: .csv, .json, .jsonl, .xml, .html
-- **Logs**: .log, .syslog, .jsonl
+- **Logs**: .log, .syslog, .jsonl; a Windows event log (.evtx, logons and
+  process creations); and a Linux `wtmp` and `audit.log`, each in a host
+  directory (`Host-xxxxxx/var/log/wtmp`, `Host-xxxxxx/var/log/audit/audit.log`)
 - **Media**: .png, .jpg, .mp4
 - **Archives**: .zip
 - **Email**: .eml, .mbox
@@ -1510,7 +1727,15 @@ makes, all structurally valid:
   Firefox one
   (`Firefox-xxxxxx/Profiles/xxxxxxxx.default-release/places.sqlite`), under the
   names a tool looks for
-- **Windows**: .reg; .exe (a real PE with imports and a version resource)
+- **Windows**: .reg; .exe (a real PE with imports and a version resource); a
+  shortcut (.lnk); a prefetch file named for its program and path hash
+  (`XXXXXXXX.EXE-1A2B3C4D.pf`); and `Profile-xxxxxx/NTUSER.DAT`, with a Run key
+  and UserAssist entries
+
+Each file is built by the builder its format uses in a manifest, and the
+corpus is written in the plan's order: files are rendered in parallel and
+committed one at a time, so the order a file system allocates in is the
+plan's too (`TestBulkForensicKindsParse`, `TestBulkGoldens`).
 
 ## Forensic timelines
 
@@ -1713,6 +1938,7 @@ these is a dependency of fsagen and none is in its `go.mod`:
 | `www.velocidex.com/golang/go-prefetch` | `prefetch`, and XPRESS Huffman with its own decoder              | Apache-2.0 |
 | `www.velocidex.com/golang/evtx`        | `evtx`                                                           | Apache-2.0 |
 | `www.velocidex.com/golang/regparser`   | `regf`                                                           | Apache-2.0 |
+| `github.com/richardlehane/mscfb`       | the compound file inside `docm` and `xlsm` (the VBA project)     | Apache-2.0 |
 | `www.velocidex.com/golang/go-ntfs`     | a live NTFS volume, raw, to read slack back (administrator only) | Apache-2.0 |
 
 ## Citation

@@ -1,0 +1,14 @@
+# input-sha256 376291b9c9a44da4d46291354102f20c9de9aa89b095a85f76e352a9bf56f92e
+d Users/
+d Users/Public/
+d Users/Public/Libraries/
+f 7bbd46320e80a1fa6754f896ac749561a9d12650faa9ab0499ade987d9373a85 4608 Users/Public/Libraries/cache.dat
+d Users/victim/
+d Users/victim/AppData/
+d Users/victim/AppData/Local/
+d Users/victim/AppData/Local/Temp/
+f 7bbd46320e80a1fa6754f896ac749561a9d12650faa9ab0499ade987d9373a85 4608 Users/victim/AppData/Local/Temp/wupdmgr32.exe
+d Users/victim/Documents/
+f 0c4d4ab9b5cd8925ee405f6d040782dbcae98fc20275c6e080531495f024b76e 5048 Users/victim/Documents/budget-2026.xlsx
+d Users/victim/Downloads/
+f 5867ccf2530719f1ffa45f50165909e63fb36acbdee52a6ab80ba0679c5f1ced 7700 Users/victim/Downloads/Invoice_4471.docm

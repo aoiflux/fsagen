@@ -154,6 +154,7 @@ func TestNestedDefsRefineRealFields(t *testing.T) {
 		"Header":             spec.Header{},
 		"PdfSpec":            spec.PdfSpec{},
 		"DocxSpec":           spec.DocxSpec{},
+		"VbaSpec":            spec.VbaSpec{},
 		"EmailSpec":          spec.EmailSpec{},
 		"Attachment":         spec.Attachment{},
 		"VaultSpec":          spec.VaultSpec{},

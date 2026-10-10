@@ -1,0 +1,5 @@
+# input-sha256 860f94d6577cd62152c3e8bc412760aca89e893b809af3fb74be43d8f4eb4f4e
+{"n":1,"src":"manifest-history.yaml:7:5: operation 1 [create]","action":"create","path":"Chrome/Default","dir":true}
+{"n":2,"src":"manifest-history.yaml:11:5: operation 2 [create]","action":"create","path":"Chrome/Default/History","format":"chrome_history","times":{"atime":"2023-10-30T14:30:00Z","mtime":"2023-10-30T14:00:00Z","ctime":"2023-10-30T14:00:00Z","crtime":"2023-10-30T14:00:00Z"}}
+{"n":3,"src":"manifest-history.yaml:39:5: operation 3 [create]","action":"create","path":"Firefox/Profiles/default","dir":true}
+{"n":4,"src":"manifest-history.yaml:43:5: operation 4 [create]","action":"create","path":"Firefox/Profiles/default/places.sqlite","format":"firefox_places","times":{"atime":"2023-10-30T15:30:00Z","mtime":"2023-10-30T15:00:00Z","ctime":"2023-10-30T15:00:00Z","crtime":"2023-10-30T15:00:00Z"}}

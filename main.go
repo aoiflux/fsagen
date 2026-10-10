@@ -526,7 +526,11 @@ func newRecords(c *config, varsInput *sandbox.Input, caps compile.Caps, probe *s
 		AllowNonportable:     c.allowNonport,
 		AllowExternalSources: c.allowExternal,
 	}
-	rm.Capabilities = runinfo.Capabilities{NamedStreams: caps.NamedStreams, BirthTime: caps.BirthTime, ChangeTime: caps.ChangeTime}
+	rm.Capabilities = runinfo.Capabilities{
+		NamedStreams: caps.NamedStreams, BirthTime: caps.BirthTime, ChangeTime: caps.ChangeTime, FilenameTimesControlled: caps.FilenameTimes,
+		Slack: string(caps.Slack), ClusterSize: caps.ClusterSize,
+		Hardlinks: caps.Hardlinks, Symlinks: caps.Symlinks, Junctions: caps.Junctions,
+	}
 	// Merging into a tree this run did not create cannot be reproduced from the
 	// input alone.
 	rm.Reproducible = !c.intoExisting
@@ -775,6 +779,9 @@ func nearestExisting(p string) string {
 // let a later operation collide with something the model does not know is there.
 func seedModel(fsys *sandbox.FS) (*model.Tree, error) {
 	t := model.New()
+	// first is the first name found for each hard-linked file, by its ID,
+	// so the names after it join the same object.
+	first := map[string]string{}
 	err := fsys.WalkDir(func(name string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -782,15 +789,37 @@ func seedModel(fsys *sandbox.FS) (*model.Tree, error) {
 		if name == "." {
 			return nil
 		}
-		t.Add(path.Clean(name), kindOf(d))
+		m, err := fsys.Meta(name)
+		if err != nil {
+			return err
+		}
+		p, kind := path.Clean(name), kindOf(d, m)
+		if kind == model.File && m.Links > 1 && m.ID != "" {
+			if f, ok := first[m.ID]; ok {
+				t.AddName(f, p)
+				return nil
+			}
+			first[m.ID] = p
+		}
+		t.Add(p, kind, m.Target)
+		if kind.IsLink() {
+			// A link's streams would be read through it.
+			return nil
+		}
 		return seedStreams(t, fsys, name)
 	})
 	return t, err
 }
 
-// kindOf is the model kind of a directory entry.
-func kindOf(d fs.DirEntry) model.Kind {
-	if d.IsDir() {
+// kindOf is the model kind of a directory entry. A walk never descends
+// through a link, and neither does the model.
+func kindOf(d fs.DirEntry, m sandbox.Meta) model.Kind {
+	switch {
+	case m.Link == sandbox.LinkSymlink:
+		return model.Symlink
+	case m.Link == sandbox.LinkJunction:
+		return model.Junction
+	case d.IsDir():
 		return model.Dir
 	}
 	return model.File

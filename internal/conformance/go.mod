@@ -7,6 +7,7 @@ toolchain go1.27.0
 require (
 	github.com/aoiflux/fsagen v0.0.0
 	github.com/parsiya/golnk v0.0.0-20260401090434-89c3c681a14a
+	github.com/richardlehane/mscfb v1.0.9
 	golang.org/x/sys v0.47.0
 	www.velocidex.com/golang/evtx v0.2.0
 	www.velocidex.com/golang/go-ntfs v0.2.1
@@ -40,6 +41,7 @@ require (
 	github.com/olekukonko/tablewriter v1.1.4 // indirect
 	github.com/pkg/errors v0.8.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
+	github.com/richardlehane/msoleps v1.0.3 // indirect
 	github.com/rogpeppe/go-internal v1.16.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/text v0.40.0 // indirect

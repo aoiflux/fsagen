@@ -41,6 +41,7 @@ type FS struct {
 	fsName  string
 	gran    Granularity
 	cluster int
+	links   LinkCaps
 }
 
 // Open opens dir, which must already exist, as a confined output root.
@@ -54,7 +55,8 @@ func Open(dir string) (*FS, error) {
 		return nil, err
 	}
 	f := &FS{root: r, dir: abs}
-	f.streams, f.fsName = probeVolume(r)
+	v := probeVolume(r)
+	f.streams, f.fsName, f.links = v.streams, v.name, linkCaps(v)
 	f.gran = volumeGranularity(r, f.fsName)
 	f.cluster = probeCluster(abs)
 	return f, nil

@@ -285,6 +285,19 @@ func nestedDefs(defs map[string]any) {
 		prop("created", rfc3339()).
 		prop("modified", rfc3339())
 
+	var entryPoints []string
+	for _, host := range []string{libgen.VBAWord, libgen.VBAExcel} {
+		entryPoints = append(entryPoints, libgen.VBAEntryPoints[host]...)
+	}
+	register(defs, "VbaSpec", spec.VbaSpec{}).
+		prop("entry_point", map[string]any{
+			"type":        "string",
+			"enum":        entryPoints,
+			"description": "AutoOpen (the default) or Document_Open for docm; Auto_Open (the default) or Workbook_Open for xlsm.",
+		}).
+		prop("module_name", map[string]any{"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]{0,30}$"}).
+		prop("marker", map[string]any{"type": "string", "pattern": "^[ !#-~]{1,200}$"})
+
 	register(defs, "EmailSpec", spec.EmailSpec{}).
 		prop("date", rfc3339())
 
@@ -524,6 +537,9 @@ func commonOperationProps(props map[string]any) {
 	props["mtime"] = map[string]any{"$ref": "#/$defs/Rfc3339Time"}
 	props["ctime"] = map[string]any{"$ref": "#/$defs/Rfc3339Time", "description": "Metadata change time. Windows on NTFS or ReFS only; elsewhere a pre-flight error unless --on-unsupported=skip."}
 	props["crtime"] = map[string]any{"$ref": "#/$defs/Rfc3339Time", "description": "Creation (birth) time. Windows only; elsewhere a pre-flight error unless --on-unsupported=skip."}
+	for _, f := range compile.FileNameTimeFields {
+		props[f] = map[string]any{"$ref": "#/$defs/Rfc3339Time", "description": "timestomp: a $FILE_NAME time. No live volume lets a program set one; a pre-flight error unless --on-unsupported=skip."}
+	}
 	props["zone_id"] = map[string]any{"type": "integer", "minimum": 0, "maximum": 4}
 	props["content_len"] = map[string]any{"type": "integer", "minimum": 1}
 	props["format"] = map[string]any{"type": "string", "enum": allFormats()}
@@ -542,6 +558,9 @@ func commonOperationProps(props map[string]any) {
 	props["ref"] = map[string]any{"type": "string", "description": "Instead of path: the one live path created under this id."}
 	props["refs"] = map[string]any{"type": "string", "description": "Instead of path: every live path created under this id."}
 	props["missing_ok"] = map[string]any{"type": "boolean", "description": "delete: a missing path is a recorded no-op."}
+	props["target"] = map[string]any{"type": "string", "description": "symlink: what it points at, relative to the link's directory (outside the output only with allow_external_target); junction: a directory in the output, written as path is."}
+	props["target_type"] = map[string]any{"type": "string", "enum": compile.TargetTypes, "description": "symlink: whether it points at a file or a directory; by default, what the target is."}
+	props["allow_external_target"] = map[string]any{"type": "boolean", "description": "symlink: let the target lie outside the output. It is written as given and never followed."}
 	props["mitre"] = map[string]any{"$ref": "#/$defs/Mitre"}
 }
 
@@ -563,12 +582,11 @@ func operationConditionals(playbook bool) []any {
 		if formats, ok := compile.Formats[action]; ok {
 			then["properties"] = map[string]any{"format": map[string]any{"enum": formats}}
 		}
-		if action == "mace" {
-			var anyTime []any
-			for _, f := range compile.TimeFields {
-				anyTime = append(anyTime, map[string]any{"required": []string{f}})
-			}
-			then["anyOf"] = anyTime
+		switch action {
+		case spec.ActionMACE:
+			then["anyOf"] = requireEach(compile.TimeFields)
+		case spec.ActionTimestomp:
+			then["anyOf"] = requireEach(append(slices.Clone(compile.TimeFields), compile.FileNameTimeFields...))
 		}
 		out = append(out, map[string]any{
 			"if": map[string]any{

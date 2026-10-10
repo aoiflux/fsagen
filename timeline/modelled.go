@@ -47,10 +47,10 @@ func Modelled(tree *model.Tree, entries []ledger.Entry, c Controlled) *Timeline 
 	}
 
 	tl := &Timeline{Source: SourceModelled}
-	add := func(o *model.Object, deleted bool) {
+	add := func(o *model.Object, p string, deleted bool) {
 		st := last[o.Serial]
 		e := Entry{
-			Path:    o.Path,
+			Path:    p,
 			Type:    TypeFile,
 			Mode:    o.Mode,
 			Size:    st.size,
@@ -60,6 +60,7 @@ func Modelled(tree *model.Tree, entries []ledger.Entry, c Controlled) *Timeline 
 			Mtime:   o.Times.Mtime,
 			MD5:     st.md5,
 			Deleted: deleted,
+			alias:   p != o.Path,
 		}
 		if c.Change {
 			e.Ctime = o.Times.Ctime
@@ -67,7 +68,10 @@ func Modelled(tree *model.Tree, entries []ledger.Entry, c Controlled) *Timeline 
 		if c.Birth {
 			e.Btime = o.Times.Btime
 		}
-		setKindFields(&e, o.Kind)
+		if len(o.Names) > 1 {
+			e.Links = len(o.Names)
+		}
+		setKindFields(&e, o)
 		tl.Entries = append(tl.Entries, e)
 		for _, s := range st.streams {
 			se := e
@@ -75,11 +79,15 @@ func Modelled(tree *model.Tree, entries []ledger.Entry, c Controlled) *Timeline 
 			tl.Entries = append(tl.Entries, se)
 		}
 	}
+	// Each name of a hard-linked file is an entry, as each is a directory
+	// entry a tool lists.
 	for _, o := range tree.Settle() {
-		add(o, false)
+		for _, n := range o.Names {
+			add(o, n.Path, false)
+		}
 	}
 	for _, o := range tree.Removed() {
-		add(o, true)
+		add(o, o.Path, true)
 	}
 	sortEntries(tl.Entries)
 	return tl
@@ -87,11 +95,12 @@ func Modelled(tree *model.Tree, entries []ledger.Entry, c Controlled) *Timeline 
 
 // Finals lists, for a modelled timeline, where each object ended up (or was
 // deleted from) and its controlled modification and creation times: what
-// the answer key's final-state facts are drawn from.
+// the answer key's final-state facts are drawn from. A hard-linked file is
+// listed once, under its first name.
 func (tl *Timeline) Finals() []ledger.Final {
 	var out []ledger.Final
 	for _, e := range tl.Entries {
-		if e.Object == 0 || e.Type == TypeStream {
+		if e.Object == 0 || e.Type == TypeStream || e.alias {
 			continue
 		}
 		out = append(out, ledger.Final{
@@ -103,18 +112,25 @@ func (tl *Timeline) Finals() []ledger.Final {
 }
 
 // setKindFields settles the fields that follow from what an object is. A
-// directory has no content to size or hash, and an object the scenario gave no
-// mode takes the default one a run would have created it with.
-func setKindFields(e *Entry, kind model.Kind) {
-	if kind != model.Dir {
+// directory or link has no content to size or hash, a link carries its
+// target, and an object the scenario gave no mode takes the default one a
+// run would have created it with.
+func setKindFields(e *Entry, o *model.Object) {
+	switch o.Kind {
+	case model.Dir:
+		e.Type, e.Size, e.MD5 = TypeDir, 0, ""
+		if e.Mode == 0 {
+			e.Mode = sandbox.DirMode
+		}
+		e.Mode |= fs.ModeDir
+	case model.Symlink, model.Junction:
+		e.Type, e.Size, e.MD5, e.LinkTarget = TypeLink, 0, "", o.Target
+		if e.Mode == 0 {
+			e.Mode = 0o777
+		}
+	default:
 		if e.Mode == 0 {
 			e.Mode = sandbox.FileMode
 		}
-		return
 	}
-	e.Type, e.Size, e.MD5 = TypeDir, 0, ""
-	if e.Mode == 0 {
-		e.Mode = sandbox.DirMode
-	}
-	e.Mode |= fs.ModeDir
 }

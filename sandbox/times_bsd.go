@@ -34,5 +34,16 @@ func statMeta(r *os.Root, name string) (Meta, error) {
 	}
 	m.ID = strconv.FormatUint(uint64(st.Ino), 10)
 	m.UID, m.GID = int(st.Uid), int(st.Gid)
+	m.Links = int(st.Nlink)
+	if fi.Mode()&os.ModeSymlink != 0 {
+		m.Link = LinkSymlink
+		m.Target, _ = r.Readlink(name)
+	}
 	return m, nil
+}
+
+// setTimesNoFollow sets the times of name itself, a symlink's own rather
+// than its target's. A zero time is left as it is.
+func setTimesNoFollow(r *os.Root, name string, atime, mtime time.Time) error {
+	return utimesNoFollow(r, name, atime, mtime)
 }

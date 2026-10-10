@@ -19,13 +19,19 @@ import (
 //	                             birth kept (append to a missing file and a
 //	                             first mbox message are born instead)
 //	mace                         only the explicit times
+//	timestomp                    only the explicit times, and the explicit
+//	                             $FILE_NAME times
 //	ads, motw                    the file's times unchanged
 //	rename                       the object keeps its times, change T
 //	rotate                       the rotated file as rename; the new empty
 //	                             file at the old path born at T
 //	copy                         the copy born at T with the source's mtime
 //	delete                       the object keeps its final times; explicit
-//	                             times describe the directory it leaves
+//	                             times describe the directory it leaves; a
+//	                             hard-linked file that keeps a name changes T
+//	hardlink                     the file changes T; the new name's directory
+//	                             changes as for any new entry
+//	symlink, junction            born: all four times T, as create
 //	directories                  born with the operation that makes them,
 //	                             explicitly or as a missing parent; each
 //	                             entry added, removed or renamed sets
@@ -34,6 +40,12 @@ import (
 // When T is zero (a manifest operation with no times and no start) the
 // derived times are zero too, which means uncontrolled: the file system
 // keeps the times it gives, and the ledger says so.
+//
+// The $FILE_NAME times follow NTFS, which sets them itself, one set per name:
+// all four T when the object is born (explicit times do not reach them,
+// being set through the call that sets only the others), the file's own
+// times when a hard link gives it a new name, copied from the object's times
+// when it is renamed, and otherwise moved only by a timestomp's fn_ times.
 
 // opTime is the time the operation happens.
 func opTime(op *Op) time.Time {
@@ -63,6 +75,16 @@ func written(t *model.Tree, p string, when time.Time) {
 // explicitTimes are the times the operation states itself; checkValues has
 // already validated them.
 func explicitTimes(op *Op) model.Times {
+	return parseTimes(op.Atime, op.Mtime, op.Ctime, op.Crtime)
+}
+
+// explicitFileNameTimes are the $FILE_NAME times a timestomp states.
+func explicitFileNameTimes(op *Op) model.Times {
+	return parseTimes(op.FnAtime, op.FnMtime, op.FnCtime, op.FnCrtime)
+}
+
+// parseTimes reads four validated times; an empty one is not set.
+func parseTimes(atime, mtime, ctime, crtime string) model.Times {
 	parse := func(s string) time.Time {
 		s = strings.TrimSpace(s)
 		if s == "" {
@@ -74,7 +96,7 @@ func explicitTimes(op *Op) model.Times {
 		}
 		return t.UTC()
 	}
-	return model.Times{Atime: parse(op.Atime), Mtime: parse(op.Mtime), Ctime: parse(op.Ctime), Btime: parse(op.Crtime)}
+	return model.Times{Atime: parse(atime), Mtime: parse(mtime), Ctime: parse(ctime), Btime: parse(crtime)}
 }
 
 func overlay(dst *model.Times, ex model.Times) {
@@ -150,5 +172,5 @@ func (s *simulation) recordPrimary() {
 	if mode, ok, _ := util.ParseFileMode(s.op.Mode); ok {
 		o.Mode = mode
 	}
-	s.op.Object, s.op.Kind, s.op.Times = o.Serial, o.Kind, o.Times
+	s.op.Object, s.op.Kind, s.op.Times, s.op.Links = o.Serial, o.Kind, o.Times, len(o.Names)
 }

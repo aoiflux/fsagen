@@ -1,0 +1,7 @@
+# input-sha256 e853765710885e7cbc9d63d496a5c60394f145e5b3885081044697bd0b3bb85c
+{"event":"created","n":1,"at":"2021-08-10T08:00:00Z","object":5,"kind":"dir","path":"systems/workstation01/Users/Public/Startup","mitre":["T1547.001"]}
+{"event":"created","n":2,"at":"2021-08-10T08:00:00Z","object":6,"kind":"file","path":"systems/workstation01/Users/Public/Startup/helper.bat","size":28,"sha256":"d459e35e239a008e3e84d262622671034374224e07ef81234628d618b0530464","md5":"2afe6d12adf4236fb21eb3be500469f7","mitre":["T1547.001"]}
+{"event":"created","n":3,"at":"2021-08-10T08:00:00Z","object":7,"kind":"file","path":"systems/workstation01/Users/Public/Startup/readme.md","size":44,"sha256":"7ad2aa09da83b17c85fc6f92f89ca395e83c9132a990188ff456f3e5252b7edb","md5":"6f1762d7f33f47583172751fe1e1d0fe","mitre":["T1547.001"]}
+{"event":"created","n":4,"at":"2021-08-10T08:05:00Z","object":9,"kind":"file","path":"systems/workstation01/Artifacts/persistence.reg","size":153,"sha256":"2774cae9967e88f358d0c260ca94a1d283ccea9b9c488576392d1b571ce31e57","md5":"d87533c6dea0dd5e21d65ddb7807ff8b","mitre":["T1547.001"]}
+{"event":"stomped","n":5,"at":"2021-08-10T08:12:00Z","object":8,"kind":"dir","path":"systems/workstation01/Artifacts","times":{"atime":"2020-12-01T09:00:00Z","mtime":"2020-12-01T09:00:00Z","ctime":"2021-08-10T08:05:00Z","crtime":"2021-08-10T08:05:00Z"},"fields":["atime","mtime"],"mitre":["T1070.006"]}
+{"event":"mtime_before_crtime","object":8,"kind":"dir","path":"systems/workstation01/Artifacts","mtime":"2020-12-01T09:00:00Z","crtime":"2021-08-10T08:05:00Z"}

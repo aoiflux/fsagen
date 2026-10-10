@@ -54,9 +54,16 @@ type Op struct {
 	Object int
 	Kind   model.Kind
 	Times  model.Times
+	// FN are, for a timestomp, the object's intended $FILE_NAME times
+	// afterwards.
+	FN model.Times
 	// Moved is, for a rotate, the object renamed to NewPath; Object is then
 	// the empty file left at Path.
 	Moved int
+	// Links is the number of names the object has afterwards: more than one
+	// for a hard-linked file, and for a delete the names it still has (none
+	// when the object went with the name).
+	Links int
 	// Members are, for an archive, the files it holds, resolved against the
 	// model at the moment the archive is written.
 	Members []Member

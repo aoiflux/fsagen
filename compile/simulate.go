@@ -144,21 +144,25 @@ type simulation struct {
 // simulators say what each action does to the model. Every name in spec.Actions
 // has an entry, which TestEveryActionSimulates proves.
 var simulators = map[spec.ActionName]func(*simulation) error{
-	spec.ActionCreate:   applyCreate,
-	spec.ActionAppend:   applyAppend,
-	spec.ActionUpdate:   applyWrite,
-	spec.ActionTruncate: applyWrite,
-	spec.ActionEdit:     applyWrite,
-	spec.ActionArchive:  applyArchive,
-	spec.ActionDelete:   applyDelete,
-	spec.ActionMACE:     applyMace,
-	spec.ActionRename:   applyRename,
-	spec.ActionCopy:     applyCopy,
-	spec.ActionRotate:   applyRotate,
-	spec.ActionEmail:    applyEmail,
-	spec.ActionVault:    applyVault,
-	spec.ActionADS:      applyStream,
-	spec.ActionMOTW:     applyStream,
+	spec.ActionCreate:    applyCreate,
+	spec.ActionAppend:    applyAppend,
+	spec.ActionUpdate:    applyWrite,
+	spec.ActionTruncate:  applyWrite,
+	spec.ActionEdit:      applyWrite,
+	spec.ActionArchive:   applyArchive,
+	spec.ActionDelete:    applyDelete,
+	spec.ActionMACE:      applyMace,
+	spec.ActionTimestomp: applyTimestomp,
+	spec.ActionRename:    applyRename,
+	spec.ActionCopy:      applyCopy,
+	spec.ActionRotate:    applyRotate,
+	spec.ActionEmail:     applyEmail,
+	spec.ActionVault:     applyVault,
+	spec.ActionADS:       applyStream,
+	spec.ActionMOTW:      applyStream,
+	spec.ActionHardlink:  applyHardlink,
+	spec.ActionSymlink:   applySymlink,
+	spec.ActionJunction:  applyJunction,
 }
 
 // apply performs one operation on the model, enforcing the preconditions the
@@ -202,7 +206,7 @@ func (s *simulation) mustFile(what string) error {
 	case o == nil:
 		return fmt.Errorf("%s: %s does not exist%s", what, s.op.Path, hintFor(s.op.Action))
 	case o.Kind != model.File:
-		return fmt.Errorf("%s: %s is a directory", what, s.op.Path)
+		return notFile(what, s.op.Path, o.Kind)
 	}
 	return nil
 }
@@ -258,7 +262,7 @@ func applyAppend(s *simulation) error {
 	p := s.op.Path
 	switch o := s.tree.Get(p); {
 	case o != nil && o.Kind != model.File:
-		return fmt.Errorf("append: %s is a directory", p)
+		return notFile("append", p, o.Kind)
 	case o != nil:
 		written(s.tree, p, s.when)
 	default:
@@ -319,6 +323,9 @@ func applyDelete(s *simulation) error {
 	if err := s.tree.Remove(p); err != nil {
 		return err
 	}
+	// A hard-linked file that keeps another name is not deleted, only
+	// unlinked.
+	op.Links = len(o.Names)
 	// A delete's own times describe the directory it was deleted from.
 	s.primary = path.Dir(p)
 	if s.primary == "." && (op.Atime != "" || op.Mtime != "") {
@@ -331,6 +338,18 @@ func applyMace(s *simulation) error {
 	if s.tree.Get(s.op.Path) == nil {
 		return fmt.Errorf("mace: %s does not exist", s.op.Path)
 	}
+	return nil
+}
+
+// applyTimestomp sets the $FILE_NAME times the operation states; settleTimes
+// overlays the rest, as for mace.
+func applyTimestomp(s *simulation) error {
+	n := s.tree.Name(s.op.Path)
+	if n == nil {
+		return fmt.Errorf("timestomp: %s does not exist", s.op.Path)
+	}
+	overlay(&n.FN, explicitFileNameTimes(s.op))
+	s.op.FN = n.FN
 	return nil
 }
 
@@ -392,7 +411,7 @@ func applyEmail(s *simulation) error {
 	// file; an eml is written whole every time.
 	if EmailFormat(op.Operation) == "mbox" {
 		if o := s.tree.Get(p); o != nil && o.Kind != model.File {
-			return fmt.Errorf("email: %s is a directory", p)
+			return notFile("email", p, o.Kind)
 		}
 	}
 	if err := s.writeOrCreate(EmailFormat(op.Operation) == "eml"); err != nil {
@@ -440,8 +459,11 @@ func applyVault(s *simulation) error {
 // executor restores them).
 func applyStream(s *simulation) error {
 	op, p := s.op, s.op.Path
-	if s.tree.Get(p) == nil {
+	switch o := s.tree.Get(p); {
+	case o == nil:
 		return fmt.Errorf("%s: base %s does not exist; create it first (a stream cannot exist without its file)", op.Action, p)
+	case o.Kind.IsLink():
+		return notFile(string(op.Action), p, o.Kind)
 	}
 	return s.tree.AddStream(p, StreamOf(op.Operation))
 }

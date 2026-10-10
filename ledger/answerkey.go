@@ -3,9 +3,12 @@ package ledger
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"slices"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aoiflux/fsagen/spec"
@@ -17,7 +20,8 @@ const AnswerKeyFileName = "answer-key.jsonl"
 // Events in the answer key.
 const (
 	// Created: an object first appears (create, append to a missing file,
-	// copy, the empty file a rotate leaves, email, ansible-vault).
+	// copy, the empty file a rotate leaves, email, ansible-vault, and a
+	// symlink or junction, with its target).
 	Created = "created"
 	// Modified: an existing file's content changed.
 	Modified = "modified"
@@ -25,10 +29,14 @@ const (
 	Renamed = "renamed"
 	// Deleted: an object was removed.
 	Deleted = "deleted"
+	// Linked: a file was given another name (a hard link).
+	Linked = "linked"
+	// Unlinked: a name was removed from a file that keeps another one.
+	Unlinked = "unlinked"
 	// StreamWritten: a named stream was written (ads, motw, and the streams
 	// a copy carries).
 	StreamWritten = "stream"
-	// Stomped: a mace operation set times explicitly.
+	// Stomped: a mace or timestomp operation set times explicitly.
 	Stomped = "stomped"
 	// SlackWritten: bytes were left past the end of a file, in the rest of
 	// its last cluster.
@@ -48,17 +56,39 @@ type Fact struct {
 	Object int    `json:"object"`
 	Kind   string `json:"kind,omitempty"`
 	Path   string `json:"path"`
-	// From is where a renamed object was.
-	From   string `json:"from,omitempty"`
+	// From is where a renamed object was, or the name a hard link was made
+	// from.
+	From string `json:"from,omitempty"`
+	// Target is what a created symlink or junction points at.
+	Target string `json:"target,omitempty"`
+	// Links is the number of names a linked or unlinked file has afterwards.
+	Links  int    `json:"links,omitempty"`
 	Stream string `json:"stream,omitempty"`
 	Size   *int64 `json:"size,omitempty"`
 	// SHA256Before is a modified file's previous content digest.
 	SHA256Before string `json:"sha256_before,omitempty"`
 	SHA256       string `json:"sha256,omitempty"`
-	// Times are the object's intended times after a stomp.
+	// MD5 is a created or modified file's content MD5, which timelines and
+	// most tools report beside the SHA-256.
+	MD5 string `json:"md5,omitempty"`
+	// Times are the object's intended times after a stomp: for a
+	// timestomp, its $STANDARD_INFORMATION times.
 	Times *Times `json:"times,omitempty"`
 	// Fields are the times a stomp set.
 	Fields []string `json:"fields,omitempty"`
+	// FnTimes are, for a timestomp, the object's intended $FILE_NAME times,
+	// and FnControlled says whether they are on disk. They never are on a
+	// live volume, where Windows sets them itself: they are then the times
+	// the scenario means, for a reader to compare with what it finds.
+	FnTimes      *Times `json:"fn_times,omitempty"`
+	FnControlled *bool  `json:"fn_controlled,omitempty"`
+	// Delta is, for a timestomp, how far each $STANDARD_INFORMATION time is
+	// from its $FILE_NAME time.
+	Delta *Delta `json:"delta,omitempty"`
+	// TimestompDetected is, for a timestomp, whether its
+	// $STANDARD_INFORMATION creation time is earlier than its $FILE_NAME
+	// one, the comparison MFTECmd's SI<FN column makes.
+	TimestompDetected *bool `json:"timestomp_detected,omitempty"`
 	// Mtime and Crtime are the times of an mtime_before_crtime fact.
 	Mtime  string `json:"mtime,omitempty"`
 	Crtime string `json:"crtime,omitempty"`
@@ -69,6 +99,16 @@ type Fact struct {
 	Mitre []string `json:"mitre,omitempty"`
 	// Slack is, for a slack fact, where the bytes are and what they hash to.
 	Slack *Slack `json:"slack,omitempty"`
+}
+
+// Delta is, per time, the $STANDARD_INFORMATION time minus the $FILE_NAME
+// time in seconds, exactly: negative where the first is earlier. A time
+// either set leaves unknown is left out.
+type Delta struct {
+	Atime  json.Number `json:"atime,omitempty"`
+	Mtime  json.Number `json:"mtime,omitempty"`
+	Ctime  json.Number `json:"ctime,omitempty"`
+	Crtime json.Number `json:"crtime,omitempty"`
 }
 
 // Final is an object's last intended state, for the facts that depend on
@@ -127,18 +167,76 @@ func effectFact(e Entry, base Fact) []Fact {
 	switch e.Action {
 	case spec.ActionDelete:
 		f.Event, f.SHA256 = Deleted, e.SHA256Before
+		if e.Links > 0 {
+			f.Event, f.Links = Unlinked, e.Links
+		}
+	case spec.ActionHardlink:
+		f.Event, f.Path, f.From, f.Links = Linked, e.NewPath, e.Path, e.Links
+	case spec.ActionSymlink, spec.ActionJunction:
+		f.Event, f.Target = Created, e.Target
 	case spec.ActionRename:
 		f.Event, f.Path, f.From = Renamed, e.NewPath, e.Path
 	case spec.ActionRotate:
 		f.Event, f.Object, f.Path, f.From, f.Kind = Renamed, e.Moved, e.NewPath, e.Path, "file"
 	case spec.ActionMACE:
 		f.Event, f.Times, f.Fields = Stomped, e.Times, slices.Clone(e.Explicit)
+	case spec.ActionTimestomp:
+		f.Event, f.Times, f.Fields = Stomped, e.Times, slices.Clone(e.Explicit)
+		fileNameFacts(&f, e)
 	case spec.ActionADS, spec.ActionMOTW:
 		return writtenStreamFacts(e, base)
 	default:
 		return nil
 	}
 	return []Fact{f}
+}
+
+// fileNameFacts adds what a timestomp's $FILE_NAME times show: the times, whether
+// they are on disk, how far the two sets are apart, and whether the
+// creation times give the stomp away.
+func fileNameFacts(f *Fact, e Entry) {
+	controlled := !slices.ContainsFunc(e.Uncontrolled, func(t string) bool { return strings.HasPrefix(t, "fn_") })
+	f.FnTimes, f.FnControlled = e.FnTimes, &controlled
+	if e.Times == nil || e.FnTimes == nil {
+		return
+	}
+	si, fn := *e.Times, *e.FnTimes
+	d := Delta{Atime: secondsBetween(si.Atime, fn.Atime), Mtime: secondsBetween(si.Mtime, fn.Mtime), Ctime: secondsBetween(si.Ctime, fn.Ctime), Crtime: secondsBetween(si.Crtime, fn.Crtime)}
+	if d != (Delta{}) {
+		f.Delta = &d
+	}
+	if d.Crtime != "" {
+		detected := strings.HasPrefix(string(d.Crtime), "-")
+		f.TimestompDetected = &detected
+	}
+}
+
+// secondsBetween is a minus b in seconds, as an exact decimal, or "" when
+// either is unknown. A float would lose the 100-nanosecond ticks of a stomp
+// decades away.
+func secondsBetween(a, b string) json.Number {
+	ta, errA := time.Parse(time.RFC3339Nano, a)
+	tb, errB := time.Parse(time.RFC3339Nano, b)
+	if a == "" || b == "" || errA != nil || errB != nil {
+		return ""
+	}
+	sec, nsec := ta.Unix()-tb.Unix(), int64(ta.Nanosecond()-tb.Nanosecond())
+	// Both parts take the sign of the whole, so it can be written once.
+	switch {
+	case sec > 0 && nsec < 0:
+		sec, nsec = sec-1, nsec+1e9
+	case sec < 0 && nsec > 0:
+		sec, nsec = sec+1, nsec-1e9
+	}
+	sign := ""
+	if sec < 0 || nsec < 0 {
+		sign, sec, nsec = "-", -sec, -nsec
+	}
+	out := sign + strconv.FormatInt(sec, 10)
+	if nsec != 0 {
+		out += strings.TrimRight(fmt.Sprintf(".%09d", nsec), "0")
+	}
+	return json.Number(out)
 }
 
 // writtenStreamFacts is the one stream an ads or motw wrote. The entry lists
@@ -171,10 +269,10 @@ func contentFacts(e Entry, base Fact, seen map[int]bool) []Fact {
 	f := base
 	switch {
 	case !seen[e.Object] && e.Action != spec.ActionUpdate && e.Action != spec.ActionTruncate:
-		f.Event, f.Size, f.SHA256 = Created, e.Size, e.SHA256After
+		f.Event, f.Size, f.SHA256, f.MD5 = Created, e.Size, e.SHA256After, e.MD5After
 		out = append(out, f)
 	case e.SHA256After != e.SHA256Before:
-		f.Event, f.Size, f.SHA256Before, f.SHA256 = Modified, e.Size, e.SHA256Before, e.SHA256After
+		f.Event, f.Size, f.SHA256Before, f.SHA256, f.MD5 = Modified, e.Size, e.SHA256Before, e.SHA256After, e.MD5After
 		out = append(out, f)
 	}
 	if e.Action == spec.ActionCopy {

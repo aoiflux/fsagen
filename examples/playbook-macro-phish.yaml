@@ -1,0 +1,57 @@
+# A macro-enabled invoice arrives and is opened; a payload appears in Temp,
+# its times are stomped to blend in with the system's files, and a second
+# name for it is hidden in a public folder. The macro is inert, as every
+# macro fsagen writes is: it assigns its marker to a variable and does
+# nothing else. Runs on every platform: the stomp sets access and
+# modification times only, and the hidden name is a hard link.
+start: "2026-02-03T10:15:00Z"
+actors:
+  - name: victim
+    base: Users/victim
+
+steps:
+  - actor: victim
+    mitre: [T1566.001]
+    offset: 0s
+    actions:
+      - action: create
+        path: Downloads/Invoice_4471.docm
+        format: docm
+        content: "Invoice 4471. This document is protected: enable editing and content to view it."
+        docx: { title: Invoice 4471, author: Accounts Payable }
+        vba: { entry_point: Document_Open, marker: "FSAGEN-VBA:invoice-4471" }
+
+  - actor: victim
+    mitre: [T1204.002]
+    offset: 3m
+    actions:
+      - action: create
+        id: payload
+        path: AppData/Local/Temp/wupdmgr32.exe
+        content_len: 2048
+        pe: { subsystem: gui }
+
+  - actor: victim
+    mitre: [T1070.006]
+    offset: 4m
+    actions:
+      - action: timestomp
+        ref: payload
+        atime: "2019-03-07T10:12:44Z"
+        mtime: "2019-03-07T10:12:44Z"
+
+  - actor: victim
+    mitre: [T1564]
+    offset: 5m
+    actions:
+      - action: hardlink
+        ref: payload
+        new_path: ../Public/Libraries/cache.dat
+
+  - actor: victim
+    offset: 9m
+    actions:
+      - action: create
+        path: Documents/budget-2026.xlsx
+        format: xlsx
+        content: "Quarter,Revenue\nQ1,120000\nQ2,135500"

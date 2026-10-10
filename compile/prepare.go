@@ -183,6 +183,7 @@ func checkValues(op *Op, src *sandbox.Sources) ErrorList {
 	}
 
 	normalizePaths(op, r)
+	checkLinkFields(op, r)
 	// An operation targeted by ref or refs has no path of its own yet, so what
 	// its extension implies can only be settled once simulate has resolved
 	// which file it acts on: see settleContent.
@@ -220,7 +221,7 @@ func checkClosedSets(op *Op, r reporter) {
 // checkExplicitTimes rejects an explicit time that is not RFC 3339. A key that
 // is present but empty is a mistake too, since it would otherwise be ignored.
 func checkExplicitTimes(op *Op, r reporter) {
-	for _, f := range []field{{"atime", op.Atime}, {"mtime", op.Mtime}, {"ctime", op.Ctime}, {"crtime", op.Crtime}} {
+	for _, f := range explicitTimeFields(op) {
 		if !op.keys.has(f.key) {
 			continue
 		}
@@ -228,6 +229,18 @@ func checkExplicitTimes(op *Op, r reporter) {
 			r.at(f.key, "%q is not an RFC 3339 time (for example 2026-03-11T09:00:00Z)", f.val)
 		}
 	}
+}
+
+// explicitTimeFields are the time keys an operation may state, with their
+// values: the four times, then a timestomp's four $FILE_NAME times.
+func explicitTimeFields(op *Op) []field {
+	return append([]field{{"atime", op.Atime}, {"mtime", op.Mtime}, {"ctime", op.Ctime}, {"crtime", op.Crtime}}, fileNameTimeFields(op)...)
+}
+
+// fileNameTimeFields are a timestomp's $FILE_NAME time keys, with their
+// values.
+func fileNameTimeFields(op *Op) []field {
+	return []field{{"fn_atime", op.FnAtime}, {"fn_mtime", op.FnMtime}, {"fn_ctime", op.FnCtime}, {"fn_crtime", op.FnCrtime}}
 }
 
 // checkPdfDates rejects a pdf date that is given but not RFC 3339. Leaving one

@@ -195,3 +195,30 @@ func isASCIILetter(c byte) bool {
 	lower := c | 0x20
 	return 'a' <= lower && lower <= 'z'
 }
+
+// LinkTarget classifies what a symlink at link (a clean output path) points
+// at. A relative target is resolved against the link's directory, as the
+// file system will resolve it; one that stays inside the output is returned
+// resolved, as an output path ("." for the root itself). Anything else, an
+// absolute path, a drive, a share, or a relative path that climbs out, is
+// external, and resolved is "". The target itself is what gets written, as
+// given.
+func LinkTarget(link, target string) (resolved string, external bool, err error) {
+	switch {
+	case target == "":
+		return "", false, errors.New("target is empty")
+	case strings.ContainsRune(target, 0):
+		return "", false, errors.New("NUL byte in target")
+	case strings.HasPrefix(target, "/"), strings.HasPrefix(target, `\`), len(target) > 1 && target[1] == ':' && isASCIILetter(target[0]):
+		return "", true, nil
+	case strings.Contains(target, `\`):
+		return "", false, fmt.Errorf("target %q contains '\\'; a relative target uses '/' on every platform", target)
+	case strings.Contains(target, ":"):
+		return "", false, fmt.Errorf("target %q contains ':'", target)
+	}
+	resolved = path.Clean(path.Dir(link) + "/" + target)
+	if !fs.ValidPath(resolved) {
+		return "", true, nil
+	}
+	return resolved, false, nil
+}

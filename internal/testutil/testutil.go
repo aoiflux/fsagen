@@ -23,7 +23,9 @@ import (
 //	d <path>/
 //	f <sha256> <size> <path>
 //	s <sha256> <size> <path>:<stream>
+//	l <target> <path>
 //
+// A link is described by what it points at, never read through.
 // Two trees with the same fingerprint have the same names, contents and
 // streams. Timestamps are deliberately not part of it.
 func Fingerprint(dir string) (string, error) {
@@ -68,6 +70,14 @@ func Fingerprint(dir string) (string, error) {
 		if d.IsDir() {
 			entries = append(entries, entry{key: name + "/", line: "d " + name + "/"})
 			return addStreams(name)
+		}
+		if !d.Type().IsRegular() {
+			m, err := fsys.Meta(name)
+			if err != nil {
+				return err
+			}
+			entries = append(entries, entry{key: name, line: fmt.Sprintf("l %s %s", m.Target, name)})
+			return nil
 		}
 		data, err := fsys.ReadFile(name)
 		if err != nil {

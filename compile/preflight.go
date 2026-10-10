@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/aoiflux/fsagen/sandbox"
 	"github.com/aoiflux/fsagen/spec"
 )
 
@@ -17,6 +18,14 @@ type Caps struct {
 	// ChangeTime: a file's metadata change time can be set and is stored
 	// (Windows on NTFS or ReFS).
 	ChangeTime bool
+	// FilenameTimes: the times NTFS keeps in each $FILE_NAME attribute can
+	// be set. No live volume allows it: Windows sets them itself, and no
+	// call a program can make changes them.
+	FilenameTimes bool
+	// Hardlinks, Symlinks and Junctions: the volume stores them, and this
+	// process may make them (a Windows symlink needs Developer Mode or the
+	// privilege).
+	Hardlinks, Symlinks, Junctions bool
 	// Slack is how far the target keeps bytes written past the end of a
 	// file, and ClusterSize the size of its clusters (0 when not known, as
 	// for --validate with no output volume).
@@ -32,7 +41,10 @@ func DefaultCaps() Caps {
 	if w {
 		slack = SlackBestEffort
 	}
-	return Caps{NamedStreams: w, BirthTime: w, ChangeTime: w, Slack: slack}
+	return Caps{
+		NamedStreams: w, BirthTime: w, ChangeTime: w, Slack: slack,
+		Hardlinks: true, Symlinks: sandbox.SymlinksAllowed(), Junctions: w,
+	}
 }
 
 // unsettable lists the explicit time fields of op that caps cannot set.
@@ -44,6 +56,13 @@ func unsettable(op *Op, caps Caps) []string {
 	if strings.TrimSpace(op.Crtime) != "" && !caps.BirthTime {
 		out = append(out, "crtime")
 	}
+	if !caps.FilenameTimes {
+		for _, f := range fileNameTimeFields(op) {
+			if strings.TrimSpace(f.val) != "" {
+				out = append(out, f.key)
+			}
+		}
+	}
 	return out
 }
 
@@ -54,8 +73,30 @@ func unsupported(op *Op, caps Caps) string {
 		if !caps.NamedStreams {
 			return fmt.Sprintf("%s writes an alternate data stream, which this platform or volume does not support", op.Action)
 		}
+	case spec.ActionHardlink:
+		if !caps.Hardlinks {
+			return "this volume does not store hard links"
+		}
+	case spec.ActionSymlink:
+		if !caps.Symlinks {
+			return "symlinks cannot be made here: the volume does not store them, or on Windows the process has neither Developer Mode nor the privilege to create one"
+		}
+	case spec.ActionJunction:
+		if !caps.Junctions {
+			return "junctions are an NTFS feature of Windows, and this platform or volume has none"
+		}
 	}
 	return ""
+}
+
+// unskippable reports an action that cannot be left out and the rest still
+// run: a link is a name later actions and the settle pass rely on.
+func unskippable(op *Op) bool {
+	switch op.Action {
+	case spec.ActionHardlink, spec.ActionSymlink, spec.ActionJunction:
+		return true
+	}
+	return false
 }
 
 // Preflight checks every operation against the capability set before
@@ -78,21 +119,30 @@ func Preflight(p *Program, caps Caps, skip bool) error {
 // timeFieldNames are the words used to report a time this platform cannot set.
 // A field missing from here would read as "the  cannot be set", so every field
 // unsettable can return needs an entry.
-var timeFieldNames = map[string]string{"ctime": "change time", "crtime": "creation time"}
+var timeFieldNames = map[string]string{
+	"ctime": "change time", "crtime": "creation time",
+	"fn_atime": "$FILE_NAME access time", "fn_mtime": "$FILE_NAME modification time",
+	"fn_ctime": "$FILE_NAME change time", "fn_crtime": "$FILE_NAME creation time",
+}
 
 // preflightOp records every time field this platform cannot set for one
 // operation, and whether the action itself is unsupported here.
 func preflightOp(op *Op, caps Caps, skip bool, errs *ErrorList) {
 	r := op.report(errs)
 	for _, f := range unsettable(op, caps) {
-		if skip {
+		switch {
+		case skip:
 			op.Dropped = append(op.Dropped, f)
-			continue
+		case strings.HasPrefix(f, "fn_"):
+			r.at(f, "the %s cannot be set on a live volume: Windows sets the $FILE_NAME times itself and no program can change them (pass --on-unsupported=skip to set the other times only and record that)", timeFieldNames[f])
+		default:
+			r.at(f, "the %s cannot be set on this platform or volume (pass --on-unsupported=skip to generate without it and record that)", timeFieldNames[f])
 		}
-		r.at(f, "the %s cannot be set on this platform or volume (pass --on-unsupported=skip to generate without it and record that)", timeFieldNames[f])
 	}
 	switch reason := unsupported(op, caps); {
 	case reason == "":
+	case unskippable(op):
+		r.whole("%s; a link cannot be skipped, since later actions and the settle pass would act on a name that is not there", reason)
 	case skip:
 		op.Skip = reason
 	default:
