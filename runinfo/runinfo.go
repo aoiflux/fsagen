@@ -33,6 +33,7 @@ import (
 	"github.com/aoiflux/fsagen/ledger"
 	"github.com/aoiflux/fsagen/sandbox"
 	"github.com/aoiflux/fsagen/spec"
+	"github.com/aoiflux/fsagen/target"
 )
 
 // File names inside the sidecar directory.
@@ -308,7 +309,7 @@ func WriteAnswerKey(dir string, facts []ledger.Fact) (string, error) {
 // sha256sum's format ("<hex>  <path>"), with slash paths, a stream written
 // as path:stream, sorted by path. Each name of a hard-linked file is listed;
 // a link is counted, not followed.
-func buildSums(fsys *sandbox.FS) ([]byte, Outputs, error) {
+func buildSums(fsys target.Reader) ([]byte, Outputs, error) {
 	s := &sums{fsys: fsys}
 	if err := fsys.WalkDir(s.visit); err != nil {
 		return nil, s.out, err
@@ -323,7 +324,7 @@ type sumLine struct{ path, sum string }
 // sums collects a digest for everything in the output: every file, and every
 // named stream of a file or directory.
 type sums struct {
-	fsys  *sandbox.FS
+	fsys  target.Reader
 	lines []sumLine
 	out   Outputs
 }
@@ -397,7 +398,7 @@ func (s *sums) render() ([]byte, Outputs, error) {
 }
 
 // WriteSums writes SHA256SUMS for fsys into dir and returns its summary.
-func WriteSums(dir string, fsys *sandbox.FS) (Outputs, error) {
+func WriteSums(dir string, fsys target.Reader) (Outputs, error) {
 	data, out, err := buildSums(fsys)
 	if err != nil {
 		return out, err
@@ -411,10 +412,11 @@ func Digest(b []byte) string {
 	return hex.EncodeToString(h[:])
 }
 
-// fileDigest is the SHA-256 of a file in the output, read as a stream so a
-// large artefact is never held in memory.
-func fileDigest(fsys *sandbox.FS, name string) (string, error) {
-	f, err := fsys.OpenFile(name, os.O_RDONLY, 0)
+// fileDigest is the SHA-256 of a file in the output, read as a stream through
+// a quiet handle, so a large artefact is never held in memory and reading it
+// moves no access time where the target can help it.
+func fileDigest(fsys target.Reader, name string) (string, error) {
+	f, err := fsys.OpenQuiet(name)
 	if err != nil {
 		return "", err
 	}

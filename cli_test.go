@@ -16,7 +16,7 @@ import (
 	"github.com/aoiflux/fsagen/ledger"
 	manifestpkg "github.com/aoiflux/fsagen/manifest"
 	"github.com/aoiflux/fsagen/runinfo"
-	"github.com/aoiflux/fsagen/sandbox"
+	"github.com/aoiflux/fsagen/target"
 )
 
 // testCaps replaces the detected capability set for the tests that exercise a
@@ -31,7 +31,7 @@ func runCLI(t *testing.T, args ...string) (int, string, string) {
 	capsFor := manifestpkg.Caps
 	if testCaps != nil {
 		fixed := *testCaps
-		capsFor = func(*sandbox.FS) compile.Caps { return fixed }
+		capsFor = func(target.Target) compile.Caps { return fixed }
 	}
 	code := runWithCaps(args, &out, &errOut, capsFor)
 	return code, out.String(), errOut.String()

@@ -33,6 +33,7 @@ import (
 	"github.com/aoiflux/fsagen/runinfo"
 	"github.com/aoiflux/fsagen/sandbox"
 	schemapkg "github.com/aoiflux/fsagen/schema"
+	"github.com/aoiflux/fsagen/target"
 	timelinepkg "github.com/aoiflux/fsagen/timeline"
 )
 
@@ -91,7 +92,7 @@ type config struct {
 	// capsFor reports what the volume under a root can do. The command uses the
 	// real detection; a test injects a fixed set to exercise a platform it is
 	// not running on.
-	capsFor func(*sandbox.FS) compile.Caps
+	capsFor func(target.Target) compile.Caps
 }
 
 // run is the whole command, separated from main so tests can drive it. Its
@@ -109,7 +110,7 @@ const diffOracle = "diff-oracle"
 
 // runWithCaps is run with capability detection injected, so a test can exercise
 // a platform it is not running on without a package-level switch.
-func runWithCaps(args []string, stdout, stderr io.Writer, capsFor func(*sandbox.FS) compile.Caps) int {
+func runWithCaps(args []string, stdout, stderr io.Writer, capsFor func(target.Target) compile.Caps) int {
 	cfg, err := parseFlags(args)
 	if cfg != nil {
 		cfg.capsFor = capsFor
@@ -649,14 +650,14 @@ type generated struct {
 // runGeneration writes the artifacts and the records describing them. Each step
 // runs only if the ones before it succeeded, but the ledger is written either
 // way: it says how far the run got.
-func runGeneration(c *config, fsys *sandbox.FS, prog *compile.Program, caps compile.Caps, rm *runinfo.Manifest, metaDir string) generated {
-	var g generated
+func runGeneration(c *config, fsys target.Target, prog *compile.Program, caps compile.Caps, rm *runinfo.Manifest, metaDir string) generated {
+	g := generated{ectx: manifestpkg.ExecContext{FS: fsys, Caps: caps}}
 	var ledgerSum string
 	if c.bulkMode() {
 		start, _ := time.Parse(time.RFC3339, rm.Options.BulkStart)
 		g.err = libgenpkg.Generate(fsys, c.bulk, c.depth, libgenpkg.Options{Seed: c.seed, Start: start})
 	} else {
-		g.ectx = manifestpkg.ExecContext{FS: fsys, Sources: prog.Sources, Caps: caps}
+		g.ectx.Sources = prog.Sources
 		g.entries, g.err = manifestpkg.Execute(g.ectx, prog.Ops)
 		rm.Sources = prog.Sources.Inputs()
 		sum, lerr := runinfo.WriteLedger(metaDir, g.entries)
@@ -665,13 +666,8 @@ func runGeneration(c *config, fsys *sandbox.FS, prog *compile.Program, caps comp
 		}
 		ledgerSum = sum
 	}
-	// Digests are read before the settle pass, which puts back any access
-	// time the reads moved.
 	if g.err == nil {
-		g.err = writeSums(metaDir, fsys, rm, ledgerSum)
-	}
-	if g.err == nil && !c.bulkMode() {
-		g.err = manifestpkg.SettleAndVerify(g.ectx, prog.Model)
+		g.err = finishOutput(g.ectx, prog, rm, metaDir, ledgerSum)
 	}
 	// The answer key describes a finished scenario, so a failed run has
 	// none; the ledger says how far it got.
@@ -684,8 +680,33 @@ func runGeneration(c *config, fsys *sandbox.FS, prog *compile.Program, caps comp
 	return g
 }
 
+// finishOutput settles the output's times, verifies them, and records its
+// digests. A target that is final as it is written (a live directory) is
+// digested first, and the settle pass then puts back any access time the
+// reads moved. One built in one go (an image) is settled, finished and
+// verified first, and digested as it was finished. A bulk corpus has no
+// model, so nothing in it is settled.
+func finishOutput(ectx manifestpkg.ExecContext, prog *compile.Program, rm *runinfo.Manifest, metaDir, ledgerSum string) error {
+	var tree *model.Tree
+	if prog != nil {
+		tree = prog.Model
+	}
+	if _, oneGo := ectx.FS.(target.Finisher); oneGo {
+		read, err := manifestpkg.Finish(ectx, tree)
+		if err != nil {
+			return err
+		}
+		return writeSums(metaDir, read, rm, ledgerSum)
+	}
+	if err := writeSums(metaDir, ectx.FS, rm, ledgerSum); err != nil {
+		return err
+	}
+	_, err := manifestpkg.Finish(ectx, tree)
+	return err
+}
+
 // writeSums records the digest of every file in the output, and the ledger's.
-func writeSums(metaDir string, fsys *sandbox.FS, rm *runinfo.Manifest, ledgerSum string) error {
+func writeSums(metaDir string, fsys target.Reader, rm *runinfo.Manifest, ledgerSum string) error {
 	out, err := runinfo.WriteSums(metaDir, fsys)
 	if err != nil {
 		return fmt.Errorf("write %s: %w", runinfo.SumsFileName, err)
@@ -786,7 +807,7 @@ func nearestExisting(p string) string {
 // seedModel loads an existing tree into a model for --into-existing. Anything
 // it cannot read is an error that names the path: a model with holes in it would
 // let a later operation collide with something the model does not know is there.
-func seedModel(fsys *sandbox.FS) (*model.Tree, error) {
+func seedModel(fsys target.Reader) (*model.Tree, error) {
 	t := model.New()
 	// first is the first name found for each hard-linked file, by its ID,
 	// so the names after it join the same object.
@@ -822,11 +843,11 @@ func seedModel(fsys *sandbox.FS) (*model.Tree, error) {
 
 // kindOf is the model kind of a directory entry. A walk never descends
 // through a link, and neither does the model.
-func kindOf(d fs.DirEntry, m sandbox.Meta) model.Kind {
+func kindOf(d fs.DirEntry, m target.Meta) model.Kind {
 	switch {
-	case m.Link == sandbox.LinkSymlink:
+	case m.Link == target.LinkSymlink:
 		return model.Symlink
-	case m.Link == sandbox.LinkJunction:
+	case m.Link == target.LinkJunction:
 		return model.Junction
 	case d.IsDir():
 		return model.Dir
@@ -835,7 +856,7 @@ func kindOf(d fs.DirEntry, m sandbox.Meta) model.Kind {
 }
 
 // seedStreams adds the named streams a path already carries to the model.
-func seedStreams(t *model.Tree, fsys *sandbox.FS, name string) error {
+func seedStreams(t *model.Tree, fsys target.Reader, name string) error {
 	streams, err := fsys.Streams(name)
 	if err != nil {
 		return fmt.Errorf("%s: read streams: %w", name, err)

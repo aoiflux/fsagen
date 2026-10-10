@@ -3,10 +3,12 @@ package manifest
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 
 	"github.com/aoiflux/fsagen/compile"
 	"github.com/aoiflux/fsagen/ledger"
+	"github.com/aoiflux/fsagen/target"
 )
 
 // sectorSize is the unit a disk writes in. When Windows shrinks a file it may
@@ -59,7 +61,13 @@ func writeSlack(ctx ExecContext, op compile.Op) (*ledger.Slack, error) {
 		return nil, err
 	}
 	offset, length := compile.SlackRange(&op)
-	if err := ctx.FS.WriteSlack(op.Path, int64(offset), data); err != nil {
+	// Pre-flight refuses slack the target's capabilities do not claim, and a
+	// target that claims it keeps it.
+	s, ok := ctx.FS.(target.Slacker)
+	if !ok {
+		return nil, errors.New("slack: this target keeps no slack")
+	}
+	if err := s.WriteSlack(op.Path, int64(offset), data); err != nil {
 		return nil, fmt.Errorf("slack: %w", err)
 	}
 	sum := sha256.Sum256(data)

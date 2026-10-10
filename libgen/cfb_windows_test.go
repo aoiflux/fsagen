@@ -43,7 +43,12 @@ type statstg struct {
 	state, reserved     uint32
 }
 
-// comCall calls method number m of the COM object obj.
+// comCall calls method number m of the COM object obj. Its arguments are
+// often the address of a local for COM to write a result to; the directive
+// moves such a local to the heap, as it does for syscall.SyscallN, where a
+// stack that grows before the call cannot move it out from under COM.
+//
+//go:uintptrescapes
 func comCall(obj unsafe.Pointer, m int, args ...uintptr) uintptr {
 	vtbl := *(*unsafe.Pointer)(obj)
 	fn := *(*uintptr)(unsafe.Add(vtbl, m*int(unsafe.Sizeof(uintptr(0)))))

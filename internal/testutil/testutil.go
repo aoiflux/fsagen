@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/aoiflux/fsagen/sandbox"
+	"github.com/aoiflux/fsagen/target"
 )
 
 // Fingerprint describes every directory, file and named stream under dir, one
@@ -34,7 +35,11 @@ func Fingerprint(dir string) (string, error) {
 		return "", err
 	}
 	defer fsys.Close()
+	return FingerprintOf(fsys)
+}
 
+// FingerprintOf is Fingerprint for a tree read through any target.
+func FingerprintOf(fsys target.Reader) (string, error) {
 	var entries []entry
 	addStream := func(name, stream string) error {
 		data, err := fsys.ReadStream(name, stream)
@@ -60,7 +65,7 @@ func Fingerprint(dir string) (string, error) {
 		return nil
 	}
 
-	err = fsys.WalkDir(func(name string, d fs.DirEntry, err error) error {
+	err := fsys.WalkDir(func(name string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}

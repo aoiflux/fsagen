@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/aoiflux/fsagen/sandbox"
+	"github.com/aoiflux/fsagen/target"
 )
 
 // Sources.
@@ -122,18 +123,29 @@ func Generate(root string, opts Options) (*Timeline, error) {
 	}
 	defer fsys.Close()
 
-	w := &walker{fsys: fsys, opts: opts}
-	if err := w.walk("."); err != nil {
+	tl, err := GenerateFrom(fsys, opts)
+	if err != nil {
 		return nil, fmt.Errorf("timeline of %s: %w", root, err)
 	}
-	tl := &Timeline{Source: SourceObserved, Root: fsys.Dir(), Entries: w.entries}
+	tl.Root = fsys.Dir()
+	return tl, nil
+}
+
+// GenerateFrom is Generate for a tree read through any target, such as a
+// finished image. Its timeline names no root.
+func GenerateFrom(r target.Reader, opts Options) (*Timeline, error) {
+	w := &walker{fsys: r, opts: opts}
+	if err := w.walk("."); err != nil {
+		return nil, err
+	}
+	tl := &Timeline{Source: SourceObserved, Entries: w.entries}
 	sortEntries(tl.Entries)
 	return tl, nil
 }
 
 // walker reads a tree into timeline entries, depth first.
 type walker struct {
-	fsys    *sandbox.FS
+	fsys    target.Reader
 	opts    Options
 	entries []Entry
 }
@@ -237,7 +249,7 @@ func (w *walker) streamEntries(name string, obj Entry) ([]Entry, error) {
 
 // streamEntry is the entry for one named stream: its object's times, with the
 // stream's own name, size and digest.
-func (w *walker) streamEntry(name string, obj Entry, s sandbox.Stream) (Entry, error) {
+func (w *walker) streamEntry(name string, obj Entry, s target.Stream) (Entry, error) {
 	e := obj
 	e.Type, e.Stream, e.Size, e.MD5 = TypeStream, s.Name, s.Size, ""
 	if !hashable(s.Size, w.opts) {

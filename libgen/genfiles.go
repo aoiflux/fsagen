@@ -26,8 +26,8 @@ import (
 	"github.com/aoiflux/fsagen/constant"
 	"github.com/aoiflux/fsagen/email"
 	"github.com/aoiflux/fsagen/prng"
-	"github.com/aoiflux/fsagen/sandbox"
 	"github.com/aoiflux/fsagen/spec"
+	"github.com/aoiflux/fsagen/target"
 )
 
 // DefaultStart is the default bulk start time: the reference time for the
@@ -196,13 +196,13 @@ const commitBatch = 64
 // but written in the plan's order, one at a time, so the order a file
 // system allocates in (and so its file IDs) is the plan's too; a target
 // that places every byte itself depends on that.
-func Generate(fsys *sandbox.FS, limit, depth int, opts Options) error {
+func Generate(fsys target.Writer, limit, depth int, opts Options) error {
 	if opts.Start.IsZero() {
 		opts.Start = DefaultStart
 	}
 	dirs, jobs := Plan(opts.Seed, limit, depth)
 	for _, d := range dirs {
-		if err := fsys.MkdirAll(d, sandbox.DirMode); err != nil {
+		if err := fsys.MkdirAll(d, target.DirMode); err != nil {
 			return err
 		}
 	}
@@ -225,7 +225,7 @@ func Generate(fsys *sandbox.FS, limit, depth int, opts Options) error {
 			if !done[i] {
 				return renderErr
 			}
-			if err := fsys.WriteFile(j.Path, data[i], sandbox.FileMode); err != nil {
+			if err := fsys.WriteFile(j.Path, data[i], target.FileMode); err != nil {
 				return err
 			}
 		}

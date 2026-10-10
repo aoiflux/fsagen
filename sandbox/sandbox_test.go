@@ -113,7 +113,7 @@ func TestStreams(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(streams) != 2 || streams[0] != (Stream{"a b", 5}) || streams[1] != (Stream{"quill", 6}) {
+	if len(streams) != 2 || streams[0] != (Stream{Name: "a b", Size: 5}) || streams[1] != (Stream{Name: "quill", Size: 6}) {
 		t.Errorf("Streams = %+v", streams)
 	}
 	if data, err := fsys.ReadStream("implant.exe", "quill"); err != nil || string(data) != "hidden" {

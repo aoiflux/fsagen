@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/aoiflux/fsagen/target"
 )
 
 // LinkCaps says which links a volume stores and this process may make.
@@ -13,8 +15,8 @@ type LinkCaps struct {
 
 // The kinds of link Meta reports.
 const (
-	LinkSymlink  = "symlink"
-	LinkJunction = "junction"
+	LinkSymlink  = target.LinkSymlink
+	LinkJunction = target.LinkJunction
 )
 
 // volume is what probing a root's volume found out.

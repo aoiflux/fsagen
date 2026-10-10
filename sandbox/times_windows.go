@@ -30,7 +30,7 @@ func volumeGranularity(_ *os.Root, fsName string) Granularity {
 	if g, ok := namedGranularity(fsName); ok {
 		return g
 	}
-	return Granularity{2 * time.Second, 2 * time.Second, 2 * time.Second, 2 * time.Second}
+	return uniform(2 * time.Second)
 }
 
 // fileBasicInfo mirrors FILE_BASIC_INFO: four FILETIMEs as 100 ns ticks

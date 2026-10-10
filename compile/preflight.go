@@ -7,31 +7,11 @@ import (
 
 	"github.com/aoiflux/fsagen/sandbox"
 	"github.com/aoiflux/fsagen/spec"
+	"github.com/aoiflux/fsagen/target"
 )
 
-// Caps is what the platform and output volume can do.
-type Caps struct {
-	// NamedStreams: the volume stores alternate data streams (NTFS, ReFS).
-	NamedStreams bool
-	// BirthTime: a file's creation time can be set (Windows).
-	BirthTime bool
-	// ChangeTime: a file's metadata change time can be set and is stored
-	// (Windows on NTFS or ReFS).
-	ChangeTime bool
-	// FilenameTimes: the times NTFS keeps in each $FILE_NAME attribute can
-	// be set. No live volume allows it: Windows sets them itself, and no
-	// call a program can make changes them.
-	FilenameTimes bool
-	// Hardlinks, Symlinks and Junctions: the volume stores them, and this
-	// process may make them (a Windows symlink needs Developer Mode or the
-	// privilege).
-	Hardlinks, Symlinks, Junctions bool
-	// Slack is how far the target keeps bytes written past the end of a
-	// file, and ClusterSize the size of its clusters (0 when not known, as
-	// for --validate with no output volume).
-	Slack       SlackSupport
-	ClusterSize int
-}
+// Caps is what the platform and output volume can do (see target.Caps).
+type Caps = target.Caps
 
 // DefaultCaps is the capability set assumed when no output volume is known
 // (for --validate and --dry-run without an output path).

@@ -1997,6 +1997,13 @@ guard, and it is right only when what changed is how the harness *records* a
 tree rather than what fsagen writes into one; check that the new fixture is a
 permutation of the old before believing it.
 
+Everything a run writes and reads back goes through the interfaces in
+`target/`: a live directory (`sandbox`) is one target, and the file-system
+images to come are others. `internal/memtarget` is a target held in memory;
+`TestOneGoTargetReproducesWindowsGoldens` replays every example through it with
+the capabilities of a Windows NTFS volume and checks the Windows goldens, byte
+for byte, on any platform.
+
 `docs/testing.md` maps every finding in `plan.json` to the test that closes it.
 `TestConsumerAcceptance` runs `testdata/acceptance/quilldrop-lite.playbook.yaml`
 and checks the eleven things fsagen's first consumer asked for, from a parseable

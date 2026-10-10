@@ -1,7 +1,8 @@
 // Package manifest executes compiled operations. Every write goes through a
-// sandbox.FS confined to the output root; compile has already proved each
-// operation's preconditions against a model of the tree, so a failure here is
-// an I/O problem, never an input mistake.
+// target.Target: a sandbox.FS confined to the output root, or any other
+// target. Compile has already proved each operation's preconditions against
+// a model of the tree, so a failure here is an I/O problem, never an input
+// mistake.
 //
 // Times are stamped from the model, never from the operation's fields
 // directly: each operation's objects right after it runs (and a deleted
@@ -30,14 +31,19 @@ import (
 	"github.com/aoiflux/fsagen/model"
 	"github.com/aoiflux/fsagen/sandbox"
 	"github.com/aoiflux/fsagen/spec"
+	"github.com/aoiflux/fsagen/target"
 	"github.com/aoiflux/fsagen/timeline"
 	"github.com/aoiflux/fsagen/util"
 )
 
 // ExecContext carries the state every operation needs beyond its own fields.
 type ExecContext struct {
-	// FS is the confined output root.
-	FS *sandbox.FS
+	// FS is the target the scenario is written into.
+	FS target.Target
+	// Read is what verifying reads the times back from. Nil reads FS, which
+	// is right for a target that is final as it is written; Finish sets it
+	// for one that is not.
+	Read target.Reader
 	// Sources reads email bodies and attachments from the YAML's directory.
 	Sources *sandbox.Sources
 	// Caps is the capability set the program was checked against. Times it
@@ -56,6 +62,14 @@ type ExecContext struct {
 	// it is what lets a test assert which pauses were taken without
 	// spending them, so the pauses it declares can be the real ones.
 	Sleep func(time.Duration)
+}
+
+// reader is what verifying reads back.
+func (c ExecContext) reader() target.Reader {
+	if c.Read != nil {
+		return c.Read
+	}
+	return c.FS
 }
 
 // settleRetries are the pauses this run waits before settling again.
@@ -133,32 +147,58 @@ func ExecuteFile(mode compile.Mode, root, file string, opts compile.Options) (Re
 	}
 	defer fsys.Close()
 
-	caps := Caps(fsys)
-	if err := compile.Preflight(prog, caps, opts.SkipUnsupported); err != nil {
-		return Result{}, err
+	res, _, err := Run(fsys, prog, opts.SkipUnsupported)
+	return res, err
+}
+
+// Run checks a compiled program against what t can do, executes it, and
+// settles and verifies the times. It returns the ledger and model, and what
+// the finished output reads back through (see Finish). On a failure after
+// execution began, the ledger holds what was done.
+func Run(t target.Target, prog *compile.Program, skipUnsupported bool) (Result, target.Reader, error) {
+	caps := t.Caps()
+	if err := compile.Preflight(prog, caps, skipUnsupported); err != nil {
+		return Result{}, nil, err
 	}
-	ctx := ExecContext{FS: fsys, Sources: prog.Sources, Caps: caps}
+	ctx := ExecContext{FS: t, Sources: prog.Sources, Caps: caps}
 	entries, err := Execute(ctx, prog.Ops)
 	res := Result{Ledger: entries, Model: prog.Model, Caps: caps}
 	if err != nil {
-		return res, err
+		return res, nil, err
 	}
-	return res, SettleAndVerify(ctx, prog.Model)
+	read, err := Finish(ctx, prog.Model)
+	return res, read, err
 }
 
-// Caps is the capability set of an output root.
-func Caps(fsys *sandbox.FS) compile.Caps {
-	tc := fsys.TimeCaps()
-	slack := compile.SlackNone
-	if fsys.SlackBestEffort() {
-		slack = compile.SlackBestEffort
+// Finish settles the tree's times and verifies them, and returns what the
+// finished output reads back through. A target that is final as it is
+// written is settled and verified in place, and settled again while only
+// access times moved (SettleAndVerify). A target.Finisher is settled, then
+// finished, then verified through the reader its Finish returns. A nil
+// tree, as a bulk corpus has, is only finished.
+func Finish(ctx ExecContext, tree *model.Tree) (target.Reader, error) {
+	fin, ok := ctx.FS.(target.Finisher)
+	if !ok {
+		if tree == nil {
+			return ctx.FS, nil
+		}
+		return ctx.FS, SettleAndVerify(ctx, tree)
 	}
-	links := fsys.LinkCaps()
-	return compile.Caps{
-		NamedStreams: fsys.SupportsStreams(), BirthTime: tc.Birth, ChangeTime: tc.Change, Slack: slack, ClusterSize: fsys.ClusterSize(),
-		Hardlinks: links.Hard, Symlinks: links.Sym, Junctions: links.Junction,
+	if tree != nil {
+		if err := Settle(ctx, tree); err != nil {
+			return nil, err
+		}
 	}
+	read, err := fin.Finish()
+	if err != nil || tree == nil {
+		return read, err
+	}
+	ctx.Read = read
+	return read, Verify(ctx, tree)
 }
+
+// Caps is the capability set of a target.
+func Caps(t target.Target) compile.Caps { return t.Caps() }
 
 // Execute applies the operations in order, leaving out those marked NoOp
 // and those marked Skip (unsupported here), and returns the ledger. Every
@@ -243,7 +283,7 @@ func stamp(ctx ExecContext, p string, t model.Times) error {
 	if !ctx.Caps.ChangeTime {
 		t.Ctime = time.Time{}
 	}
-	return ctx.FS.SetTimes(p, sandbox.Times(t))
+	return ctx.FS.SetTimes(p, target.Times(t))
 }
 
 func newEntry(i int, op compile.Op, caps compile.Caps) ledger.Entry {
@@ -350,9 +390,9 @@ func uncontrolledFileNameTimes(t model.Times, caps compile.Caps) []string {
 	return out
 }
 
-// target is the path of the object an operation leaves behind, or "" for a
+// leftAt is the path of the object an operation leaves behind, or "" for a
 // delete.
-func target(op compile.Op) string {
+func leftAt(op compile.Op) string {
 	switch op.Action {
 	case spec.ActionRename, spec.ActionCopy, spec.ActionHardlink:
 		return op.NewPath
@@ -366,9 +406,9 @@ func target(op compile.Op) string {
 // operation. Reads go through quiet handles, which leave access times alone
 // where the platform allows. A link has neither content nor streams of its
 // own, and is never read through.
-func describe(fs *sandbox.FS, op compile.Op, e *ledger.Entry, digests map[int]string) error {
+func describe(fs target.Reader, op compile.Op, e *ledger.Entry, digests map[int]string) error {
 	e.SHA256Before = digests[op.Object]
-	p := target(op)
+	p := leftAt(op)
 	if p == "" {
 		// A hard-linked file that keeps a name keeps its content.
 		if op.Links == 0 {
@@ -519,7 +559,7 @@ func (e *VerifyError) Error() string {
 func Verify(ctx ExecContext, tree *model.Tree) error {
 	var bad []Mismatch
 	for _, o := range tree.Settle() {
-		got, err := ctx.FS.Times(o.Path)
+		got, err := ctx.reader().Times(o.Path)
 		if err != nil {
 			return err
 		}
@@ -534,8 +574,8 @@ func Verify(ctx ExecContext, tree *model.Tree) error {
 // mismatches lists the times of one object that read back differently from what
 // the scenario intends, by the volume's resolution or more. A time this platform
 // cannot set is not compared, and neither is one the scenario does not pin.
-func mismatches(ctx ExecContext, p string, want model.Times, have sandbox.Times) []Mismatch {
-	caps, g := ctx.Caps, ctx.FS.Granularity()
+func mismatches(ctx ExecContext, p string, want model.Times, have target.Times) []Mismatch {
+	caps, g := ctx.Caps, ctx.reader().Granularity()
 	checks := []struct {
 		field     string
 		want, got time.Time
@@ -591,17 +631,44 @@ var executors = map[spec.ActionName]func(ExecContext, compile.Op) error{
 	spec.ActionJunction:  execJunction,
 }
 
+// linker is the target as a maker of links. Pre-flight refuses a link the
+// target's capabilities do not claim, and a target that claims one makes
+// it, so a target that is no Linker is never asked.
+func linker(ctx ExecContext) (target.Linker, error) {
+	l, ok := ctx.FS.(target.Linker)
+	if !ok {
+		return nil, errors.New("this target makes no links")
+	}
+	return l, nil
+}
+
 // execHardlink gives the file a second name.
-func execHardlink(ctx ExecContext, c compile.Op) error { return ctx.FS.Link(c.Path, c.NewPath) }
+func execHardlink(ctx ExecContext, c compile.Op) error {
+	l, err := linker(ctx)
+	if err != nil {
+		return err
+	}
+	return l.Link(c.Path, c.NewPath)
+}
 
 // execSymlink writes a symlink: its target as given, its type as compile
 // settled it.
 func execSymlink(ctx ExecContext, c compile.Op) error {
-	return ctx.FS.Symlink(c.Path, c.Target, c.TargetType == "dir")
+	l, err := linker(ctx)
+	if err != nil {
+		return err
+	}
+	return l.Symlink(c.Path, c.Target, c.TargetType == "dir")
 }
 
 // execJunction writes a junction to a directory in the output.
-func execJunction(ctx ExecContext, c compile.Op) error { return ctx.FS.Junction(c.Path, c.Target) }
+func execJunction(ctx ExecContext, c compile.Op) error {
+	l, err := linker(ctx)
+	if err != nil {
+		return err
+	}
+	return l.Junction(c.Path, c.Target)
+}
 
 func executeOp(ctx ExecContext, c compile.Op) error {
 	run, ok := executors[c.Action]
@@ -618,7 +685,7 @@ func execCreate(ctx ExecContext, c compile.Op) error {
 	}
 	// Missing parents get the default mode; an explicit mode is for the
 	// directory the operation names.
-	if err := ctx.FS.MkdirAll(c.Path, sandbox.DirMode); err != nil {
+	if err := ctx.FS.MkdirAll(c.Path, target.DirMode); err != nil {
 		return err
 	}
 	return applyMode(ctx.FS, c.Operation, c.Path)
@@ -654,7 +721,7 @@ func execMace(ctx ExecContext, c compile.Op) error {
 func execTimestomp(ExecContext, compile.Op) error { return nil }
 
 func execRename(ctx ExecContext, c compile.Op) error {
-	if err := ctx.FS.MkdirParent(c.NewPath); err != nil {
+	if err := target.MkdirParent(ctx.FS, c.NewPath); err != nil {
 		return err
 	}
 	return ctx.FS.Rename(c.Path, c.NewPath)
@@ -666,7 +733,7 @@ func execCopy(ctx ExecContext, c compile.Op) error {
 		return err
 	}
 	// Streams travel with the copy, as they do with the Windows CopyFile.
-	if err := fs.CopyStreams(c.Path, c.NewPath); err != nil {
+	if err := target.CopyStreams(fs, c.Path, c.NewPath); err != nil {
 		return err
 	}
 	return applyMode(fs, c.Operation, c.NewPath)
@@ -678,7 +745,7 @@ func execTruncate(ctx ExecContext, c compile.Op) error {
 
 func execRotate(ctx ExecContext, c compile.Op) error {
 	fs := ctx.FS
-	if err := fs.MkdirParent(c.NewPath); err != nil {
+	if err := target.MkdirParent(fs, c.NewPath); err != nil {
 		return err
 	}
 	if err := fs.Rename(c.Path, c.NewPath); err != nil {
@@ -734,11 +801,11 @@ func streamContent(c compile.Op) []byte {
 
 // appendTo adds data to the end of a file, bringing it into being if it is not
 // there yet.
-func appendTo(fs *sandbox.FS, op spec.Operation, target string, data []byte) error {
-	if err := fs.MkdirParent(target); err != nil {
+func appendTo(fs target.Writer, op spec.Operation, name string, data []byte) error {
+	if err := target.MkdirParent(fs, name); err != nil {
 		return err
 	}
-	f, err := fs.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_APPEND, fileModeFor(op))
+	f, err := fs.OpenFile(name, os.O_CREATE|os.O_WRONLY|os.O_APPEND, fileModeFor(op))
 	if err != nil {
 		return err
 	}
@@ -749,25 +816,25 @@ func appendTo(fs *sandbox.FS, op spec.Operation, target string, data []byte) err
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return applyMode(fs, op, target)
+	return applyMode(fs, op, name)
 }
 
 // openForEffect opens a file for what the opening itself does: truncating it,
 // or bringing it into being. It writes nothing and applies an explicit mode.
-func openForEffect(fs *sandbox.FS, op spec.Operation, target string, flag int) error {
-	f, err := fs.OpenFile(target, flag, fileModeFor(op))
+func openForEffect(fs target.Writer, op spec.Operation, name string, flag int) error {
+	f, err := fs.OpenFile(name, flag, fileModeFor(op))
 	if err != nil {
 		return err
 	}
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return applyMode(fs, op, target)
+	return applyMode(fs, op, name)
 }
 
 // editFile rewrites a file through the edit block. The whole result is built
 // before anything is written, so a bad pattern leaves the file alone.
-func editFile(fs *sandbox.FS, c compile.Op) error {
+func editFile(fs target.Target, c compile.Op) error {
 	before, err := fs.ReadFile(c.Path)
 	if err != nil {
 		return err
@@ -812,7 +879,7 @@ func writeArchive(ctx ExecContext, c compile.Op) error {
 
 // writeEmail builds the message and either writes it as a standalone .eml or
 // appends it to an mbox. The format defaults from the path extension.
-func writeEmail(ctx ExecContext, c compile.Op, target string) error {
+func writeEmail(ctx ExecContext, c compile.Op, name string) error {
 	op := c.Operation
 	boundaries := c.Rand.Derive("email.boundary").Stream()
 	var readSource func(string) ([]byte, error)
@@ -831,13 +898,13 @@ func writeEmail(ctx ExecContext, c compile.Op, target string) error {
 
 	switch format := compile.EmailFormat(op); format {
 	case spec.FormatEML:
-		if err := ctx.FS.WriteFile(target, msg, fileModeFor(op)); err != nil {
+		if err := ctx.FS.WriteFile(name, msg, fileModeFor(op)); err != nil {
 			return err
 		}
-		return applyMode(ctx.FS, op, target)
+		return applyMode(ctx.FS, op, name)
 	case spec.FormatMbox:
 		// Append, so a whole thread accumulates across steps.
-		return appendTo(ctx.FS, op, target, email.ToMbox(msg, email.EnvelopeSender(*op.Email), date))
+		return appendTo(ctx.FS, op, name, email.ToMbox(msg, email.EnvelopeSender(*op.Email), date))
 	default:
 		return fmt.Errorf("unknown email format %q (want eml or mbox)", format)
 	}
@@ -845,21 +912,21 @@ func writeEmail(ctx ExecContext, c compile.Op, target string) error {
 
 // writeArtifact writes the file with the right permissions, creating its
 // parent.
-func writeArtifact(fs *sandbox.FS, op spec.Operation, target string, data []byte) error {
-	if err := fs.WriteFile(target, data, fileModeFor(op)); err != nil {
+func writeArtifact(fs target.Writer, op spec.Operation, name string, data []byte) error {
+	if err := fs.WriteFile(name, data, fileModeFor(op)); err != nil {
 		return err
 	}
-	return applyMode(fs, op, target)
+	return applyMode(fs, op, name)
 }
 
-func copyFile(fs *sandbox.FS, src, dst string, mode os.FileMode) error {
+func copyFile(fs target.Writer, src, dst string, mode os.FileMode) error {
 	in, err := fs.OpenFile(src, os.O_RDONLY, 0)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
 
-	if err := fs.MkdirParent(dst); err != nil {
+	if err := target.MkdirParent(fs, dst); err != nil {
 		return err
 	}
 	out, err := fs.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
@@ -873,14 +940,14 @@ func copyFile(fs *sandbox.FS, src, dst string, mode os.FileMode) error {
 	return out.Close()
 }
 
-func applyMode(fs *sandbox.FS, op spec.Operation, target string) error {
+func applyMode(fs target.Writer, op spec.Operation, name string) error {
 	mode, ok, err := util.ParseFileMode(op.Mode)
 	if err != nil || !ok {
 		return err
 	}
 	// WriteFile only applies the mode when it creates the file, so an existing
 	// target needs an explicit chmod.
-	return fs.Chmod(target, mode)
+	return fs.Chmod(name, mode)
 }
 
 // fileModeFor reads a mode that compile has already validated.
@@ -888,7 +955,7 @@ func fileModeFor(op spec.Operation) os.FileMode {
 	if mode, ok, _ := util.ParseFileMode(op.Mode); ok {
 		return mode
 	}
-	return sandbox.FileMode
+	return target.FileMode
 }
 
 // contentOf returns the bytes the operation supplies: the filler compile

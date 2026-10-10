@@ -7,6 +7,7 @@ import (
 
 	"github.com/aoiflux/fsagen/model"
 	"github.com/aoiflux/fsagen/spec"
+	"github.com/aoiflux/fsagen/target"
 )
 
 // Slack is the space between the end of a file's content and the end of its
@@ -28,17 +29,15 @@ var SlackKinds = []string{SlackCanary, SlackPattern, SlackFragment}
 // none: what NTFS, ext4 and FAT32 of any moderate size use.
 const DefaultClusterSize = 4096
 
-// SlackSupport is how far a target can be trusted to keep slack bytes.
-type SlackSupport string
+// SlackSupport is how far a target can be trusted to keep slack bytes (see
+// target.SlackSupport).
+type SlackSupport = target.SlackSupport
 
+// The slack a target keeps.
 const (
-	// SlackNone: the target cannot be made to keep them at all.
-	SlackNone SlackSupport = "none"
-	// SlackBestEffort: they are written where the file system leaves them,
-	// but nothing short of reading the raw volume can confirm they stayed.
-	SlackBestEffort SlackSupport = "best_effort"
-	// SlackExact: fsagen writes the cluster itself.
-	SlackExact SlackSupport = "exact"
+	SlackNone       = target.SlackNone
+	SlackBestEffort = target.SlackBestEffort
+	SlackExact      = target.SlackExact
 )
 
 // MinResidentSafe is the smallest file whose slack a live NTFS volume is

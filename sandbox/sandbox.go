@@ -20,20 +20,21 @@ import (
 	"sort"
 
 	"github.com/aoiflux/fsagen/pathpolicy"
+	"github.com/aoiflux/fsagen/target"
 )
 
 // ErrStreamsUnsupported is returned by stream operations on a platform or
 // volume without named streams.
 var ErrStreamsUnsupported = errors.New("alternate data streams are not supported on this platform or volume")
 
-// Default permissions. Files are not executable and directories are not
-// world-writable; an operation's own mode overrides these.
+// Default permissions, as target sets them.
 const (
-	FileMode = os.FileMode(0o644)
-	DirMode  = os.FileMode(0o755)
+	FileMode = target.FileMode
+	DirMode  = target.DirMode
 )
 
-// FS confines file-system writes to one directory.
+// FS confines file-system writes to one directory. It is the live target:
+// what it writes is final as it is written.
 type FS struct {
 	root    *os.Root
 	dir     string
@@ -92,6 +93,27 @@ func (f *FS) WriteSlack(name string, at int64, data []byte) error {
 // btrfs, ...), or "" where the platform does not report one.
 func (f *FS) FilesystemName() string { return f.fsName }
 
+// Caps is what this root's volume can do, and this process on it.
+func (f *FS) Caps() target.Caps {
+	tc := f.TimeCaps()
+	slack := target.SlackNone
+	if f.SlackBestEffort() {
+		slack = target.SlackBestEffort
+	}
+	return target.Caps{
+		NamedStreams: f.streams, BirthTime: tc.Birth, ChangeTime: tc.Change, Slack: slack, ClusterSize: f.cluster,
+		Hardlinks: f.links.Hard, Symlinks: f.links.Sym, Junctions: f.links.Junction,
+	}
+}
+
+// FS is a live target: it makes links and leaves slack where its volume
+// can, and is final as it is written.
+var (
+	_ target.Target  = (*FS)(nil)
+	_ target.Linker  = (*FS)(nil)
+	_ target.Slacker = (*FS)(nil)
+)
+
 func native(name string) string { return filepath.FromSlash(name) }
 
 // MkdirAll creates name and any missing parents.
@@ -116,8 +138,13 @@ func (f *FS) WriteFile(name string, data []byte, perm os.FileMode) error {
 }
 
 // OpenFile opens name within the root.
-func (f *FS) OpenFile(name string, flag int, perm os.FileMode) (*os.File, error) {
-	return f.root.OpenFile(native(name), flag, perm)
+func (f *FS) OpenFile(name string, flag int, perm os.FileMode) (target.File, error) {
+	file, err := f.root.OpenFile(native(name), flag, perm)
+	if err != nil {
+		// Not a nil *os.File in a non-nil interface.
+		return nil, err
+	}
+	return file, nil
 }
 
 // ReadFile reads name from within the root.
@@ -165,10 +192,7 @@ func (f *FS) RemoveContents() error {
 func (f *FS) WalkDir(fn fs.WalkDirFunc) error { return fs.WalkDir(f.root.FS(), ".", fn) }
 
 // Stream describes one named data stream.
-type Stream struct {
-	Name string
-	Size int64
-}
+type Stream = target.Stream
 
 // WriteStream creates or replaces a named stream on an existing file or
 // directory. The base is opened through the root first, which proves it lies

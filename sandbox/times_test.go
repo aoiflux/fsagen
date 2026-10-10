@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/aoiflux/fsagen/target"
 )
 
 func within(a, b time.Time, g time.Duration) bool {
@@ -144,7 +146,7 @@ func TestCopyStreams(t *testing.T) {
 	if err := fsys.WriteStream("a.txt", "Zone.Identifier", []byte("[ZoneTransfer]\r\nZoneId=3\r\n")); err != nil {
 		t.Fatal(err)
 	}
-	if err := fsys.CopyStreams("a.txt", "b.txt"); err != nil {
+	if err := target.CopyStreams(fsys, "a.txt", "b.txt"); err != nil {
 		t.Fatal(err)
 	}
 	got, err := fsys.ReadStream("b.txt", "Zone.Identifier")

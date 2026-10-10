@@ -28,7 +28,7 @@ func volumeGranularity(r *os.Root, fsName string) Granularity {
 	if m, err := statMeta(r, "."); err == nil && !m.Ctime.IsZero() && m.Ctime.Nanosecond() == 0 {
 		return wholeSeconds
 	}
-	return Granularity{time.Microsecond, time.Microsecond, time.Microsecond, time.Microsecond}
+	return uniform(time.Microsecond)
 }
 
 // setTimes never follows a final symlink: a link's own times are part of

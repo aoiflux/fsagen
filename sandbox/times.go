@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -10,20 +11,11 @@ import (
 	"time"
 
 	"github.com/aoiflux/fsagen/pathpolicy"
+	"github.com/aoiflux/fsagen/target"
 )
 
-// Times are an object's four timestamps: last access, last modification,
-// metadata change, and birth (creation). A zero value means "not set":
-// SetTimes leaves that time as the file system has it, and Times reports it
-// as unknown.
-type Times struct {
-	Atime, Mtime, Ctime, Btime time.Time
-}
-
-// IsZero reports whether no time is set.
-func (t Times) IsZero() bool {
-	return t.Atime.IsZero() && t.Mtime.IsZero() && t.Ctime.IsZero() && t.Btime.IsZero()
-}
+// Times are an object's four timestamps (see target.Times).
+type Times = target.Times
 
 // TimeCaps says which times this platform and volume let fsagen set. Access
 // and modification times can always be set.
@@ -44,11 +36,9 @@ func (f *FS) TimeCaps() TimeCaps { return timeCaps(f.fsName) }
 // nanoseconds only if you already know that.
 const tick = 100 * time.Nanosecond
 
-// Granularity is how finely the volume stores each time, which is how far a
-// time read back may differ from the one that was set.
-type Granularity struct {
-	Atime, Mtime, Ctime, Btime time.Duration
-}
+// Granularity is how finely the volume stores each time (see
+// target.Granularity).
+type Granularity = target.Granularity
 
 // Granularity reports the time resolution of this root's volume.
 func (f *FS) Granularity() Granularity { return f.gran }
@@ -58,7 +48,7 @@ func (f *FS) Granularity() Granularity { return f.gran }
 func namedGranularity(fsName string) (Granularity, bool) {
 	switch strings.ToUpper(fsName) {
 	case "NTFS", "REFS":
-		return Granularity{tick, tick, tick, tick}, true
+		return uniform(tick), true
 	case "FAT", "FAT12", "FAT16", "FAT32", "VFAT":
 		return Granularity{Atime: 24 * time.Hour, Mtime: 2 * time.Second, Ctime: 2 * time.Second, Btime: 10 * time.Millisecond}, true
 	case "EXFAT":
@@ -67,8 +57,13 @@ func namedGranularity(fsName string) (Granularity, bool) {
 	return Granularity{}, false
 }
 
+// uniform is the resolution of a volume that keeps every time alike.
+func uniform(d time.Duration) Granularity {
+	return Granularity{Atime: d, Mtime: d, Ctime: d, Btime: d}
+}
+
 // wholeSeconds is the resolution of a volume that keeps whole seconds.
-var wholeSeconds = Granularity{time.Second, time.Second, time.Second, time.Second}
+var wholeSeconds = uniform(time.Second)
 
 // SetTimes sets name's times in one step. Zero times are left alone, and so
 // are the times TimeCaps says this platform cannot set. The root itself is
@@ -93,25 +88,9 @@ func (f *FS) Times(name string) (Times, error) {
 	return m.Times, err
 }
 
-// Meta is what a timeline records about an object besides its content.
-type Meta struct {
-	// Times are the four times; one the platform or volume does not report
-	// is zero (Linux reports a birth time only where statx has one).
-	Times
-	// ID identifies the object on its volume: the MFT record number on
-	// NTFS, the file ID elsewhere on Windows, the inode number on Unix.
-	ID string
-	// UID and GID own the object on Unix. Windows has no numeric owner, and
-	// they are 0 there, as The Sleuth Kit writes them for NTFS.
-	UID, GID int
-	// Links is the number of names the object has (0 where the platform
-	// does not say).
-	Links int
-	// Link is LinkSymlink or LinkJunction for a link, and Target what it
-	// points at: for a symlink as stored, with '/' between names; for a
-	// junction a path in the output when it points into it.
-	Link, Target string
-}
+// Meta is what a timeline records about an object besides its content
+// (see target.Meta). Linux reports a birth time only where statx has one.
+type Meta = target.Meta
 
 // Meta reads name's times, identity and owner without following a final
 // symlink, reading only metadata (no access time moves).
@@ -133,18 +112,29 @@ func (f *FS) Meta(name string) (Meta, error) {
 // time where the platform allows that: on Windows the handle's access-time
 // updates are suspended, on Linux the file is opened with O_NOATIME when the
 // caller owns it. Elsewhere it is an ordinary read.
-func (f *FS) OpenQuiet(name string) (*os.File, error) { return openQuiet(f.root, native(name)) }
+func (f *FS) OpenQuiet(name string) (io.ReadCloser, error) {
+	return readCloser(openQuiet(f.root, native(name)))
+}
 
 // OpenStreamQuiet opens a named stream for reading without moving its
 // file's access time (see OpenQuiet).
-func (f *FS) OpenStreamQuiet(name, stream string) (*os.File, error) {
+func (f *FS) OpenStreamQuiet(name, stream string) (io.ReadCloser, error) {
 	if err := pathpolicy.Stream(stream); err != nil {
 		return nil, err
 	}
 	if !f.streams {
 		return nil, ErrStreamsUnsupported
 	}
-	return openStreamQuiet(f.root, native(name), stream)
+	return readCloser(openStreamQuiet(f.root, native(name), stream))
+}
+
+// readCloser hands on an opened file, or the error, never a nil *os.File
+// in a non-nil interface.
+func readCloser(f *os.File, err error) (io.ReadCloser, error) {
+	if err != nil {
+		return nil, err
+	}
+	return f, nil
 }
 
 // ReadDirQuiet lists a directory, sorted by name, through a handle that
@@ -171,23 +161,4 @@ func (f *FS) ReadDirQuiet(name string) ([]fs.DirEntry, error) {
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
 	return entries, nil
-}
-
-// CopyStreams copies every named stream of src onto dst, as the Windows
-// CopyFile call does. It does nothing where streams are unsupported.
-func (f *FS) CopyStreams(src, dst string) error {
-	streams, err := f.Streams(src)
-	if err != nil {
-		return err
-	}
-	for _, s := range streams {
-		data, err := f.ReadStream(src, s.Name)
-		if err != nil {
-			return err
-		}
-		if err := f.WriteStream(dst, s.Name, data); err != nil {
-			return err
-		}
-	}
-	return nil
 }
