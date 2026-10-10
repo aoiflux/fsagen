@@ -1018,7 +1018,7 @@ Disk image (instead of <output-path>):
   --image-fs FS             %s
   --image-size SIZE         bytes, or with K, M, G or T (powers of 1024)
   --cluster-size N          cluster or block size in bytes (default: what
-                            Windows' format or mke2fs gives the size)
+                            Windows' format, mke2fs or mkntfs gives the size)
   --partition P             mbr (default: one partition 1 MiB in) or none
   --image-label L           volume label
   --image-time T            RFC 3339 time the image's own structures are
@@ -1059,6 +1059,7 @@ Examples:
   fsagen --seed 7 --bulk 3 --depth 2 ./quick-bulk
   fsagen --playbook adversary.yaml --image case.vhd --image-fs fat32 --image-size 512M
   fsagen --manifest basic.yaml --image case.img --image-fs ext4 --image-size 256M
+  fsagen --manifest basic.yaml --image case.vhd --image-fs ntfs --image-size 256M
   fsagen --timeline existing.csv ./existing-artifacts
   fsagen diff-oracle --meta ./scene.fsagen fls.bodyfile
 `, strings.Join(imagepkg.FileSystems, ", "), strings.Join(timelinepkg.Formats, ", "), strings.Join(timelinepkg.Extensions(), " "))

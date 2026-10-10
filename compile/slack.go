@@ -131,7 +131,7 @@ func slackUnsupported(op *Op, caps Caps) string {
 	c := ClusterOf(op.Slack)
 	switch {
 	case caps.Slack == "" || caps.Slack == SlackNone:
-		return "slack needs a target that keeps bytes past the end of a file: live NTFS (best effort) or a disk image"
+		return "slack needs a target that keeps bytes past the end of a file: live NTFS (best effort) or a FAT32 or ext4 disk image"
 	case caps.ClusterSize != 0 && caps.ClusterSize != c:
 		return fmt.Sprintf("slack is planned for %d-byte clusters, and this volume's are %d bytes; set cluster_size: %d", c, caps.ClusterSize, caps.ClusterSize)
 	case caps.Slack == SlackBestEffort && LogicalSize(op) <= MinResidentSafe:

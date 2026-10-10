@@ -87,7 +87,7 @@ func validNames(p string, caps Caps) error {
 		return nil
 	}
 	top, _, _ := strings.Cut(p, "/")
-	if slices.Contains(caps.Reserved, top) {
+	if slices.ContainsFunc(caps.Reserved, func(r string) bool { return r == top || caps.FoldsCase && strings.EqualFold(r, top) }) {
 		return fmt.Errorf("%q at the root of the volume is the file system's own; use another name", top)
 	}
 	if caps.ValidName == nil {

@@ -1,0 +1,34 @@
+# input-sha256 3a127d4a94568ffd4d6ab074f093194fa1fe6ee1167bd5b5a1ae788db478ffa8
+image_sha256 dbe2bfb9fd40ff6b3254076b51247243fe6d9a8bce9c9356aa3141d543a25c8d
+{"event":"residue","n":33,"object":30,"kind":"file","path":"Logs/application-event-019.log","residue":{"cause":"overwrite","extents":[{"offset":9822208,"length":3230}],"size":3230,"sha256":"cbe865bc6efc4f0579c90115f406d9436c05882e8c03fce93151c1509aece653","recoverable":"full"}}
+{"event":"residue","n":38,"object":11,"kind":"file","path":"Logs/application-event-000.log","residue":{"cause":"delete","entry":{"type":"ntfs_mft_record","number":74,"seq":2,"offset":1140736,"length":1024}}}
+{"event":"residue","n":39,"object":17,"kind":"file","path":"Logs/application-event-006.log","residue":{"cause":"delete","entry":{"type":"ntfs_mft_record","number":80,"seq":2,"offset":1146880,"length":1024},"extents":[{"offset":9768960,"length":1020}],"size":1020,"sha256":"bdde93e219cbe48111ac325b3faf86560bdd2c9a4bf8ec3ce304e6d8a5077aeb","recoverable":"full"}}
+{"event":"residue","n":40,"object":23,"kind":"file","path":"Logs/application-event-012.log","residue":{"cause":"delete","entry":{"type":"ntfs_mft_record","number":86,"seq":2,"offset":1153024,"length":1024},"extents":[{"offset":9793536,"length":2040}],"size":2040,"sha256":"593840db2de795168641e3a879647cba4017657cb109527415009e0139656c35","recoverable":"full"}}
+{"event":"residue","n":41,"object":29,"kind":"file","path":"Logs/application-event-018.log","residue":{"cause":"delete","entry":{"type":"ntfs_mft_record","number":92,"seq":2,"offset":1159168,"length":1024},"extents":[{"offset":9818112,"length":3060}],"size":3060,"sha256":"f2d6dfde6bb8272b3951e1e5d72d80ef41564561471f3c5649d0d7d763c372a4","recoverable":"full"}}
+{"event":"residue","n":42,"object":8,"kind":"file","path":"Documents/report-large.bin","residue":{"cause":"delete","entry":{"type":"ntfs_mft_record","number":71,"seq":2,"offset":1137664,"length":1024,"overwritten":true},"extents":[{"offset":9740288,"length":20000}],"size":20000,"sha256":"ed08b16ef144ec2aaad7a9418fc75f70566a543a5fc359a2f39ed4685adbde46","recoverable":"full"}}
+{"event":"residue","n":43,"object":9,"kind":"dir","path":"Documents/Temp","residue":{"cause":"delete","entry":{"type":"ntfs_mft_record","number":72,"seq":2,"offset":1138688,"length":1024}}}
+03c1d5be6ac53a3faba51bc953790539d9b366a7308f81d8e2151292cb1fd2c9  Archive/UPPER-COPY.TXT
+bc5b2d1447abc017e074ef5bf25ae8599ef36084e0e13f5ae9196a347f9dcdae  Archive/notes-final.txt
+9cb2fba82d4b50a47ac829f6730947a0b11492a2b0d7ebe90dea204c4e1a9c6a  Documents/ReadMe.txt
+0f89c7eb422f473cb002fb68d417bcdb8db4c96601ff906d2649eb7520ade762  Documents/Résumé 履歴書.txt
+03c1d5be6ac53a3faba51bc953790539d9b366a7308f81d8e2151292cb1fd2c9  Documents/UPPER.TXT
+26a121598e00af963562f707bf4215f41f8153ab21c3d5caaff66d695e77e1ce  Documents/locked.txt
+035b6f351a49fee18457f4c1d3c96dbba965b9d8acf1f73b336aa5b9694d1926  Documents/report.bin
+ed810d9ea6f6cb07d3527a7fdf408b18ecee46588ed12cf5a32db7332dde3663  Logs/after-the-deletes.log
+f66d021748b4a644ca79515a4b85d5cd05e0602698084e9d010504ea3963332b  Logs/app-001.log
+cb16aa999ddfa68b02e5fc517c7f3ff0531e4f21c4ff33561828181ad3340a29  Logs/application-event-002.log
+3af805a15f3351f18a60cffda6389a6ae7fdb2b89549b4f84ed3ff25bd3d9f6c  Logs/application-event-003.log
+71007c473f9721a67358cdffbf0ed13262766ee2d0ecf58a471b8bd3083d5a65  Logs/application-event-004.log
+0a19a16200b2617e47890bc138a00691087eb409a4ad1261ba2d57e49f938e15  Logs/application-event-005.log
+52f53c356fe351e2c2130612ff7335232ac07eaf74ad5c929a290a416efdb56b  Logs/application-event-007.log
+a0607ab74eff48dba8917852a4accfd10babe61a738cf013240c77d3fd2e8c1e  Logs/application-event-008.log
+525923a1b146f4708b98ddb1fafdda5cc6b1bbce500944194c3a15e01256ae28  Logs/application-event-009.log
+21d7d2a3e82d1c6dc180f89fda026e234718c36e949f93ce015f6022b9435575  Logs/application-event-010.log
+28626dea4d6df8b44a1bd5c43ba8aeb4eba4961fc16d73cacf2a75bf3feee4a7  Logs/application-event-011.log
+ea3f9387dc17d1cccddee692361bf18c91e2dd8584a362d3f48a8ed3c340cbf9  Logs/application-event-013.log
+20323a75a7693a3e0a93e3519f3c7602b979be2cf9496fa662fc7791293c9171  Logs/application-event-014.log
+29d59ba952caab45f40bbde4f6cda0777e4ed762a7ddd0aed86df34353119711  Logs/application-event-015.log
+f755b304ee85b406256dda0666968313098f2afe0fb1a5d0ee570abeb4361929  Logs/application-event-016.log
+a555a8a710309b2b4248e35f9937a5ce3346d4b43a62d546dad1613a1688f8e8  Logs/application-event-017.log
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  Logs/application-event-019.log
+e4c3be3355717f0e2d229ca20008ea8963dc150764d73d0cdd2431a17a6af5f1  Logs/application-event-020.log

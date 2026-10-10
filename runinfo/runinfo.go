@@ -100,7 +100,8 @@ type Image struct {
 	PartitionOffset int64 `json:"partition_offset"`
 	Size            int64 `json:"size"`
 	ClusterSize     int   `json:"cluster_size"`
-	// Serial is a FAT volume's serial number, and UUID an ext4 volume's.
+	// Serial is a FAT volume's serial number or an NTFS volume's 64-bit
+	// one, and UUID an ext4 volume's.
 	Serial string `json:"serial,omitempty"`
 	UUID   string `json:"uuid,omitempty"`
 	Label  string `json:"label,omitempty"`

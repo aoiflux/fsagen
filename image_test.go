@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/aoiflux/fsagen/volume/container"
 	"github.com/aoiflux/fsagen/volume/ext4"
 	"github.com/aoiflux/fsagen/volume/fat"
+	"github.com/aoiflux/fsagen/volume/ntfs"
 )
 
 // imageFixture is the scenario TestImageGolden pins.
@@ -38,7 +40,7 @@ func TestImageFlagErrors(t *testing.T) {
 		{"--manifest", m, "--image", img, "--image-fs", "fat32", "--image-size", "64M", "--into-existing"},
 		{"--manifest", m, "--image", img, "--image-size", "64M"},
 		{"--manifest", m, "--image", img, "--image-fs", "fat32"},
-		{"--manifest", m, "--image", img, "--image-fs", "ntfs", "--image-size", "64M"},
+		{"--manifest", m, "--image", img, "--image-fs", "refs", "--image-size", "64M"},
 		{"--manifest", m, "--image", img, "--image-fs", "fat32", "--image-size", "lots"},
 		{"--manifest", m, "--image", img, "--image-fs", "fat32", "--image-size", "16M"},
 		{"--manifest", m, "--image", filepath.Join(dir, "x.vhdx"), "--image-fs", "fat32", "--image-size", "64M"},
@@ -48,6 +50,10 @@ func TestImageFlagErrors(t *testing.T) {
 		{"--manifest", m, "--image", img, "--image-fs", "ext4", "--image-size", "64M", "--cluster-size", "8192"},
 		{"--manifest", m, "--image", img, "--image-fs", "ext4", "--image-size", "64K"},
 		{"--manifest", m, "--image", img, "--image-fs", "ext4", "--image-size", "64M", "--image-time", "1900-01-01T00:00:00Z"},
+		{"--manifest", m, "--image", img, "--image-fs", "ntfs", "--image-size", "64M", "--image-label", "a-label-of-thirty-three-characters"},
+		{"--manifest", m, "--image", img, "--image-fs", "ntfs", "--image-size", "64M", "--cluster-size", "3000"},
+		{"--manifest", m, "--image", img, "--image-fs", "ntfs", "--image-size", "512K"},
+		{"--manifest", m, "--image", img, "--image-fs", "ntfs", "--image-size", "64M", "--image-time", "1600-12-31T00:00:00Z"},
 	} {
 		if code, _, stderr := runCLI(t, args...); code != exitUsage {
 			t.Errorf("%q: exit %d, want %d (%s)", args, code, exitUsage, stderr)
@@ -111,17 +117,23 @@ func TestImageGolden(t *testing.T) {
 // Every example a volume can hold makes an image whose files are, byte for
 // byte, the files the same scenario writes into a target in memory claiming
 // the volume's capabilities, and whose ledger is that run's: the image
-// holds the whole scenario, and its reader reads it all back. On FAT32, the
-// one example with a hard link is refused before anything is written; ext4
-// takes it.
+// holds the whole scenario, and its reader reads it all back. On FAT32 and
+// NTFS, the one example with a hard link is refused before anything is
+// written; ext4 takes it. On NTFS, whose directories hold no more than one
+// index block of entries yet, the three examples with a bigger directory
+// stop when it fills, and leave no image.
 func TestImagesTakeEveryExample(t *testing.T) {
 	for _, v := range []struct {
 		fs   string
 		caps target.Caps
-	}{{"fat32", fat.Caps(512)}, {"ext4", ext4.Caps(4096)}} {
+	}{{"fat32", fat.Caps(512)}, {"ext4", ext4.Caps(4096)}, {"ntfs", ntfs.Caps(4096)}} {
 		t.Run(v.fs, func(t *testing.T) { imagesTakeEveryExample(t, v.fs, v.caps) })
 	}
 }
+
+// bigDirectories are the examples with a directory of more entries than
+// one NTFS index block holds.
+var bigDirectories = []string{"playbook-comprehensive-ransomware", "playbook-insider-threat-exfil", "playbook-malware-lifecycle"}
 
 func imagesTakeEveryExample(t *testing.T, fsName string, caps target.Caps) {
 	for _, path := range exampleFiles(t) {
@@ -140,6 +152,15 @@ func imagesTakeEveryExample(t *testing.T, fsName string, caps target.Caps) {
 				}
 				if names := entries(t, dir); len(names) != 0 {
 					t.Errorf("a refused run left %q", names)
+				}
+				return
+			}
+			if fsName == "ntfs" && slices.Contains(bigDirectories, name) {
+				if code != exitRuntime || !strings.Contains(stderr, "deeper index") {
+					t.Fatalf("exit %d: %s", code, stderr)
+				}
+				if _, err := os.Stat(img); err == nil {
+					t.Error("a failed run left an image")
 				}
 				return
 			}
@@ -249,16 +270,25 @@ func TestImageObservedTimeline(t *testing.T) {
 }
 
 // 7-Zip, where it is installed, opens a VHD fsagen wrote, finds the MBR
-// and the FAT32 volume in it, and extracts every file with the digest
-// SHA256SUMS gives.
+// and the FAT32 or NTFS volume in it, and extracts every file with the
+// digest SHA256SUMS gives.
 func TestImageReadBy7Zip(t *testing.T) {
 	sevenZip, err := exec.LookPath("7z")
 	if err != nil {
 		t.Skip("7z is not installed")
 	}
+	for _, c := range []struct {
+		fs, fixture, size string
+		files             int
+	}{{"fat32", imageFixture, "40M", 40}, {"ntfs", ntfsFixture, "64M", 20}} {
+		t.Run(c.fs, func(t *testing.T) { readBy7Zip(t, sevenZip, c.fs, c.fixture, c.size, c.files) })
+	}
+}
+
+func readBy7Zip(t *testing.T, sevenZip, fsName, fixture, size string, files int) {
 	dir := t.TempDir()
 	img := filepath.Join(dir, "evidence.vhd")
-	if code, _, stderr := runCLI(t, "--seed", "1", "--manifest", imageFixture, "--image", img, "--image-fs", "fat32", "--image-size", "40M"); code != exitOK {
+	if code, _, stderr := runCLI(t, "--seed", "1", "--manifest", fixture, "--image", img, "--image-fs", fsName, "--image-size", size); code != exitOK {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
 	out := filepath.Join(dir, "x")
@@ -287,7 +317,7 @@ func TestImageReadBy7Zip(t *testing.T) {
 		}
 		n++
 	}
-	if n < 40 {
+	if n < files {
 		t.Errorf("only %d files checked", n)
 	}
 }
@@ -295,7 +325,7 @@ func TestImageReadBy7Zip(t *testing.T) {
 // A bulk corpus written into an image holds the files the bulk golden
 // describes, byte for byte, on either file system.
 func TestImageTakesBulk(t *testing.T) {
-	for _, fsName := range []string{"fat32", "ext4"} {
+	for _, fsName := range []string{"fat32", "ext4", "ntfs"} {
 		img := filepath.Join(t.TempDir(), "bulk.img")
 		if code, _, stderr := runCLI(t, "--seed", "7", "--bulk", "1", "--depth", "1", "--bulk-start", bulkGoldenStart, "--image", img, "--image-fs", fsName, "--image-size", "64M"); code != exitOK {
 			t.Fatalf("%s: exit %d: %s", fsName, code, stderr)

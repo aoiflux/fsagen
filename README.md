@@ -111,8 +111,10 @@ is recorded rather than silently dropped.
 - Disk images built byte by byte, in a raw or VHD disk: FAT32 with Windows'
   short names and deleted entries left where Windows leaves them; ext4 laid
   out as mke2fs lays it out, byte for byte, with nanosecond times, links,
-  and deletes that wipe what Linux wipes. Every piece of residue is in the
-  answer key. Read back by go-diskfs, go-ext4, 7-Zip, `fsck.vfat`, `e2fsck`
+  and deletes that wipe what Linux wipes; NTFS laid out as mkntfs lays it
+  out, byte for byte, with 100 ns times and deleted records left whole, as
+  Windows leaves them. Every piece of residue is in the answer key. Read
+  back by go-diskfs, go-ext4, go-ntfs, 7-Zip, `fsck.vfat`, `e2fsck`, ntfs-3g
   and The Sleuth Kit (see _Disk images_)
 - ATT&CK technique tags (`mitre:`) on any action or step, carried into the
   ledger and answer key and written as an ATT&CK Navigator layer; tagging an
@@ -980,11 +982,12 @@ sees them and a carver reading the volume does:
 end of a file; it can only write the file long, flush, and shrink it back,
 and then it is up to the file system:
 
-| Target          | Slack                                                                                                                                   |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| live NTFS       | best effort, `verified: false`. NTFS leaves the rest of the last cluster alone when a file shrinks; Windows may zero the rest of the sector the file ends in, which is why the canary restarts at every sector. A file of 1 KiB or less is refused, as it may live inside its MFT record with no cluster at all, and so is a `cluster_size` that is not the volume's |
-| live elsewhere  | refused: ext4 zeroes the tail of a block when a file shrinks, and tmpfs and btrfs keep no fixed cluster tail                            |
-| disk image      | exact, `verified: true`: fsagen writes the cluster itself. `cluster_size` must be the image's (`TestImageGolden`)                         |
+| Target              | Slack                                                                                                                                                                                                                                                                                                                                                                |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| live NTFS           | best effort, `verified: false`. NTFS leaves the rest of the last cluster alone when a file shrinks; Windows may zero the rest of the sector the file ends in, which is why the canary restarts at every sector. A file of 1 KiB or less is refused, as it may live inside its MFT record with no cluster at all, and so is a `cluster_size` that is not the volume's |
+| live elsewhere      | refused: ext4 zeroes the tail of a block when a file shrinks, and tmpfs and btrfs keep no fixed cluster tail                                                                                                                                                                                                                                                         |
+| FAT32 or ext4 image | exact, `verified: true`: fsagen writes the cluster itself. `cluster_size` must be the image's (`TestImageGolden`)                                                                                                                                                                                                                                                    |
+| NTFS image          | refused for now                                                                                                                                                                                                                                                                                                                                                      |
 
 A refused slack fails the pre-flight, or with `--on-unsupported=skip` the file
 is written without it and the run manifest records the dropped `slack` field
@@ -1002,6 +1005,8 @@ fsagen --seed 42 --playbook adversary.yaml \
   --image case.vhd --image-fs fat32 --image-size 512M
 fsagen --seed 42 --manifest scene.yaml \
   --image scene.img --image-fs ext4 --image-size 256M
+fsagen --seed 42 --manifest scene.yaml \
+  --image scene.vhd --image-fs ntfs --image-size 256M
 ```
 
 Every byte of the image is fsagen's, so the same seed and input give the same
@@ -1014,19 +1019,21 @@ part of the answer key.
   Hyper-V, 7-Zip and qemu read.
 - `--partition mbr` (the default) puts the file system in one partition 1
   MiB in, as Windows' and Linux's disk tools align it: type `0x0C` for
-  FAT32, `0x83` for ext4. `--partition none` writes the file system alone.
+  FAT32, `0x83` for ext4, `0x07` for NTFS. `--partition none` writes the
+  file system alone.
 - `--image-size` takes bytes or `K`, `M`, `G`, `T` (powers of 1024). A VHD's
   disk is rounded down to a whole number of its cylinders, so the footer's
   size and its geometry agree.
 - `--image-label` sets the volume label.
-- The volume serial (FAT32) or UUID and directory hash seed (ext4), the
-  disk signature, the VHD's ID and ext4's inode generation numbers are drawn
-  from the seed. Nothing else in the run draws from that key, so writing
+- The volume serial (FAT32's 32 bits, NTFS's 64) or UUID and directory
+  hash seed (ext4), the disk signature, the VHD's ID and ext4's inode
+  generation numbers are drawn from the seed. Nothing else in the run draws from that key, so writing
   into an image changes no file's bytes.
 - `--image-time` (default `2021-01-01T00:00:00Z`) stamps what the file
   system creates before the scenario sets its times: FAT's label and `.` and
-  `..` entries, ext4's root directory, lost+found and superblock, and the
-  VHD footer. ext4 also stamps a delete with the operation's own time.
+  `..` entries, ext4's root directory, lost+found and superblock, NTFS's
+  system files and root, and the VHD footer. ext4 also stamps a delete with
+  the operation's own time.
 - The image is written to a temporary file beside it and takes its name only
   once the run has succeeded. An existing image is replaced only with
   `--clean`, and only then. `--into-existing` is refused.
@@ -1124,6 +1131,67 @@ Linux writes it:
 What ext4 cannot hold is refused before anything is written: streams,
 junctions, a time outside its range, and a name longer than 255 bytes.
 
+**NTFS** (`--image-fs ntfs`) is laid out as mkntfs 2022.10.3 formats it and
+Windows writes it:
+- **Format.** An empty volume is mkntfs's byte for byte, given the same
+  serial number, partition start and time (`TestFormatMatchesMkntfs`, nine
+  geometries from 3 MiB to 64 MiB and from 512-byte to 64 KiB clusters).
+  Only the boot code, which fsagen leaves out, and the padding mkntfs leaves
+  holding whatever its buffers held, are masked.
+  - Clusters are 4 KiB (`--cluster-size` takes any power of two from 512
+    bytes to 2 MiB). Records are 1 KiB and index blocks 4 KiB.
+  - `$Boot` is in cluster 0, `$MFT`'s bitmap after it, and `$MFT` from 16
+    KiB with its 27 records. `$MFTMirr` and `$LogFile` (all `0xFF`, sized
+    as mkntfs sizes it) are in the middle of the volume.
+  - The root's security descriptor and index block, `$AttrDef`, `$Bitmap`,
+    `$Secure`'s `$SDS` and `$UpCase` follow the MFT zone, an eighth of the
+    volume after `$MFT`.
+  - `$UpCase` is the table Windows 8 and later write, with its CRC in
+    `$UpCase:$Info`. `$Secure` holds mkntfs's two descriptors.
+- **Records.** A file or directory gets the lowest free record from 64 up,
+  as libntfs-3g counts from there, a deleted one's included.
+  - Its `$STANDARD_INFORMATION` is NTFS 3's, pointing at one of two
+    descriptors fsagen adds to `$Secure` the first time it needs them: a
+    file's and a directory's, owned by the Administrators, with the ACEs
+    they inherit from the root.
+  - Its `$FILE_NAME` is in the Win32 namespace, or the Win32 and DOS
+    namespace when the name is a valid upper-case 8.3 name, as Windows with
+    short names off writes it. No short name is generated.
+  - `$MFT` grows a record at a time, and its clusters 16 records at a time,
+    right after its last one, as libntfs-3g grows it.
+- **Content** stays in the record while it fits there, and once it has left
+  for clusters it stays in clusters. A file rewritten after it was
+  truncated gets new clusters, the old ones keeping its old content. The
+  rest of the last cluster is zeroed, as the cache manager writes it.
+- **Directories.** A directory's entries are kept in its `$INDEX_ROOT`, in
+  `$UpCase` order, until the record is full. Then they all move to one 4
+  KiB index block, as Windows moves them, and the root points there.
+- **Names** are what Windows takes: up to 255 UTF-16 code units, with no
+  control character and none of `"*/:<>?\|`. Case is kept but does not
+  count. `$MFT`, `$Extend` and NTFS's other names at the root are the file
+  system's own, in any case, and are refused there.
+- **Times.** All four times are kept, to 100 ns, from 1601 to 30828.
+  `$FILE_NAME`'s times are set as NTFS sets them: at birth from the file's
+  own, and again when it is renamed, as the model has them.
+- **What a write leaves behind,** as Windows leaves it:
+  - A deleted object's record loses its in-use flag and its sequence number
+    goes up. It keeps its attributes: its names, times and runlist, and its
+    content if that was in the record. Its clusters are freed with their
+    bytes in place.
+  - Its entry leaves its parent's index. The entries after it move up over
+    it, and their old bytes stay past the index's end, as index slack.
+  - A renamed object's entry moves; its old bytes may stay behind as slack
+    in the same way.
+- **Allocation** is `next-fit` or `first-fit` as for FAT32, from the end of
+  the MFT zone, which only `$MFT` grows into while the rest of the volume
+  has room.
+
+What NTFS images cannot hold yet is refused before anything is written:
+streams, links and junctions, slack, a timestomp's `$FILE_NAME` times, a
+time before 1601, and a name Windows forbids (`TestNTFSRefusesWhatItCannotHold`).
+A directory with more entries than one index block holds stops the run when
+it fills, and no image is written.
+
 **Residue in the answer key.** Each thing a write left behind is a `residue`
 fact, tied to the operation that left it:
 
@@ -1135,9 +1203,11 @@ fact, tied to the operation that left it:
 ```
 
 - `cause` is `delete`, `rename` or `overwrite`.
-- `entry` is the deleted entry: FAT's short entry (`fat_dirent`) or ext4's
-  inode (`ext4_inode`). `number` is its address as The Sleuth Kit numbers
-  it, which `istat` takes, and `offset` is where it lies in the image file.
+- `entry` is the deleted entry: FAT's short entry (`fat_dirent`), ext4's
+  inode (`ext4_inode`) or NTFS's MFT record (`ntfs_mft_record`, with the
+  sequence number its deletion gave it as `seq`). `number` is its address as
+  The Sleuth Kit numbers it, which `istat` takes, and `offset` is where it
+  lies in the image file.
   `overwritten` says a later write took it over, so no tool will find it.
   ext4's gives `deleted`, the time of the delete, which the inode keeps as
   its change time and, to the second, as its deletion time.
@@ -1157,28 +1227,37 @@ Slack on an image is written into the cluster itself and recorded
   Every time the run controls is compared, to the file system's resolution.
 - **Every example.** Each example a file system can hold makes an image whose
   `SHA256SUMS` and ledger are, byte for byte, those of the same run in
-  memory (`TestImagesTakeEveryExample`). On FAT32, the one example with a
-  hard link is refused; ext4 takes it.
-- **Pinned images.** `testdata/image/fat32.yaml` and
-  `testdata/image/ext4.yaml` take each driver through every path above.
+  memory (`TestImagesTakeEveryExample`). On FAT32 and NTFS, the one
+  example with a hard link is refused; ext4 takes it. On NTFS, the three
+  examples with a directory bigger than one index block stop there.
+- **Pinned images.** `testdata/image/fat32.yaml`, `testdata/image/ext4.yaml`
+  and `testdata/image/ntfs.yaml` take each driver through every path above.
   Their images, residue and `SHA256SUMS` are pinned, the same on Windows and
-  Linux (`TestImageGolden`, `TestExt4ImageGolden`). fsagen's own observed
-  timeline of the ext4 image scores 1.0 with no time tolerance at all
-  (`TestExt4ObservedTimelineToTheNanosecond`).
+  Linux (`TestImageGolden`, `TestExt4ImageGolden`, `TestNTFSImageGolden`).
+  fsagen's own observed timeline of the ext4 image scores 1.0 with no time
+  tolerance at all (`TestExt4ObservedTimelineToTheNanosecond`), and of the
+  NTFS image too (`TestNTFSObservedTimelineTo100ns`).
 - **Independent readers.**
   - go-diskfs reads every name and byte back, bare and in a VHD
     (`TestFAT32ReadByGoDiskfs`, `TestExt4ReadByGoDiskfs`), checking ext4's
     checksums as it goes.
   - go-ext4 reads the ext4 image too (`TestExt4ReadByGoExt4`).
-  - 7-Zip extracts every file through the VHD and the MBR
-    (`TestImageReadBy7Zip`).
+  - go-ntfs walks the NTFS image's indexes and reads every name, byte,
+    record number, link count and time to the 100 ns, bare and in a VHD,
+    and every deleted record the answer key names, with its sequence number
+    (`TestNTFSReadByGoNTFS`).
+  - 7-Zip extracts every file of the FAT32 and NTFS images through the VHD
+    and the MBR (`TestImageReadBy7Zip`).
   - `fsck.vfat -n` and `e2fsck -fn` find nothing to fix
     (`TestImageCheckedByFsckVfat`, `TestExt4CheckedByE2fsck`). `e2fsck` also
     checks every volume the ext4 driver's unit tests make.
   - The Sleuth Kit's `fls` lists every file. It lists every deleted FAT entry
-    at the address the answer key gives (`TestImageListedByTSK`), and every
-    deleted ext4 inode as `$OrphanFiles/OrphanFile-N` (`TestExt4ListedByTSK`).
-- **Scoring.** `fsagen diff-oracle` scores TSK's bodyfile of either image at
+    at the address the answer key gives (`TestImageListedByTSK`), every
+    deleted ext4 inode as `$OrphanFiles/OrphanFile-N` (`TestExt4ListedByTSK`),
+    and every deleted NTFS record under its name in its directory
+    (`TestNTFSListedByTSK`). `fls` and ntfs-3g's `ntfsls` also read every
+    volume the NTFS driver's unit tests make.
+- **Scoring.** `fsagen diff-oracle` scores TSK's bodyfile of each image at
   1.0 for files, deleted entries and times. On ext4 it takes a deleted
   inode's change time from the residue's `deleted`.
 
@@ -1188,7 +1267,8 @@ deleted directory's inode, and TSK fails to open it while looking for
 orphans, so it drops them all. The ext4 fixture deletes no directory for
 that reason; deleting one is tested in the driver's own tests.
 
-NTFS images come next.
+On NTFS images, directories bigger than one index block come next, then
+streams, links, `$FILE_NAME` times a timestomp sets, and slack.
 
 ## Sharing values across scenarios
 
@@ -1432,8 +1512,7 @@ What fsagen does not control, and what can change its output after it finishes:
 - A generated PE is a container for a parser, not a program: its sections hold
   filler, its entry point is inside that filler, and running one does nothing.
   fsagen has no way to produce, and no intention of producing, working code.
-- Not generated at all: `$Recycle.Bin`, SRUM, Amcache, ESE databases, and
-  NTFS images (FAT32 and ext4 images are; see _Disk images_).
+- Not generated at all: `$Recycle.Bin`, SRUM, Amcache and ESE databases.
 - On a FAT32 image, a deleted entry keeps the high word of its start
   cluster, which some Windows versions clear. The `.` and `..` entries keep
   the times their directory was made with.
@@ -1444,6 +1523,17 @@ What fsagen does not control, and what can change its output after it finishes:
     spreads top-level directories.
   - Everything is owned by root.
   - The superblock is as mke2fs left it, its counts aside: never mounted.
+- An NTFS image's `$LogFile` is as mkntfs left it, all `0xFF`, and no
+  record carries a log sequence number: Windows starts the log afresh when
+  it mounts the volume.
+  - A directory holds no more entries than one 4 KiB index block, and an
+    image has no streams, links, reparse points, slack or `$FILE_NAME`
+    times of the scenario's own yet.
+  - Clusters are placed by fsagen's allocator and records counted from 64,
+    as libntfs-3g counts, which is not where Windows would put them.
+  - Every file and directory has one of two security descriptors, as a
+    file and a folder an administrator makes at the root inherit, owned by
+    the Administrators rather than a user.
 
 ## File formats
 
@@ -2267,16 +2357,16 @@ against someone else's reading of its specification too. It is a separate
 module (`go -C internal/conformance test ./...`, run by the gate), so none of
 these is a dependency of fsagen and none is in its `go.mod`:
 
-| Module                                 | Reads                                                            | Licence    |
-| -------------------------------------- | ---------------------------------------------------------------- | ---------- |
-| `github.com/parsiya/golnk`             | `lnk`                                                            | Apache-2.0 |
-| `www.velocidex.com/golang/go-prefetch` | `prefetch`, and XPRESS Huffman with its own decoder              | Apache-2.0 |
-| `www.velocidex.com/golang/evtx`        | `evtx`                                                           | Apache-2.0 |
-| `www.velocidex.com/golang/regparser`   | `regf`                                                           | Apache-2.0 |
-| `github.com/richardlehane/mscfb`       | the compound file inside `docm` and `xlsm` (the VBA project)     | Apache-2.0 |
-| `www.velocidex.com/golang/go-ntfs`     | a live NTFS volume, raw, to read slack back (administrator only) | Apache-2.0 |
-| `github.com/diskfs/go-diskfs`          | FAT32 and ext4 images, bare and inside an MBR-partitioned VHD    | MIT        |
-| `github.com/dsoprea/go-ext4`           | ext4 images (it reads only volumes with `flex_bg`)               | MIT        |
+| Module                                 | Reads                                                                             | Licence    |
+| -------------------------------------- | --------------------------------------------------------------------------------- | ---------- |
+| `github.com/parsiya/golnk`             | `lnk`                                                                             | Apache-2.0 |
+| `www.velocidex.com/golang/go-prefetch` | `prefetch`, and XPRESS Huffman with its own decoder                               | Apache-2.0 |
+| `www.velocidex.com/golang/evtx`        | `evtx`                                                                            | Apache-2.0 |
+| `www.velocidex.com/golang/regparser`   | `regf`                                                                            | Apache-2.0 |
+| `github.com/richardlehane/mscfb`       | the compound file inside `docm` and `xlsm` (the VBA project)                      | Apache-2.0 |
+| `www.velocidex.com/golang/go-ntfs`     | NTFS images; and a live NTFS volume, raw, to read slack back (administrator only) | Apache-2.0 |
+| `github.com/diskfs/go-diskfs`          | FAT32 and ext4 images, bare and inside an MBR-partitioned VHD                     | MIT        |
+| `github.com/dsoprea/go-ext4`           | ext4 images (it reads only volumes with `flex_bg`)                                | MIT        |
 
 ## Citation
 

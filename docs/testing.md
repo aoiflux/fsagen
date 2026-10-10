@@ -178,7 +178,8 @@ The brief left image output as a follow-on (D-7), with NTFS to be made on a
 scratch volume and its times patched in place through aoiflux/libntfs. The
 roadmap that took it up supersedes that. Every image is built byte by byte
 in pure Go, NTFS included, so there is no scratch volume and no libntfs
-dependency. FAT32 came first, then ext4.
+dependency. FAT32 came first, then ext4, then NTFS, formatted as mkntfs
+formats it.
 
 | What | Verified by |
 |---|---|
@@ -189,13 +190,22 @@ dependency. FAT32 came first, then ext4.
 | ext4 formatted as mke2fs formats it, byte for byte | `TestFormatMatchesMke2fs` |
 | ext4 with nanosecond times, links, wiped entries and orphaned inodes | `TestExt4ImageGolden`, `TestExt4ObservedTimelineToTheNanosecond`, `TestDeleteWipesEntryAndKeepsInode`, `TestLinks`, `TestRecentlyDeletedInodeWaits` |
 | Someone else's reading of an ext4 image | `TestExt4ReadByGoDiskfs`, `TestExt4ReadByGoExt4`, `TestExt4CheckedByE2fsck`, `TestExt4ListedByTSK` |
+| NTFS formatted as mkntfs formats it, byte for byte | `TestFormatMatchesMkntfs`, `TestPlanMatchesMkntfs` |
+| NTFS with 100 ns times, `$Secure`, deleted records left whole and index slack | `TestNTFSImageGolden`, `TestNTFSObservedTimelineTo100ns`, `TestDeleteAsWindows`, `TestSecureDescriptors`, `TestIndexMovesToBlock`, `TestRenameRewritesFileName` |
+| Someone else's reading of an NTFS image | `TestNTFSReadByGoNTFS`, `TestImageReadBy7Zip`, `TestNTFSListedByTSK` |
 
 The external tools need not be installed system-wide. In WSL, run
 `apt-get download dosfstools sleuthkit libtsk19t64 libvmdk1 libvhdi1
 libafflib0t64 libbfio1` and `dpkg -x` each package into a directory you own.
 Then put that directory's `usr/bin` and `usr/sbin` on `PATH`, and its
 `usr/lib/x86_64-linux-gnu` on `LD_LIBRARY_PATH`. None of this needs root.
-e2fsprogs (`mkfs.ext4`, `e2fsck`) comes with Ubuntu.
+e2fsprogs (`mkfs.ext4`, `e2fsck`) comes with Ubuntu. For NTFS, `apt-get
+download ntfs-3g libntfs-3g89t64` the same way, and put the directory's `bin`
+and `sbin` on `PATH` and `lib/x86_64-linux-gnu` on `LD_LIBRARY_PATH` too:
+`mkntfs`, `ntfsls`, `ntfsinfo` and `ntfsfix` work on an image file without
+root, and `mkntfs -T` makes the same volume every time. `ntfssecaudit` and
+mounting need root, and chkdsk an administrator, so neither is part of the
+suite.
 
 The Sleuth Kit 4.12.1 lists no ext4 orphan inode at all on a volume where a
 directory was deleted: it fails to open the emptied directory while looking

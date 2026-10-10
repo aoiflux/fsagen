@@ -24,16 +24,18 @@ import (
 	"github.com/aoiflux/fsagen/volume/container"
 	"github.com/aoiflux/fsagen/volume/ext4"
 	"github.com/aoiflux/fsagen/volume/fat"
+	"github.com/aoiflux/fsagen/volume/ntfs"
 )
 
 // The file systems an image can hold.
 const (
 	FSFAT32 = "fat32"
 	FSExt4  = "ext4"
+	FSNTFS  = "ntfs"
 )
 
 // FileSystems lists them.
-var FileSystems = []string{FSFAT32, FSExt4}
+var FileSystems = []string{FSFAT32, FSExt4, FSNTFS}
 
 // Options say what image to make.
 type Options struct {
@@ -57,28 +59,35 @@ type Options struct {
 	Seed int64
 }
 
-// Plan is an image laid out but not yet written. FAT or Ext4 is the
-// file system's geometry, as FS says.
+// Plan is an image laid out but not yet written. FAT, Ext4 or NTFS is
+// the file system's geometry, as FS says.
 type Plan struct {
 	Options
 	Format string
 	Layout container.Layout
 	FAT    fat.Geometry
 	Ext4   ext4.Geometry
+	NTFS   ntfs.Geometry
 }
 
 // Caps is what the planned file system holds.
 func (p Plan) Caps() target.Caps {
-	if p.FS == FSExt4 {
+	switch p.FS {
+	case FSExt4:
 		return ext4.Caps(p.Ext4.BlockSize)
+	case FSNTFS:
+		return ntfs.Caps(p.NTFS.ClusterSize)
 	}
 	return fat.Caps(p.FAT.ClusterSize)
 }
 
 // clusterSize is the planned file system's allocation unit.
 func (p Plan) clusterSize() int {
-	if p.FS == FSExt4 {
+	switch p.FS {
+	case FSExt4:
 		return p.Ext4.BlockSize
+	case FSNTFS:
+		return p.NTFS.ClusterSize
 	}
 	return p.FAT.ClusterSize
 }
@@ -86,8 +95,11 @@ func (p Plan) clusterSize() int {
 // timeRange is what times the file system can store, and its name for
 // them.
 func timeRange(fs string) (time.Time, time.Time, string) {
-	if fs == FSExt4 {
+	switch fs {
+	case FSExt4:
 		return ext4.MinTime, ext4.MaxTime, "ext4"
+	case FSNTFS:
+		return ntfs.MinTime, ntfs.MaxTime, "NTFS"
 	}
 	return fat.MinTime, fat.MaxTime, "FAT"
 }
@@ -110,10 +122,15 @@ func NewPlan(o Options) (Plan, error) {
 	if !slices.Contains(volume.Policies, o.Alloc) {
 		return Plan{}, fmt.Errorf("unknown allocation policy %q (want %s)", o.Alloc, strings.Join(volume.Policies, " or "))
 	}
-	if o.FS == FSExt4 {
+	switch o.FS {
+	case FSExt4:
 		err = ext4.ValidLabel(o.Label)
-	} else if err = fat.ValidLabel(o.Label); err == nil {
-		o.Label = strings.ToUpper(o.Label)
+	case FSNTFS:
+		err = ntfs.ValidLabel(o.Label)
+	default:
+		if err = fat.ValidLabel(o.Label); err == nil {
+			o.Label = strings.ToUpper(o.Label)
+		}
 	}
 	if err != nil {
 		return Plan{}, err
@@ -126,9 +143,12 @@ func NewPlan(o Options) (Plan, error) {
 		return Plan{}, err
 	}
 	p := Plan{Options: o, Format: format, Layout: l}
-	if o.FS == FSExt4 {
+	switch o.FS {
+	case FSExt4:
 		p.Ext4, err = ext4.Plan(l.Size, o.ClusterSize)
-	} else {
+	case FSNTFS:
+		p.NTFS, err = ntfs.Plan(l.Size, o.ClusterSize)
+	default:
 		p.FAT, err = fat.Plan(l.Size, o.ClusterSize)
 	}
 	if err != nil {
@@ -141,11 +161,14 @@ func NewPlan(o Options) (Plan, error) {
 // file to close or abort.
 type Image struct {
 	*volume.Volume
-	p      Plan
-	f      *os.File
-	serial uint32
-	uuid   [16]byte
-	closed bool
+	p Plan
+	f *os.File
+	// serial is a FAT volume's serial number, serial64 an NTFS volume's,
+	// and uuid an ext4 volume's.
+	serial   uint32
+	serial64 uint64
+	uuid     [16]byte
+	closed   bool
 }
 
 // key is where every identifier the image carries is drawn from; it is
@@ -161,7 +184,10 @@ func Create(p Plan) (*Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	img := &Image{p: p, f: f, serial: binary.LittleEndian.Uint32(p.key().Derive("serial").Stream().Bytes(4)), uuid: uuid(p.key().Derive("uuid"))}
+	img := &Image{
+		p: p, f: f, serial: binary.LittleEndian.Uint32(p.key().Derive("serial").Stream().Bytes(4)),
+		serial64: binary.LittleEndian.Uint64(p.key().Derive("serial").Stream().Bytes(8)), uuid: uuid(p.key().Derive("uuid")),
+	}
 	if err := img.start(); err != nil {
 		img.Abort()
 		return nil, err
@@ -179,10 +205,11 @@ func uuid(k prng.Key) [16]byte {
 	return u
 }
 
-// The MBR partition types: FAT32 with LBA addressing, and Linux.
+// The MBR partition types: FAT32 with LBA addressing, Linux, and NTFS.
 const (
 	partitionFAT32 = 0x0C
 	partitionLinux = 0x83
+	partitionNTFS  = 0x07
 )
 
 func (img *Image) start() error {
@@ -191,8 +218,11 @@ func (img *Image) start() error {
 		return err
 	}
 	kind := byte(partitionFAT32)
-	if p.FS == FSExt4 {
+	switch p.FS {
+	case FSExt4:
 		kind = partitionLinux
+	case FSNTFS:
+		kind = partitionNTFS
 	}
 	if err := container.WriteMBR(img.f, p.Layout, kind, p.key()); err != nil {
 		return err
@@ -201,12 +231,18 @@ func (img *Image) start() error {
 	res := &volume.Tracker{}
 	var d volume.Driver
 	var err error
-	if p.FS == FSExt4 {
+	switch p.FS {
+	case FSExt4:
 		d, err = ext4.Format(dev, ext4.Options{
 			BlockSize: p.Ext4.BlockSize, Label: p.Label, UUID: img.uuid, HashSeed: uuid(p.key().Derive("hash_seed")),
 			Clock: p.Time, Alloc: p.Alloc, Generations: p.key().Derive("generation").Stream(),
 		}, res)
-	} else {
+	case FSNTFS:
+		d, err = ntfs.Format(dev, ntfs.Options{
+			ClusterSize: p.NTFS.ClusterSize, Label: p.Label, Serial: img.serial64,
+			Hidden: uint32(p.Layout.Offset / volume.SectorSize), Clock: p.Time, Alloc: p.Alloc,
+		}, res)
+	default:
 		d, err = fat.Format(dev, fat.Options{
 			ClusterSize: p.FAT.ClusterSize, Label: p.Label, Serial: img.serial,
 			Hidden: uint32(p.Layout.Offset / volume.SectorSize), Clock: p.Time, Alloc: p.Alloc,
@@ -271,10 +307,13 @@ func (img *Image) Record() *runinfo.Image {
 		Size: p.Layout.File(), ClusterSize: p.clusterSize(),
 		Label: p.Label, Time: p.Time.UTC().Format(time.RFC3339Nano), Alloc: p.Alloc,
 	}
-	if p.FS == FSExt4 {
+	switch p.FS {
+	case FSExt4:
 		u := img.uuid
 		r.UUID = fmt.Sprintf("%x-%x-%x-%x-%x", u[0:4], u[4:6], u[6:8], u[8:10], u[10:16])
-	} else {
+	case FSNTFS:
+		r.Serial = fmt.Sprintf("%016X", img.serial64)
+	default:
 		r.Serial, r.TimeZone = fmt.Sprintf("%04X-%04X", img.serial>>16, img.serial&0xFFFF), "UTC"
 	}
 	return r
