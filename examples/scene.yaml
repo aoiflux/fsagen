@@ -1,0 +1,139 @@
+# Insider exfiltration on a finance workstation (NTFS image).
+# Every time is absolute: an operation happens at its mtime, else at start.
+start: "2024-03-04T08:30:00Z"
+
+variables:
+  user: jdoe
+  corp: Contoso Ltd
+
+operations:
+  # --- Day 1: normal work -------------------------------------------------
+  - action: create
+    type: dir
+    path: Users/${VAR:user}/Documents/Finance/
+
+  - action: create
+    path: Users/${VAR:user}/Documents/todo.txt
+    content: |
+      TODO - week 10
+      - finish Q1 budget reconciliation
+      - send vendor list to procurement
+      - book travel for Berlin offsite
+    mtime: "2024-03-04T08:45:00Z"
+
+  - action: create
+    path: Users/${VAR:user}/Documents/Finance/Q1-budget.csv
+    content: |
+      department,owner,budget_usd,spent_usd
+      Engineering,a.khan,1250000,412300
+      Marketing,l.moreau,640000,301950
+      Sales,r.ito,880000,455120
+      Finance,${VAR:user},210000,88400
+    mtime: "2024-03-04T09:10:00Z"
+
+  - action: create
+    path: Users/${VAR:user}/Documents/Finance/customers.csv
+    content: |
+      id,name,email,card_last4,credit_limit
+      1001,Northwind Traders,ap@northwind.example,4421,50000
+      1002,Fabrikam Inc,billing@fabrikam.example,9910,120000
+      1003,Tailspin Toys,finance@tailspin.example,0387,25000
+      1004,Wide World Importers,ar@wwi.example,5532,75000
+    mtime: "2024-03-04T09:20:00Z"
+
+  - action: create
+    path: Users/${VAR:user}/Documents/Finance/board-summary.pdf
+    format: pdf
+    content: |
+      # ${VAR:corp} - Q1 Board Summary
+
+      ## Highlights
+      - Revenue up 7% quarter on quarter
+      - Two new enterprise customers signed
+
+      | Region | Revenue | Growth |
+      |--------|---------|--------|
+      | EMEA   | 4.2M    | 6%     |
+      | APAC   | 3.1M    | 9%     |
+    pdf:
+      title: Q1 Board Summary
+      author: ${VAR:user}
+      created: "2024-03-04T10:00:00Z"
+      modified: "2024-03-04T10:00:00Z"
+    mtime: "2024-03-04T10:00:00Z"
+
+  - action: create
+    path: Users/${VAR:user}/Documents/Finance/vendor-contract.docx
+    docx:
+      title: Master Services Agreement
+      author: legal@contoso.example
+      created: "2024-02-20T14:00:00Z"
+      modified: "2024-03-04T10:30:00Z"
+    content_len: 4000
+    mtime: "2024-03-04T10:30:00Z"
+
+  - action: update
+    path: Users/${VAR:user}/Documents/todo.txt
+    content: |
+      TODO - week 10
+      - [x] finish Q1 budget reconciliation
+      - send vendor list to procurement
+      - book travel for Berlin offsite
+    mtime: "2024-03-04T16:55:00Z"
+
+  # --- Day 2: phishing mail and the exfiltration --------------------------
+  - action: email
+    path: Users/${VAR:user}/Mail/Inbox/0001.eml
+    email:
+      from: "IT Support <helpdesk@contoso-support.example>"
+      to: ["${VAR:user}@contoso.example"]
+      subject: "Mandatory: re-validate your VPN account"
+      date: "2024-03-05T07:58:00Z"
+      body_text: |
+        Hi,
+
+        Your VPN certificate expires today. Upload any files you need to keep
+        to https://share.contoso-support.example before 18:00.
+
+        IT Support
+
+  - action: create
+    type: dir
+    path: Users/${VAR:user}/AppData/Local/Temp/stage/
+
+  - action: copy
+    path: Users/${VAR:user}/Documents/Finance/customers.csv
+    new_path: Users/${VAR:user}/AppData/Local/Temp/stage/c.csv
+    mtime: "2024-03-05T12:41:00Z"
+
+  - action: copy
+    path: Users/${VAR:user}/Documents/Finance/Q1-budget.csv
+    new_path: Users/${VAR:user}/AppData/Local/Temp/stage/b.csv
+    mtime: "2024-03-05T12:41:30Z"
+
+  - action: archive
+    path: Users/${VAR:user}/AppData/Local/Temp/stage/backup.zip
+    archive:
+      method: deflate
+      members: ["Users/${VAR:user}/AppData/Local/Temp/stage/*.csv"]
+      base: Users/${VAR:user}/AppData/Local/Temp/stage
+    mtime: "2024-03-05T12:42:00Z"
+
+  - action: rename
+    path: Users/${VAR:user}/AppData/Local/Temp/stage/backup.zip
+    new_path: Users/${VAR:user}/AppData/Local/Temp/stage/update.tmp
+
+  # --- Cleanup: anti-forensics --------------------------------------------
+  - action: delete
+    path: Users/${VAR:user}/AppData/Local/Temp/stage/c.csv
+    mtime: "2024-03-05T12:50:00Z"
+
+  - action: delete
+    path: Users/${VAR:user}/AppData/Local/Temp/stage/b.csv
+    mtime: "2024-03-05T12:50:05Z"
+
+  - action: timestomp
+    path: Users/${VAR:user}/AppData/Local/Temp/stage/update.tmp
+    atime: "2023-11-14T09:00:00Z"
+    mtime: "2023-11-14T09:00:00Z"
+    crtime: "2023-11-14T09:00:00Z"
