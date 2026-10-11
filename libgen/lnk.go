@@ -10,6 +10,7 @@ import (
 	"unicode/utf16"
 
 	"github.com/aoiflux/fsagen/prng"
+	"github.com/aoiflux/libntfs"
 )
 
 // A Windows shell link (.lnk), as [MS-SHLLINK] describes it: the header with
@@ -192,9 +193,9 @@ func BuildLNK(spec LNKSpec, s *prng.Stream) ([]byte, error) {
 	out = appendGUID(out, lnkCLSID)
 	out = binary.LittleEndian.AppendUint32(out, flags)
 	out = binary.LittleEndian.AppendUint32(out, attrs)
-	out = binary.LittleEndian.AppendUint64(out, filetime(spec.Created))
-	out = binary.LittleEndian.AppendUint64(out, filetime(spec.Accessed))
-	out = binary.LittleEndian.AppendUint64(out, filetime(spec.Modified))
+	out = binary.LittleEndian.AppendUint64(out, libntfs.TimeToFiletime(spec.Created))
+	out = binary.LittleEndian.AppendUint64(out, libntfs.TimeToFiletime(spec.Accessed))
+	out = binary.LittleEndian.AppendUint64(out, libntfs.TimeToFiletime(spec.Modified))
 	out = binary.LittleEndian.AppendUint32(out, uint32(spec.Size))
 	out = binary.LittleEndian.AppendUint32(out, uint32(spec.IconIndex))
 	out = binary.LittleEndian.AppendUint32(out, show)

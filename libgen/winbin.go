@@ -9,10 +9,12 @@ import (
 	"unicode/utf16"
 
 	"github.com/aoiflux/fsagen/prng"
+	"github.com/aoiflux/libntfs"
 )
 
-// The encodings Windows binary formats share: UTF-16LE strings, FILETIMEs,
-// MS-DOS dates and GUIDs in their mixed-endian layout.
+// The encodings Windows binary formats share: UTF-16LE strings, the range
+// of FILETIMEs (libntfs encodes them), MS-DOS dates and GUIDs in their
+// mixed-endian layout.
 
 // utf16z is s as NUL-terminated UTF-16LE.
 func utf16z(s string) []byte {
@@ -28,29 +30,14 @@ func utf16le(s string) []byte {
 	return out
 }
 
-// unixToFiletime is the number of seconds between the FILETIME epoch
-// (1601-01-01) and the Unix one. Over four centuries is more than a
-// time.Duration holds, so the arithmetic cannot go through Sub.
-const unixToFiletime = 11644473600
-
-// MinFiletime and MaxFiletime bound what filetime can encode: nothing before
-// its epoch, and nothing a signed 64-bit count of 100 ns ticks cannot hold,
-// which is what every parser reads it as.
+// MinFiletime and MaxFiletime bound the times FILETIMEs are written for, with
+// libntfs.TimeToFiletime: nothing before its epoch, and nothing a signed
+// 64-bit count of 100 ns ticks cannot hold, which is what every parser reads
+// it as. The zero time is written as 0, which Windows reads as "not set".
 var (
-	MinFiletime = time.Date(1601, 1, 1, 0, 0, 0, 0, time.UTC)
-	MaxFiletime = time.Date(30828, 9, 14, 2, 48, 5, 477580700, time.UTC)
+	MinFiletime = libntfs.FiletimeToTime(0)
+	MaxFiletime = libntfs.FiletimeToTime(1<<63 - 1)
 )
-
-// filetime is t as a FILETIME: 100 ns ticks since 1601-01-01 UTC. The zero
-// time is 0, which Windows reads as "not set"; callers bound t to
-// [MinFiletime, MaxFiletime] before they get here.
-func filetime(t time.Time) uint64 {
-	if t.IsZero() {
-		return 0
-	}
-	u := t.UTC()
-	return uint64(u.Unix()+unixToFiletime)*10_000_000 + uint64(u.Nanosecond()/100)
-}
 
 // dosTime converts t to an MS-DOS date and time, as zip headers and shell
 // items store them: two-second resolution, no zone, and nothing before 1980.

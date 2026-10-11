@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf16"
+
+	"github.com/aoiflux/libntfs"
 )
 
 // A Windows XML event log (.evtx), as Windows Vista and later write one: a
@@ -197,7 +199,7 @@ func (c *evtxChunk) record(spec EvtxSpec, ev EvtxEvent, id uint64, values []evtx
 	start := len(c.buf)
 	b := append(c.buf, 0x2a, 0x2a, 0, 0, 0, 0, 0, 0)
 	b = le.AppendUint64(b, id)
-	b = le.AppendUint64(b, filetime(ev.Time))
+	b = le.AppendUint64(b, libntfs.TimeToFiletime(ev.Time))
 	b = append(b, 0x0f, 0x01, 0x01, 0x00) // fragment header
 
 	key, root := evtxTemplateFor(spec, ev)
@@ -425,7 +427,7 @@ func evtxValues(ev EvtxEvent) ([]evtxValue, error) {
 		{0x06, le.AppendUint16(nil, ev.Task)},
 		{0x04, []byte{ev.Opcode}},
 		{0x15, le.AppendUint64(nil, ev.Keywords)},
-		{0x11, le.AppendUint64(nil, filetime(ev.Time))},
+		{0x11, le.AppendUint64(nil, libntfs.TimeToFiletime(ev.Time))},
 		{0x0a, nil},
 		{0x08, le.AppendUint32(nil, ev.ProcessID)},
 		{0x08, le.AppendUint32(nil, ev.ThreadID)},
@@ -575,7 +577,7 @@ func EvtxValue(typ, value string) ([]byte, error) {
 		if t.Before(MinFiletime) || t.After(MaxFiletime) {
 			return nil, fmt.Errorf("%s is outside what a FILETIME holds", value)
 		}
-		return le.AppendUint64(nil, filetime(t)), nil
+		return le.AppendUint64(nil, libntfs.TimeToFiletime(t)), nil
 	}
 	return nil, fmt.Errorf("value type %q (want one of: %s)", typ, strings.Join(EvtxTypes, ", "))
 }

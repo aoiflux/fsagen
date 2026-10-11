@@ -5,12 +5,13 @@ import (
 	"encoding/binary"
 	"testing"
 	"time"
+
+	"github.com/aoiflux/libntfs"
 )
 
 // filetimeAt reads the FILETIME at off as a time.
 func filetimeAt(b []byte, off int) time.Time {
-	v := binary.LittleEndian.Uint64(b[off:])
-	return time.Unix(int64(v/10_000_000)-11644473600, int64(v%10_000_000)*100).UTC()
+	return libntfs.FiletimeToTime(binary.LittleEndian.Uint64(b[off:]))
 }
 
 // TestLNKThroughManifest: a .lnk built from a manifest records the target the

@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf16"
+
+	"github.com/aoiflux/libntfs"
 )
 
 // sampleHiveSpec exercises every way a hive stores things: names a byte per
@@ -147,7 +149,7 @@ func readHive(t *testing.T, data []byte) map[string]regReadKey {
 			t.Fatalf("key at %#x: signature %q", off, nk[:2])
 		}
 		ft := le.Uint64(nk[4:])
-		k := regReadKey{written: time.Unix(int64(ft/10_000_000)-unixToFiletime, int64(ft%10_000_000)*100).UTC()}
+		k := regReadKey{written: libntfs.FiletimeToTime(ft)}
 		if sk := cell(le.Uint32(nk[44:])); string(sk[:2]) != "sk" {
 			t.Errorf("key %q: security cell signature %q", path, sk[:2])
 		}

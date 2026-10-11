@@ -11,6 +11,7 @@ import (
 	"unicode/utf16"
 
 	"github.com/aoiflux/fsagen/prng"
+	"github.com/aoiflux/libntfs"
 )
 
 // TestPrefetchHashMatchesWindows: the hash is the one Windows 10 put in the
@@ -125,7 +126,7 @@ func readPrefetch(t *testing.T, data []byte) pfRead {
 	}
 	for i := range MaxPrefetchRuns {
 		if ft := le.Uint64(info[44+8*i:]); ft != 0 {
-			r.runs = append(r.runs, time.Unix(int64(ft/10_000_000)-unixToFiletime, int64(ft%10_000_000)*100).UTC())
+			r.runs = append(r.runs, libntfs.FiletimeToTime(ft))
 		}
 	}
 	r.runCount, r.unknown120, r.unknown124 = le.Uint32(info[116:]), le.Uint32(info[120:]), le.Uint32(info[124:])
@@ -172,7 +173,7 @@ func readPrefetch(t *testing.T, data []byte) pfRead {
 		v := pfReadVolume{
 			device:  u16(vi[pathOff : pathOff+2*chars]),
 			serial:  le.Uint32(e[16:]),
-			created: time.Unix(int64(ft/10_000_000)-unixToFiletime, 0).UTC(),
+			created: libntfs.FiletimeToTime(ft).Truncate(time.Second),
 		}
 		refs := vi[le.Uint32(e[20:]):]
 		if le.Uint32(refs) != 3 || le.Uint32(refs[4:]) != 0 || le.Uint32(e[24:]) != 16 {
@@ -228,7 +229,7 @@ func TestPrefetchReadBack(t *testing.T) {
 			// A volume is named by its creation FILETIME and its serial, in
 			// lower-case hex: \VOLUME{01d1217a9c4c6779-8c9f49ec}.
 			volume := func(created time.Time, serial uint32) string {
-				return fmt.Sprintf(`\VOLUME{%016x-%08x}`, uint64(created.Unix()+11644473600)*10_000_000, serial)
+				return fmt.Sprintf(`\VOLUME{%016x-%08x}`, libntfs.TimeToFiletime(created.Truncate(time.Second)), serial)
 			}
 			c, e := volume(spec.Volumes['C'].Created, 0x8C9F49EC), volume(spec.Volumes['E'].Created, 0x1A2B3C4D)
 			wantFiles := []string{

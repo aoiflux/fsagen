@@ -11,6 +11,7 @@ import (
 	"unicode/utf16"
 
 	"github.com/aoiflux/fsagen/prng"
+	"github.com/aoiflux/libntfs"
 )
 
 // A Windows prefetch file (.pf): the record the prefetcher keeps of a program
@@ -264,7 +265,7 @@ func BuildPrefetch(spec PrefetchSpec, s *prng.Stream) ([]byte, error) {
 	le.PutUint32(info[36:], uint32(dirs))
 	le.PutUint32(info[40:], 1)
 	for i, t := range runs {
-		le.PutUint64(info[44+8*i:], filetime(t))
+		le.PutUint64(info[44+8*i:], libntfs.TimeToFiletime(t))
 	}
 	le.PutUint32(info[116:], spec.RunCount)
 	le.PutUint32(info[120:], 1) // what Windows 10 1903 and later write here; tools tell the layouts apart by it
@@ -322,7 +323,7 @@ func prefetchLayout(spec PrefetchSpec, s *prng.Stream) ([]pfFile, []pfVolume, er
 			if !known {
 				return nil, nil, fmt.Errorf("%q is on %c:, and no volume is given for it", p, drive)
 			}
-			v = &pfVolume{device: fmt.Sprintf(`\VOLUME{%016x-%08x}`, filetime(vol.Created), vol.Serial), vol: vol}
+			v = &pfVolume{device: fmt.Sprintf(`\VOLUME{%016x-%08x}`, libntfs.TimeToFiletime(vol.Created), vol.Serial), vol: vol}
 			byDrive[drive] = v
 			dirs[drive] = map[string]bool{}
 		}
@@ -360,7 +361,7 @@ func prefetchVolumes(vols []pfVolume) []byte {
 		e := 96 * i
 		le.PutUint32(b[e+0:], uint32(len(b)))
 		le.PutUint32(b[e+4:], uint32(len(utf16.Encode([]rune(v.device)))))
-		le.PutUint64(b[e+8:], filetime(v.vol.Created))
+		le.PutUint64(b[e+8:], libntfs.TimeToFiletime(v.vol.Created))
 		le.PutUint32(b[e+16:], v.vol.Serial)
 		b = append(b, utf16z(v.device)...)
 		b = append(b, make([]byte, roundUp(len(b), 8)-len(b))...)

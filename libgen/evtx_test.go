@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf16"
+
+	"github.com/aoiflux/libntfs"
 )
 
 // sampleEvtxSpec is a Security log as an intrusion leaves it: a network
@@ -115,7 +117,7 @@ func readEvtx(t *testing.T, data []byte) evtxRead {
 			ft := le.Uint64(rec[16:])
 			out.records = append(out.records, evtxRecordRead{
 				id:   id,
-				time: time.Unix(int64(ft/10_000_000)-unixToFiletime, int64(ft%10_000_000)*100).UTC(),
+				time: libntfs.FiletimeToTime(ft),
 				xml:  xml,
 			})
 			if id == last && off != le.Uint32(chunk[44:]) {
@@ -302,7 +304,7 @@ func formatEvtxValue(s evtxSub) string {
 		return fmt.Sprintf("{%08x-%04x-%04x-%x-%x}", le.Uint32(s.data), le.Uint16(s.data[4:]), le.Uint16(s.data[6:]), s.data[8:10], s.data[10:16])
 	case 0x11:
 		ft := le.Uint64(s.data)
-		t := time.Unix(int64(ft/10_000_000)-unixToFiletime, int64(ft%10_000_000)*100).UTC()
+		t := libntfs.FiletimeToTime(ft)
 		return t.Format("2006-01-02T15:04:05.0000000Z")
 	case 0x13:
 		auth := uint64(0)

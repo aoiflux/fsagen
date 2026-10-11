@@ -9,6 +9,7 @@ import (
 	"unicode/utf16"
 
 	"github.com/aoiflux/fsagen/prng"
+	"github.com/aoiflux/libntfs"
 )
 
 // parsedLNK is what lnkReader recovers from a link, walking it the way a
@@ -161,10 +162,6 @@ func lnkReader(t *testing.T, b []byte) parsedLNK {
 	return p
 }
 
-func fromFiletime(v uint64) time.Time {
-	return time.Unix(int64(v/10_000_000)-unixToFiletime, int64(v%10_000_000)*100).UTC()
-}
-
 // fileEntryName reads a file entry shell item's 8.3 name, and the long name
 // from its 0xBEEF0004 block, found through the offset the block's last two
 // bytes give.
@@ -230,8 +227,8 @@ func TestLNKRoundTrip(t *testing.T) {
 		v    uint64
 		want time.Time
 	}{"created": {p.created, spec.Created}, "accessed": {p.accessed, spec.Accessed}, "modified": {p.wrote, spec.Modified}} {
-		if !fromFiletime(got.v).Equal(got.want) {
-			t.Errorf("%s %v, want %v", name, fromFiletime(got.v), got.want)
+		if !libntfs.FiletimeToTime(got.v).Equal(got.want) {
+			t.Errorf("%s %v, want %v", name, libntfs.FiletimeToTime(got.v), got.want)
 		}
 	}
 	if p.size != 0x2345_6789 || p.iconIndex != -3 || p.show != 3 {
@@ -413,19 +410,21 @@ func TestParseVolumeSerial(t *testing.T) {
 	}
 }
 
-// TestFiletime: the FILETIME epoch, 100 ns resolution, and zero for unset.
+// TestFiletime: libgen writes FILETIMEs with libntfs, and relies on its
+// epoch, its 100 ns resolution, zero for unset, and MaxFiletime being the
+// largest count every parser reads.
 func TestFiletime(t *testing.T) {
-	if filetime(time.Time{}) != 0 || filetime(MinFiletime) != 0 {
+	if libntfs.TimeToFiletime(time.Time{}) != 0 || libntfs.TimeToFiletime(MinFiletime) != 0 {
 		t.Error("zero time or the epoch is not 0")
 	}
 	unix := time.Unix(0, 0)
-	if filetime(unix) != 116444736000000000 {
-		t.Errorf("1970 = %d", filetime(unix))
+	if libntfs.TimeToFiletime(unix) != 116444736000000000 {
+		t.Errorf("1970 = %d", libntfs.TimeToFiletime(unix))
 	}
-	if got := fromFiletime(filetime(time.Date(2024, 1, 2, 3, 4, 5, 678912345, time.UTC))); !got.Equal(time.Date(2024, 1, 2, 3, 4, 5, 678912300, time.UTC)) {
+	if got := libntfs.FiletimeToTime(libntfs.TimeToFiletime(time.Date(2024, 1, 2, 3, 4, 5, 678912345, time.UTC))); !got.Equal(time.Date(2024, 1, 2, 3, 4, 5, 678912300, time.UTC)) {
 		t.Errorf("round trip %v", got)
 	}
-	if got := filetime(MaxFiletime); got != 1<<63-1 {
+	if got := libntfs.TimeToFiletime(MaxFiletime); got != 1<<63-1 {
 		t.Errorf("MaxFiletime = %d, want the largest positive 64-bit count", got)
 	}
 }

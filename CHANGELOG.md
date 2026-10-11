@@ -1221,6 +1221,16 @@ adapter of 345 lines over it. No byte an input produces changes.
 - **The index tests** read each node through `ReadIndexRoot`,
   `ReadIndexBlock` and `IndexBitmap`.
 
+### Windows artifacts write FILETIMEs with libntfs
+
+The `.lnk`, prefetch, `.evtx` and registry generators in `libgen` now write
+their FILETIMEs with `libntfs.TimeToFiletime`, as the NTFS writer does.
+`libgen`'s own `filetime` is gone, and so are the decoders its tests and
+`manifest`'s kept. `MinFiletime` and `MaxFiletime` stay, defined through
+`libntfs.FiletimeToTime`, because input checks use them. No byte an input
+produces changes. Chrome's history times count microseconds, not FILETIME
+ticks, and keep their own conversion.
+
 ## v0.2.0 — the bulk corpus becomes answerable for itself (2026-10-02)
 
 Generator version **6**, and the first tagged release whose output differs from

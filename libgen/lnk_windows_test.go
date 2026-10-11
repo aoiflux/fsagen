@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/aoiflux/fsagen/prng"
+	"github.com/aoiflux/libntfs"
 )
 
 // TestLNKReadByWindowsShell: Windows' own shell link parser, through the
@@ -85,7 +86,7 @@ func TestLNKHeaderTimeOrderMatchesWindows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	year := func(b []byte, off int) int { return fromFiletime(binary.LittleEndian.Uint64(b[off:])).Year() }
+	year := func(b []byte, off int) int { return libntfs.FiletimeToTime(binary.LittleEndian.Uint64(b[off:])).Year() }
 	// Access times move when the shell opens the target, so only the two
 	// that cannot are compared directly; access is whatever is left.
 	if year(windows, 28) != 2001 || year(windows, 44) != 2002 {

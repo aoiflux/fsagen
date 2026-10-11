@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/aoiflux/libntfs"
 )
 
 // The registry artefacts a scenario most often wants, each as the keys and
@@ -124,7 +126,7 @@ func userAssistData(e UserAssist) []byte {
 		b = le.AppendUint32(b, math.Float32bits(-1))
 	}
 	b = le.AppendUint32(b, 0xFFFFFFFF)
-	b = le.AppendUint64(b, filetime(e.LastRun))
+	b = le.AppendUint64(b, libntfs.TimeToFiletime(e.LastRun))
 	return le.AppendUint32(b, 0)
 }
 
@@ -242,7 +244,7 @@ func USBStorKeys(devs []USBDevice, written time.Time) ([]RegKey, error) {
 			keys = append(keys, RegKey{Path: instance + `\Properties\` + devpropKey + `\` + p.id, LastWritten: p.when, Values: []RegValue{
 				// A device property's type is DEVPROP_TYPE_FILETIME (0x10) in
 				// the high-word form the registry stores properties with.
-				{Name: "", Type: 0xFFFF0010, Data: binary.LittleEndian.AppendUint64(nil, filetime(p.when))},
+				{Name: "", Type: 0xFFFF0010, Data: binary.LittleEndian.AppendUint64(nil, libntfs.TimeToFiletime(p.when))},
 			}})
 		}
 	}

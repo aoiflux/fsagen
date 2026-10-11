@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/aoiflux/libntfs"
 )
 
 // TestUserAssistEncoding: a UserAssist entry is named as Explorer names it,
@@ -38,7 +40,7 @@ func TestUserAssistEncoding(t *testing.T) {
 	d := programs.Values[0].Data
 	le := binary.LittleEndian
 	if len(d) != 72 || le.Uint32(d[4:]) != 4 || le.Uint32(d[8:]) != 2 || le.Uint32(d[12:]) != 61000 ||
-		math.Float32frombits(le.Uint32(d[16:])) != -1 || le.Uint64(d[60:]) != filetime(when) {
+		math.Float32frombits(le.Uint32(d[16:])) != -1 || le.Uint64(d[60:]) != libntfs.TimeToFiletime(when) {
 		t.Errorf("UserAssist data % x", d)
 	}
 }
@@ -71,7 +73,7 @@ func TestUSBStorKeys(t *testing.T) {
 	}
 	props := keys[2:]
 	if len(props) != 3 || !strings.HasSuffix(props[0].Path, devpropKey+`\0064`) || props[2].Values[0].Type != 0xFFFF0010 ||
-		binary.LittleEndian.Uint64(props[2].Values[0].Data) != filetime(when) {
+		binary.LittleEndian.Uint64(props[2].Values[0].Data) != libntfs.TimeToFiletime(when) {
 		t.Errorf("properties %+v (a device still connected has no removal time)", props)
 	}
 	for _, bad := range []USBDevice{

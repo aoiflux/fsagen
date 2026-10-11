@@ -10,6 +10,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf16"
+
+	"github.com/aoiflux/libntfs"
 )
 
 // A Windows registry hive file (REGF), in the format Windows XP SP2 and
@@ -461,7 +463,7 @@ func (h *hive) nk(b []byte, n *regNode) {
 	}
 	copy(b, "nk")
 	le.PutUint16(b[2:], flags)
-	le.PutUint64(b[4:], filetime(n.written))
+	le.PutUint64(b[4:], libntfs.TimeToFiletime(n.written))
 	le.PutUint32(b[16:], parent)
 	le.PutUint32(b[20:], uint32(len(n.children)))
 	le.PutUint32(b[28:], list)
@@ -487,7 +489,7 @@ func (h *hive) write(spec HiveSpec, root *regNode) []byte {
 	copy(base, "regf")
 	le.PutUint32(base[4:], 1)
 	le.PutUint32(base[8:], 1)
-	le.PutUint64(base[12:], filetime(spec.Modified))
+	le.PutUint64(base[12:], libntfs.TimeToFiletime(spec.Modified))
 	le.PutUint32(base[20:], 1)
 	le.PutUint32(base[24:], 5)
 	le.PutUint32(base[28:], 0) // a primary hive file
@@ -525,7 +527,7 @@ func (h *hive) write(spec HiveSpec, root *regNode) []byte {
 		le.PutUint32(bin[4:], start)
 		le.PutUint32(bin[8:], end-start)
 		if i == 0 {
-			le.PutUint64(bin[20:], filetime(spec.Modified))
+			le.PutUint64(bin[20:], libntfs.TimeToFiletime(spec.Modified))
 		}
 	}
 	for _, c := range h.cells {
