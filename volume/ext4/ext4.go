@@ -11,6 +11,7 @@ import (
 	"github.com/aoiflux/fsagen/prng"
 	"github.com/aoiflux/fsagen/target"
 	"github.com/aoiflux/fsagen/volume"
+	"github.com/aoiflux/libext"
 )
 
 // recentlyDeleted is how long after an inode is deleted Linux prefers not
@@ -106,7 +107,7 @@ func Format(dev *volume.Device, o Options, res *volume.Tracker) (*FS, error) {
 		inodes: map[uint32]*inode{}, used: make([]bool, g.Inodes()+1),
 		free: make([]uint32, g.Groups), low: make([]uint32, g.Groups), dirs: make([]uint16, g.Groups),
 		blockUninit: make([]bool, g.Groups), inodeUninit: make([]bool, g.Groups), itableUnused: make([]uint32, g.Groups),
-		seed: identity{uuid: o.UUID}.seed(), limit: g.BlockSize - tailSize,
+		seed: identity{uuid: o.UUID}.seed(), limit: g.BlockSize - libext.DirTailSize,
 	}
 	// mke2fs leaves every group's inodes, and every group's blocks but the
 	// last's, to be worked out when first used.
@@ -116,7 +117,7 @@ func Format(dev *volume.Device, o Options, res *volume.Tracker) (*FS, error) {
 		f.itableUnused[i] = g.InodesPerGroup
 		f.blockUninit[i] = i != g.Groups-1
 	}
-	f.itableUnused[0] -= firstIno - 1
+	f.itableUnused[0] -= libext.GoodOldFirstIno - 1
 	// Every group's bookkeeping starts zeroed, whatever the file held, as
 	// does the boot block before the superblock. A group holding any of it
 	// has its blocks worked out already.
@@ -142,7 +143,7 @@ func Format(dev *volume.Device, o Options, res *volume.Tracker) (*FS, error) {
 			}
 		}
 	}
-	for ino := uint32(1); ino < firstIno; ino++ {
+	for ino := uint32(1); ino < libext.GoodOldFirstIno; ino++ {
 		f.claim(ino, nil)
 	}
 	// The bad blocks inode has only the three times ext2 had.
@@ -156,7 +157,7 @@ func Format(dev *volume.Device, o Options, res *volume.Tracker) (*FS, error) {
 		return nil, err
 	}
 	// The other reserved inodes are empty, but for their checksums.
-	for ino := uint32(rootIno + 1); ino < firstIno; ino++ {
+	for ino := libext.RootInode + 1; ino < libext.GoodOldFirstIno; ino++ {
 		empty := make([]byte, inodeSize)
 		setInodeCsum(empty, f.seed, ino)
 		if _, err := dev.WriteAt(empty, g.inodeOffset(ino)); err != nil {
@@ -164,7 +165,7 @@ func Format(dev *volume.Device, o Options, res *volume.Tracker) (*FS, error) {
 		}
 	}
 	f.now = o.Clock
-	f.root = &node{ino: rootIno}
+	f.root = &node{ino: libext.RootInode}
 	if err := f.mkdir(f.root, f.root, 0o755, 0); err != nil {
 		return nil, err
 	}
@@ -179,7 +180,7 @@ func Format(dev *volume.Device, o Options, res *volume.Tracker) (*FS, error) {
 			return nil, err
 		}
 	}
-	if err := f.addEntry(f.root, "lost+found", lpf.ino, ftDir); err != nil {
+	if err := f.addEntry(f.root, "lost+found", lpf.ino, libext.FileTypeDir); err != nil {
 		return nil, err
 	}
 	f.root.in.links++
@@ -240,7 +241,7 @@ func rec(n *volume.Node) *node { return n.Sys.(*node) }
 // and ".." in its first block.
 func (f *FS) mkdir(d, parent *node, perm fs.FileMode, gen uint32) error {
 	now := f.clock()
-	d.in = &inode{mode: modeDir | uint16(perm.Perm()), links: 2, flags: flagExtents, atime: now, ctime: now, mtime: now, crtime: now, gen: gen}
+	d.in = &inode{mode: libext.ModeDir | uint16(perm.Perm()), links: 2, flags: libext.InodeFlagExtents, atime: now, ctime: now, mtime: now, crtime: now, gen: gen}
 	f.claim(d.ino, d.in)
 	if err := f.growDir(d); err != nil {
 		return err
@@ -249,11 +250,11 @@ func (f *FS) mkdir(d, parent *node, perm fs.FileMode, gen uint32) error {
 	le := binary.LittleEndian
 	le.PutUint32(b[0:], d.ino)
 	le.PutUint16(b[4:], 12)
-	b[6], b[7] = 1, ftDir
+	b[6], b[7] = 1, libext.FileTypeDir
 	b[8] = '.'
 	le.PutUint32(b[12:], parent.ino)
 	le.PutUint16(b[16:], uint16(f.limit-12))
-	b[18], b[19] = 2, ftDir
+	b[18], b[19] = 2, libext.FileTypeDir
 	copy(b[20:], "..")
 	f.dirs[f.inodeGroup(d.ino)]++
 	return f.writeBlock(d, 0)
@@ -361,20 +362,20 @@ func (f *FS) Create(parent *volume.Node, name string, n *volume.Node) error {
 	r := &node{ino: ino}
 	gen := uint32(f.o.Generations.Uint64())
 	now := f.clock()
-	ft := byte(ftFile)
+	ft := byte(libext.FileTypeRegular)
 	switch n.Kind {
 	case volume.Dir:
 		if err := f.mkdir(r, p, n.Mode, gen); err != nil {
 			return err
 		}
-		ft = ftDir
+		ft = libext.FileTypeDir
 	case volume.Symlink:
-		ft = ftSymlink
+		ft = libext.FileTypeSymlink
 		if err := f.symlink(r, n.Target, gen); err != nil {
 			return err
 		}
 	case volume.File:
-		r.in = &inode{mode: modeFile | uint16(n.Mode.Perm()), links: 1, flags: flagExtents, atime: now, ctime: now, mtime: now, crtime: now, gen: gen}
+		r.in = &inode{mode: libext.ModeRegular | uint16(n.Mode.Perm()), links: 1, flags: libext.InodeFlagExtents, atime: now, ctime: now, mtime: now, crtime: now, gen: gen}
 		header(r.in.block[:], 0, rootEntries, 0)
 		f.claim(ino, r.in)
 	default:
@@ -413,7 +414,7 @@ func linksDown(n uint16) uint16 {
 // its terminating NUL, else in a block of its own.
 func (f *FS) symlink(r *node, to string, gen uint32) error {
 	now := f.clock()
-	r.in = &inode{mode: modeSymlink | 0o777, links: 1, size: int64(len(to)), atime: now, ctime: now, mtime: now, crtime: now, gen: gen}
+	r.in = &inode{mode: libext.ModeSymlink | 0o777, links: 1, size: int64(len(to)), atime: now, ctime: now, mtime: now, crtime: now, gen: gen}
 	f.claim(r.ino, r.in)
 	if len(to) < len(r.in.block) {
 		copy(r.in.block[:], to)
@@ -422,7 +423,7 @@ func (f *FS) symlink(r *node, to string, gen uint32) error {
 	if len(to) >= f.g.BlockSize {
 		return fmt.Errorf("a symlink target is shorter than a block (%d bytes), and this one has %d", f.g.BlockSize, len(to))
 	}
-	r.in.flags = flagExtents
+	r.in.flags = libext.InodeFlagExtents
 	if err := f.grow(r, 1); err != nil {
 		return err
 	}
@@ -451,7 +452,7 @@ func (f *FS) writeInode(r *node) error {
 func (f *FS) writeBlock(d *node, i int) error {
 	bs := f.g.BlockSize
 	b := d.data[i*bs : (i+1)*bs]
-	setDirTail(b, inodeSeed(f.seed, d.ino, d.in.gen))
+	setDirTail(b, f.seed, d.ino, d.in.gen)
 	_, err := f.dev.WriteAt(b, f.g.offset(d.blocks[i]))
 	return err
 }
@@ -478,7 +479,7 @@ func (f *FS) growDir(d *node) error {
 // the new one, which splits it; or in a new block when none has room.
 func (f *FS) addEntry(d *node, name string, ino uint32, ft byte) error {
 	bs := f.g.BlockSize
-	need := recLen(len(name))
+	need := libext.DirRecLen(len(name))
 	le := binary.LittleEndian
 	for i := 0; ; i++ {
 		if i == len(d.blocks) {
@@ -493,7 +494,7 @@ func (f *FS) addEntry(d *node, name string, ino uint32, ft byte) error {
 			if rl < 8 || off+rl > f.limit {
 				return fmt.Errorf("directory inode %d: a broken entry at byte %d of block %d", d.ino, off, i)
 			}
-			nlen := recLen(int(blk[off+6]))
+			nlen := libext.DirRecLen(int(blk[off+6]))
 			room := rl
 			if used {
 				room = rl - nlen
@@ -600,7 +601,7 @@ func (f *FS) mapBlocks(r *node) error {
 			for k, e := range part {
 				putExtent(b[12+12*k:], e)
 			}
-			setExtentTail(b, inodeSeed(f.seed, r.ino, r.in.gen))
+			setExtentTail(b, f.seed, r.ino, r.in.gen)
 			if _, err := f.dev.WriteAt(b, f.g.offset(leaf)); err != nil {
 				return err
 			}
@@ -711,7 +712,7 @@ func (f *FS) Remove(parent *volume.Node, name string, vn *volume.Node) error {
 		return err
 	}
 	now := f.clock()
-	if r.in.mode&modeType == modeDir {
+	if r.in.mode&libext.ModeTypeMask == libext.ModeDir {
 		p.in.links = linksDown(p.in.links)
 		r.in.links = 0
 	} else {
@@ -733,7 +734,7 @@ func (f *FS) evict(r *node, now time.Time) error {
 	if err != nil {
 		return err
 	}
-	if r.in.flags&flagExtents == 0 {
+	if r.in.flags&libext.InodeFlagExtents == 0 {
 		// A fast symlink's target goes with the inode's in-memory copy.
 		clear(r.in.block[:])
 	} else if err := f.zeroExtents(r); err != nil {
@@ -744,7 +745,7 @@ func (f *FS) evict(r *node, now time.Time) error {
 	r.blocks, r.leaves = nil, nil
 	r.in.size, r.in.sectors, r.in.links = 0, 0, 0
 	r.in.dtime = uint32(now.Unix())
-	if r.in.mode&modeType == modeDir {
+	if r.in.mode&libext.ModeTypeMask == libext.ModeDir {
 		f.dirs[f.inodeGroup(r.ino)]--
 	}
 	f.release(r.ino)
@@ -789,7 +790,7 @@ func (f *FS) zeroExtents(r *node) error {
 				return err
 			}
 			wipe(b, int(le.Uint16(b[2:])))
-			setExtentTail(b, inodeSeed(f.seed, r.ino, r.in.gen))
+			setExtentTail(b, f.seed, r.ino, r.in.gen)
 			if _, err := f.dev.WriteAt(b, f.g.offset(leaf)); err != nil {
 				return err
 			}
@@ -804,12 +805,12 @@ func (f *FS) zeroExtents(r *node) error {
 // does; a directory that changes parent has its ".." repointed.
 func (f *FS) Rename(from *volume.Node, oldName string, to *volume.Node, newName string, vn *volume.Node) error {
 	src, dst, r := rec(from), rec(to), rec(vn)
-	ft := byte(ftFile)
-	switch r.in.mode & modeType {
-	case modeDir:
-		ft = ftDir
-	case modeSymlink:
-		ft = ftSymlink
+	ft := byte(libext.FileTypeRegular)
+	switch r.in.mode & libext.ModeTypeMask {
+	case libext.ModeDir:
+		ft = libext.FileTypeDir
+	case libext.ModeSymlink:
+		ft = libext.FileTypeSymlink
 	}
 	if err := f.addEntry(dst, newName, r.ino, ft); err != nil {
 		return err
@@ -821,7 +822,7 @@ func (f *FS) Rename(from *volume.Node, oldName string, to *volume.Node, newName 
 	if err := f.removeEntry(src, oldName); err != nil {
 		return err
 	}
-	if ft == ftDir && src != dst {
+	if ft == libext.FileTypeDir && src != dst {
 		binary.LittleEndian.PutUint32(r.data[12:], dst.ino)
 		if err := f.writeBlock(r, 0); err != nil {
 			return err
@@ -844,7 +845,7 @@ func (f *FS) Link(parent *volume.Node, name string, vn *volume.Node) error {
 	if r.in.links >= linkMax {
 		return fmt.Errorf("the file has the most links ext4 allows (%d)", linkMax)
 	}
-	if err := f.addEntry(p, name, r.ino, ftFile); err != nil {
+	if err := f.addEntry(p, name, r.ino, libext.FileTypeRegular); err != nil {
 		return err
 	}
 	r.in.links++
@@ -872,7 +873,7 @@ func (f *FS) SetTimes(vn *volume.Node, t target.Times) error {
 // Chmod stores n's permission bits.
 func (f *FS) Chmod(vn *volume.Node) error {
 	r := rec(vn)
-	r.in.mode = r.in.mode&modeType | uint16(vn.Mode.Perm())
+	r.in.mode = r.in.mode&libext.ModeTypeMask | uint16(vn.Mode.Perm())
 	r.in.ctime = f.clock()
 	return f.writeInode(r)
 }
@@ -906,9 +907,9 @@ func (f *FS) writeBitmaps() (counts, error) {
 		c.freeBlocks += uint32(c.groupBlocks[i])
 		c.freeInodes += uint32(c.groupInodes[i])
 		c.itableUnused[i] = uint16(f.itableUnused[i])
-		c.flags[i] = bgItableZeroed
+		c.flags[i] = libext.GroupInodeZeroed
 		if f.blockUninit[i] {
-			c.flags[i] |= bgBlockUninit
+			c.flags[i] |= libext.GroupBlockUninit
 		} else {
 			bm := make([]byte, bs)
 			start, n := g.start(i), g.groupBlocks(i)
@@ -917,13 +918,13 @@ func (f *FS) writeBitmaps() (counts, error) {
 					bm[k/8] |= 1 << (k % 8)
 				}
 			}
-			c.blockCsums[i] = uint16(crc32c(f.seed, bm[:g.BlocksPerGroup/8]))
+			c.blockCsums[i] = uint16(libext.BitmapChecksum(f.seed, bm[:g.BlocksPerGroup/8]))
 			if _, err := f.dev.WriteAt(bm, g.offset(g.blockBitmap(i))); err != nil {
 				return c, err
 			}
 		}
 		if f.inodeUninit[i] {
-			c.flags[i] |= bgInodeUninit
+			c.flags[i] |= libext.GroupInodeUninit
 		} else {
 			im := make([]byte, bs)
 			first := uint32(i)*g.InodesPerGroup + 1
@@ -932,7 +933,7 @@ func (f *FS) writeBitmaps() (counts, error) {
 					im[k/8] |= 1 << (k % 8)
 				}
 			}
-			c.inodeCsums[i] = uint16(crc32c(f.seed, im[:g.InodesPerGroup/8]))
+			c.inodeCsums[i] = uint16(libext.BitmapChecksum(f.seed, im[:g.InodesPerGroup/8]))
 			if _, err := f.dev.WriteAt(im, g.offset(g.inodeBitmap(i))); err != nil {
 				return c, err
 			}

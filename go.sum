@@ -1,3 +1,5 @@
+github.com/aoiflux/libext v0.4.1 h1:oejncRRlZJqwoDghu5ywl8EJMQSGTWMhUNHUN4Qd9FU=
+github.com/aoiflux/libext v0.4.1/go.mod h1:3G3wyW96Lxdcyh0jNbMNw8aMF3kPw4aBnEQ7ALwTZs0=
 github.com/aoiflux/libfat v0.3.3 h1:kSnqgysYb2NTyzMWriPkomLX1tLvS3NVDW/f3Y4n0RM=
 github.com/aoiflux/libfat v0.3.3/go.mod h1:5r+eVBMfHeKyk0BadJN9XcEXoN11bXZwz4NaopRThzQ=
 github.com/aoiflux/libtable v0.2.3 h1:eyeiok7qd6Aw4vnimURdREicyFhUkhwCE5Q/P0XmrOc=

@@ -1150,6 +1150,36 @@ No byte an input produces changes.
   `ValidShortName` accepts more than Windows generates, so `names.go` keeps
   its own rules.
 
+### ext4 read back through libext
+
+ext4 images are now read back by libext v0.4.1, the owner's own ext parser.
+fsagen's 434-line reader in `volume/ext4/reader.go` becomes an adapter over
+it. No byte an input produces changes.
+
+- **The reader** opens the volume with `Strict` and builds the tree in one
+  `WalkDirWithInode` pass. Strict checks every metadata checksum, including
+  each extent block's and directory block's tail. These are also errors:
+  - a hole, an unwritten run or a short block map in what is read;
+  - a duplicate name;
+  - a name whose inode has no links or a deletion time.
+
+  fsagen keeps its name sorting and leaves out lost+found. libext reports a
+  time stored as two zero words as no time; the reader maps that back to
+  1970, as the kernel reads it. The reader no longer refuses features or
+  geometries that fsagen does not write itself.
+- **The writer** takes these from libext:
+  - the feature, mode, file-type, flag, extent and directory-tail constants;
+  - `CRC32C`, `MetadataSeed`, `SuperblockChecksum`, `GroupDescChecksum`,
+    `InodeChecksum`, `BitmapChecksum`, `ExtentTailChecksum` and
+    `DirTailChecksum`;
+  - `EncodeTime`, `DecodeTime`, `MinTime` and `MaxTime`;
+  - `HasSuperBackup` and `DirRecLen`.
+
+  fsagen's crc32c table and seeds, its time codec and its sparse_super rule
+  are gone. `encodeTime` still writes the zero time as two zero words, where
+  libext would clamp it to `MinTime`. The superblock, descriptor and inode
+  encoders, the table placement and `Plan` stay in fsagen.
+
 ## v0.2.0 — the bulk corpus becomes answerable for itself (2026-10-02)
 
 Generator version **6**, and the first tagged release whose output differs from

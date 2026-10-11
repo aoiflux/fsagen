@@ -21,87 +21,34 @@ package ext4
 import (
 	"encoding/binary"
 	"fmt"
-	"hash/crc32"
 	"math"
 	"time"
+
+	"github.com/aoiflux/libext"
 )
 
 const (
 	superOffset = 1024
-	superSize   = 1024
-	magic       = 0xEF53
 	inodeSize   = 256
 	extraIsize  = 32
-	firstIno    = 11
-	rootIno     = 2
 	lostFound   = 11
-	descSize    = 32
 	// lostFoundSize is how much room mke2fs gives lost+found, so that
 	// e2fsck need not allocate blocks to reconnect files to it; see Format.
 	lostFoundSize = 16384
 	// linkMax is the most links an inode counts; a directory with more
 	// subdirectories counts 1 (dir_nlink).
 	linkMax = 65000
-	// maxName is the longest name, in bytes.
-	maxName = 255
 	// logFlex is mke2fs's flex group size, 16 groups, as a power of two.
 	logFlex  = 4
 	flexSize = 1 << logFlex
-	// tailSize is the fake entry that ends every directory block and holds
-	// its checksum.
-	tailSize = 12
-)
-
-// Feature and flag bits.
-const (
-	incompatFiletype = 0x0002
-	incompatExtents  = 0x0040
-	incompatFlexBG   = 0x0200
-	roSparseSuper    = 0x0001
-	roLargeFile      = 0x0002
-	roDirNlink       = 0x0020
-	roExtraIsize     = 0x0040
-	roMetadataCsum   = 0x0400
-	bgInodeUninit    = 0x0001
-	bgBlockUninit    = 0x0002
-	bgItableZeroed   = 0x0004
-	flagExtents      = 0x00080000
-	mountUserXattr   = 0x0004
-	mountACL         = 0x0008
-	flagSignedHash   = 0x0001
-	hashHalfMD4      = 1
-	csumCRC32c       = 1
-	extentMagic      = 0xF30A
-	tailFileType     = 0xDE
-)
-
-// Inode types, in i_mode.
-const (
-	modeFile    = 0x8000
-	modeDir     = 0x4000
-	modeSymlink = 0xA000
-	modeType    = 0xF000
-)
-
-// Directory entry file types.
-const (
-	ftFile    = 1
-	ftDir     = 2
-	ftSymlink = 7
 )
 
 // MinTime and MaxTime are the first and last instants an inode can store:
 // 32 bits of seconds from 1970, signed, and two more bits of epoch.
 var (
-	MinTime = time.Unix(math.MinInt32, 0).UTC()
-	MaxTime = time.Unix(1<<34-1<<31-1, 999_999_999).UTC()
+	MinTime = libext.MinTime
+	MaxTime = libext.MaxTime
 )
-
-var castagnoli = crc32.MakeTable(crc32.Castagnoli)
-
-// crc32c is the kernel's crc32c_le: no inversion before or after, so one
-// checksum can seed the next.
-func crc32c(seed uint32, b []byte) uint32 { return ^crc32.Update(^seed, castagnoli, b) }
 
 // Geometry is where an ext4 volume keeps what.
 type Geometry struct {
@@ -163,7 +110,7 @@ func Plan(size int64, blockSize int) (Geometry, error) {
 	if bs == 1024 {
 		g.FirstData = 1
 	}
-	inodes := max(blocks*bs/inodeRatio(blocks*bs), firstIno+1)
+	inodes := max(blocks*bs/inodeRatio(blocks*bs), int64(libext.GoodOldFirstIno)+1)
 	// mke2fs reserves 5% for root, and keeps the same share of what is left
 	// when the last group is dropped, both in floating point.
 	reserved0 := uint64(5.0 * float64(blocks) / 100.0)
@@ -183,7 +130,7 @@ func Plan(size int64, blockSize int) (Geometry, error) {
 		itb := (ipg*inodeSize + bs - 1) / bs
 		ipg = max(itb*bs/inodeSize, 8) &^ 7
 		itb = (ipg*inodeSize + bs - 1) / bs
-		desc := (groups*descSize + bs - 1) / bs
+		desc := (groups*libext.GroupDescSizeMin + bs - 1) / bs
 		last := 2 + itb
 		if hasSuper(int(groups - 1)) {
 			last += 1 + desc
@@ -211,21 +158,7 @@ func Plan(size int64, blockSize int) (Geometry, error) {
 // hasSuper reports whether group i keeps a copy of the superblock and the
 // group descriptors (sparse_super): groups 0 and 1 and the powers of 3, 5
 // and 7.
-func hasSuper(i int) bool {
-	if i <= 1 {
-		return true
-	}
-	for _, b := range []int{3, 5, 7} {
-		n := b
-		for n < i {
-			n *= b
-		}
-		if n == i {
-			return true
-		}
-	}
-	return false
-}
+func hasSuper(i int) bool { return libext.HasSuperBackup(uint32(i), true, false, [2]uint32{}) }
 
 // Inodes is how many inodes the volume has.
 func (g Geometry) Inodes() uint32 { return g.InodesPerGroup * uint32(g.Groups) }
@@ -414,11 +347,11 @@ type identity struct {
 }
 
 // seed is what every metadata checksum starts from.
-func (id identity) seed() uint32 { return crc32c(^uint32(0), id.uuid[:]) }
+func (id identity) seed() uint32 { return libext.MetadataSeed(id.uuid, 0, false) }
 
 // superblock is group i's copy of the superblock.
 func (g Geometry) superblock(i int, id identity, c counts) []byte {
-	b := make([]byte, superSize)
+	b := make([]byte, libext.SuperblockSize)
 	le := binary.LittleEndian
 	created := uint32(id.created.Unix())
 	le.PutUint32(b[0x00:], g.Inodes())
@@ -438,7 +371,7 @@ func (g Geometry) superblock(i int, id identity, c counts) []byte {
 	le.PutUint32(b[0x28:], g.InodesPerGroup)
 	le.PutUint32(b[0x30:], created) // last written
 	le.PutUint16(b[0x36:], 0xFFFF)  // no maximum mount count
-	le.PutUint16(b[0x38:], magic)
+	le.PutUint16(b[0x38:], libext.Magic)
 	if i == 0 {
 		// The backups say nothing of the state: e2fsck checks the primary.
 		le.PutUint16(b[0x3A:], 1) // clean
@@ -446,29 +379,29 @@ func (g Geometry) superblock(i int, id identity, c counts) []byte {
 	le.PutUint16(b[0x3C:], 1) // continue on errors
 	le.PutUint32(b[0x40:], created)
 	le.PutUint32(b[0x4C:], 1) // dynamic revision
-	le.PutUint32(b[0x54:], firstIno)
+	le.PutUint32(b[0x54:], libext.GoodOldFirstIno)
 	le.PutUint16(b[0x58:], inodeSize)
 	le.PutUint16(b[0x5A:], uint16(i))
-	le.PutUint32(b[0x60:], incompatFiletype|incompatExtents|incompatFlexBG)
-	le.PutUint32(b[0x64:], roSparseSuper|roLargeFile|roDirNlink|roExtraIsize|roMetadataCsum)
+	le.PutUint32(b[0x60:], libext.IncompatFiletype|libext.IncompatExtents|libext.IncompatFlexBG)
+	le.PutUint32(b[0x64:], libext.ROCompatSparseSuper|libext.ROCompatLargeFile|libext.ROCompatDirNlink|libext.ROCompatExtraIsize|libext.ROCompatMetadataCsum)
 	copy(b[0x68:0x78], id.uuid[:])
 	copy(b[0x78:0x88], id.label)
 	copy(b[0xEC:0xFC], id.hashSeed[:])
-	b[0xFC] = hashHalfMD4
-	le.PutUint32(b[0x100:], mountUserXattr|mountACL)
+	b[0xFC] = libext.HashHalfMD4
+	le.PutUint32(b[0x100:], libext.DefMountUserXattr|libext.DefMountACL)
 	le.PutUint32(b[0x108:], created)
 	le.PutUint16(b[0x15C:], extraIsize)
 	le.PutUint16(b[0x15E:], extraIsize)
-	le.PutUint32(b[0x160:], flagSignedHash)
+	le.PutUint32(b[0x160:], libext.FlagSignedHash)
 	b[0x174] = logFlex
-	b[0x175] = csumCRC32c
+	b[0x175] = libext.ChecksumTypeCRC32C
 	// The overhead counts the boot block too, when it is a block of its own.
 	overhead := g.FirstData
 	for k := range g.Groups {
 		overhead += g.meta(k) + 2 + g.InodeBlocks
 	}
 	le.PutUint32(b[0x248:], overhead)
-	le.PutUint32(b[0x3FC:], crc32c(^uint32(0), b[:0x3FC]))
+	le.PutUint32(b[libext.SbOffChecksum:], libext.SuperblockChecksum(b))
 	return b
 }
 
@@ -479,7 +412,7 @@ func (g Geometry) descriptors(seed uint32, c counts) []byte {
 	b := make([]byte, int64(g.DescBlocks)*int64(g.BlockSize))
 	le := binary.LittleEndian
 	for i := range g.Groups {
-		d := b[i*descSize : (i+1)*descSize]
+		d := b[i*libext.GroupDescSizeMin : (i+1)*libext.GroupDescSizeMin]
 		le.PutUint32(d[0:], g.blockBitmap(i))
 		le.PutUint32(d[4:], g.inodeBitmap(i))
 		le.PutUint32(d[8:], g.inodeTable(i))
@@ -490,9 +423,7 @@ func (g Geometry) descriptors(seed uint32, c counts) []byte {
 		le.PutUint16(d[24:], c.blockCsums[i])
 		le.PutUint16(d[26:], c.inodeCsums[i])
 		le.PutUint16(d[28:], c.itableUnused[i])
-		var n [4]byte
-		le.PutUint32(n[:], uint32(i))
-		le.PutUint16(d[30:], uint16(crc32c(crc32c(seed, n[:]), d)))
+		le.PutUint16(d[libext.GdOffChecksum:], libext.GroupDescChecksum(seed, uint32(i), d, libext.GroupDescSizeMin))
 	}
 	return b
 }
@@ -507,27 +438,19 @@ func ValidLabel(label string) error {
 
 // ValidName refuses a name ext4 cannot hold: more than 255 bytes.
 func ValidName(name string) error {
-	if len(name) > maxName {
-		return fmt.Errorf("an ext4 name has at most %d bytes, and %q has %d", maxName, name, len(name))
+	if len(name) > libext.MaxNameLen {
+		return fmt.Errorf("an ext4 name has at most %d bytes, and %q has %d", libext.MaxNameLen, name, len(name))
 	}
 	return nil
 }
 
-// encodeTime is t as an inode keeps it: the low 32 bits of its seconds,
-// and its nanoseconds shifted over two bits of epoch, which carry the
-// seconds past 2038.
+// encodeTime is t as an inode keeps it, and the zero time as nothing at
+// all, where libext would clamp it to MinTime.
 func encodeTime(t time.Time) (uint32, uint32) {
 	if t.IsZero() {
 		return 0, 0
 	}
-	s := t.Unix()
-	epoch := uint32((s-int64(int32(s)))>>32) & 3
-	return uint32(int32(s)), uint32(t.Nanosecond())<<2 | epoch
-}
-
-func decodeTime(lo, extra uint32) time.Time {
-	s := int64(int32(lo)) + int64(extra&3)<<32
-	return time.Unix(s, int64(extra>>2)).UTC()
+	return libext.EncodeTime(t)
 }
 
 // inode is an inode as the volume keeps it.
@@ -574,30 +497,14 @@ func (n *inode) encode(seed, ino uint32) []byte {
 	return b
 }
 
-// inodeSeed is what the checksums of inode ino's own blocks (its extent
-// tree and, for a directory, its entries) start from.
-func inodeSeed(seed, ino, gen uint32) uint32 {
-	var n [4]byte
-	binary.LittleEndian.PutUint32(n[:], ino)
-	s := crc32c(seed, n[:])
-	binary.LittleEndian.PutUint32(n[:], gen)
-	return crc32c(s, n[:])
-}
-
-// setInodeCsum writes inode b's checksum: a crc32c of its number, its
-// generation and itself with the checksum zeroed, in two halves, the high
-// one only where the inode's extra fields reach it.
+// setInodeCsum writes inode b's checksum, in two halves, the high one only
+// where the inode's extra fields reach it.
 func setInodeCsum(b []byte, seed, ino uint32) {
 	le := binary.LittleEndian
-	hi := le.Uint16(b[128:]) >= 4
-	le.PutUint16(b[124:], 0)
-	if hi {
-		le.PutUint16(b[130:], 0)
-	}
-	crc := crc32c(inodeSeed(seed, ino, le.Uint32(b[100:])), b)
-	le.PutUint16(b[124:], uint16(crc))
-	if hi {
-		le.PutUint16(b[130:], uint16(crc>>16))
+	lo, hi, hasHi := libext.InodeChecksum(seed, ino, le.Uint32(b[libext.InodeOffGeneration:]), b, len(b))
+	le.PutUint16(b[libext.InodeOffChecksumLo:], lo)
+	if hasHi {
+		le.PutUint16(b[libext.InodeOffChecksumHi:], hi)
 	}
 }
 
@@ -605,14 +512,11 @@ func setInodeCsum(b []byte, seed, ino uint32) {
 // blocks from logical on.
 type extent struct{ logical, start, len uint32 }
 
-// maxExtent is the longest run one extent maps.
-const maxExtent = 32768
-
 // extents are the runs blocks make, in order.
 func extents(blocks []uint32) []extent {
 	var out []extent
 	for i, b := range blocks {
-		if n := len(out); n > 0 && out[n-1].start+out[n-1].len == b && out[n-1].len < maxExtent {
+		if n := len(out); n > 0 && out[n-1].start+out[n-1].len == b && out[n-1].len < libext.ExtentInitMaxLen {
 			out[n-1].len++
 			continue
 		}
@@ -624,16 +528,17 @@ func extents(blocks []uint32) []extent {
 // header writes an extent tree node's header.
 func header(b []byte, entries, max, depth int) {
 	le := binary.LittleEndian
-	le.PutUint16(b[0:], extentMagic)
+	le.PutUint16(b[0:], libext.ExtentMagic)
 	le.PutUint16(b[2:], uint16(entries))
 	le.PutUint16(b[4:], uint16(max))
 	le.PutUint16(b[6:], uint16(depth))
 }
 
-// setExtentTail writes the checksum after an extent block's last slot.
-func setExtentTail(b []byte, seed uint32) {
-	end := 12 + 12*int(binary.LittleEndian.Uint16(b[4:]))
-	binary.LittleEndian.PutUint32(b[end:], crc32c(seed, b[:end]))
+// setExtentTail writes the checksum after extent block b's last slot, b
+// being inode ino's, of generation gen.
+func setExtentTail(b []byte, seed, ino, gen uint32) {
+	end := libext.ExtentHeaderSize + libext.ExtentEntrySize*int(binary.LittleEndian.Uint16(b[4:]))
+	binary.LittleEndian.PutUint32(b[end:], libext.ExtentTailChecksum(seed, ino, gen, b))
 }
 
 func putExtent(b []byte, e extent) {
@@ -652,16 +557,13 @@ func putIndex(b []byte, logical, leaf uint32) {
 // rootEntries is how many extents or indexes the inode itself holds.
 const rootEntries = 4
 
-// recLen is the room a directory entry with a name of n bytes takes.
-func recLen(n int) int { return (8 + n + 3) &^ 3 }
-
 // setDirTail writes the fake entry that ends directory block b and holds
 // its checksum.
-func setDirTail(b []byte, seed uint32) {
+func setDirTail(b []byte, seed, ino, gen uint32) {
 	le := binary.LittleEndian
-	t := b[len(b)-tailSize:]
+	t := b[len(b)-libext.DirTailSize:]
 	clear(t)
-	le.PutUint16(t[4:], tailSize)
-	t[7] = tailFileType
-	le.PutUint32(t[8:], crc32c(seed, b[:len(b)-tailSize]))
+	le.PutUint16(t[4:], libext.DirTailSize)
+	t[7] = libext.DirTailFileType
+	le.PutUint32(t[8:], libext.DirTailChecksum(seed, ino, gen, b))
 }

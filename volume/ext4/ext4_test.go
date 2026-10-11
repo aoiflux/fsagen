@@ -14,6 +14,7 @@ import (
 	"github.com/aoiflux/fsagen/prng"
 	"github.com/aoiflux/fsagen/target"
 	"github.com/aoiflux/fsagen/volume"
+	"github.com/aoiflux/libext"
 )
 
 var clock = time.Date(2022, 6, 1, 8, 0, 0, 0, time.UTC)
@@ -247,18 +248,18 @@ func TestDeleteWipesEntryAndKeepsInode(t *testing.T) {
 		t.Error("the deleted name is still in the directory block")
 	}
 	in := v.inode(t, ino)
-	if le.Uint16(in[0:]) != modeFile|0o644 || le.Uint32(in[4:]) != 0 || le.Uint16(in[26:]) != 0 || le.Uint32(in[28:]) != 0 {
+	if le.Uint16(in[0:]) != libext.ModeRegular|0o644 || le.Uint32(in[4:]) != 0 || le.Uint16(in[26:]) != 0 || le.Uint32(in[28:]) != 0 {
 		t.Errorf("deleted inode: mode %o size %d links %d blocks %d", le.Uint16(in[0:]), le.Uint32(in[4:]), le.Uint16(in[26:]), le.Uint32(in[28:]))
 	}
 	if got := le.Uint32(in[20:]); got != uint32(when.Unix()) {
 		t.Errorf("dtime %d, want %d", got, when.Unix())
 	}
-	if got := decodeTime(le.Uint32(in[12:]), le.Uint32(in[132:])); !got.Equal(when) {
+	if got := libext.DecodeTime(le.Uint32(in[12:]), le.Uint32(in[132:])); !got.Equal(when) {
 		t.Errorf("ctime %s, want the deletion's %s", got, when)
 	}
 	// The extent header is empty and the extent keeps its logical block
 	// alone.
-	if le.Uint16(in[40:]) != extentMagic || le.Uint16(in[42:]) != 0 || le.Uint16(in[44:]) != rootEntries || !bytes.Equal(in[52:64], make([]byte, 12)) {
+	if le.Uint16(in[40:]) != libext.ExtentMagic || le.Uint16(in[42:]) != 0 || le.Uint16(in[44:]) != rootEntries || !bytes.Equal(in[52:64], make([]byte, 12)) {
 		t.Errorf("extent tree % x", in[40:64])
 	}
 	if len(res) != 1 || res[0].Cause != target.ResidueDelete || res[0].Entry == nil || res[0].Entry.Number != int64(ino) || res[0].Recoverable != target.RecoverableFull {
@@ -344,7 +345,7 @@ func TestDeleteDirectory(t *testing.T) {
 		t.Errorf("a: %+v, %v", m, err)
 	}
 	in := v.inode(t, ino)
-	if le.Uint16(in[0:]) != modeDir|0o755 || le.Uint16(in[26:]) != 0 || le.Uint32(in[4:]) != 0 || le.Uint32(in[20:]) == 0 {
+	if le.Uint16(in[0:]) != libext.ModeDir|0o755 || le.Uint16(in[26:]) != 0 || le.Uint32(in[4:]) != 0 || le.Uint32(in[20:]) == 0 {
 		t.Errorf("deleted directory inode % x", in[:32])
 	}
 	if len(res) != 1 || len(res[0].Extents) != 1 || res[0].Extents[0].Offset != v.fs.g.offset(blk) || res[0].Size != int64(v.fs.g.BlockSize) {
@@ -385,7 +386,7 @@ func TestLinks(t *testing.T) {
 			t.Errorf("%s: %+v", name, m)
 		}
 	}
-	if in := v.inode(t, v.ino(t, "s")); le.Uint32(in[32:])&flagExtents != 0 || string(in[40:40+len(short)]) != short {
+	if in := v.inode(t, v.ino(t, "s")); le.Uint32(in[32:])&libext.InodeFlagExtents != 0 || string(in[40:40+len(short)]) != short {
 		t.Errorf("fast symlink inode % x", in[32:64])
 	}
 	if rec(mustNode(t, v, "sub/l")).blocks == nil {
@@ -393,7 +394,7 @@ func TestLinks(t *testing.T) {
 	}
 	// The root counts ".", its entry in nothing and lost+found's and sub's
 	// "..".
-	if root := v.inode(t, rootIno); le.Uint16(root[26:]) != 4 {
+	if root := v.inode(t, libext.RootInode); le.Uint16(root[26:]) != 4 {
 		t.Errorf("root links %d", le.Uint16(root[26:]))
 	}
 }
@@ -503,7 +504,7 @@ func TestTimesKeepNanoseconds(t *testing.T) {
 		t.Errorf("times %+v, want %+v", got, want)
 	}
 	for _, tm := range []time.Time{MinTime, MaxTime} {
-		if d := decodeTime(encodeTime(tm)); !d.Equal(tm) {
+		if d := libext.DecodeTime(encodeTime(tm)); !d.Equal(tm) {
 			t.Errorf("%s comes back as %s", tm, d)
 		}
 	}

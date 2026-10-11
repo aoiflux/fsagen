@@ -2385,9 +2385,9 @@ Everything a run writes and reads back goes through the interfaces in
 (`volume/`) is another. A `volume.Volume` keeps the tree as the scenario sees
 it and hands every change to a driver (`volume/fat`), which writes it through
 to the image as its file system would and, once finished, reads the image
-back. FAT32 is read back through libfat, opened strict, so a chain, a long
-name or a FAT copy that is not as it should be is an error; ext4 and NTFS
-are read with fsagen's own parsers. `internal/memtarget` is a target held in memory;
+back. FAT32 and ext4 are read back through libfat and libext, opened
+strict, so a chain, a long name, a FAT copy, a checksum or a block map that
+is not as it should be is an error; NTFS is read with fsagen's own parser. `internal/memtarget` is a target held in memory;
 `TestOneGoTargetReproducesWindowsGoldens` replays every example through it with
 the capabilities of a Windows NTFS volume and checks the Windows goldens, byte
 for byte, on any platform.
@@ -2422,7 +2422,7 @@ phishing message to a real gap in a beacon log.
 
 ### Dependencies
 
-Eight direct ones, each here for a reason the standard library does not cover.
+Nine direct ones, each here for a reason the standard library does not cover.
 `go mod tidy` is clean, and the whole product builds with `CGO_ENABLED=0`.
 
 | Module                          | Why                                                                                                                                             |
@@ -2433,6 +2433,7 @@ Eight direct ones, each here for a reason the standard library does not cover.
 | `golang.org/x/sys`              | `NtCreateFile` and `FILE_BASIC_INFO` on Windows, `statx` on Linux, `Birthtimespec` on the BSDs, and the last-access registry value              |
 | `golang.org/x/text`             | Unicode case folding and NFC normalisation, so the portability check catches names that collide on a case-insensitive or normalising volume     |
 | `github.com/aoiflux/libtable`   | the MBR entry, CHS and partition-type codecs and constants for disk images, from the owner's own partition-table parser                         |
+| `github.com/aoiflux/libext`     | reads ext4 images back, strict, and gives the writer its constants, crc32c checksums, time codec and backup-group rule                          |
 | `github.com/aoiflux/libfat`     | reads FAT32 images back, strict, and gives the writer its constants and its time and long-name checksum codecs                                  |
 | `github.com/aoiflux/libvhdi`    | the VHD footer, its geometry, timestamp and checksum codecs, from the owner's own VHD parser                                                    |
 
