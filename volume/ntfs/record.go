@@ -2,11 +2,14 @@ package ntfs
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"slices"
 	"time"
+
+	"github.com/aoiflux/libntfs"
 )
 
 // errRecordFull says a record has no room for what was to go in it.
@@ -49,7 +52,7 @@ func (a *attr) encode() []byte {
 		copy(b[24:], name)
 		copy(b[vo:], a.value)
 	} else {
-		mp := mappingPairs(a.runs)
+		mp := runlist(a.runs)
 		mo := 64 + align8(len(name))
 		b = make([]byte, align8(mo+len(mp)))
 		b[8] = 1
@@ -113,7 +116,7 @@ type record struct {
 // record never written).
 func newRecord(num uint32, seq uint16, raw []byte) *record {
 	if raw == nil {
-		raw = make([]byte, recordSize)
+		raw = make([]byte, libntfs.RecordSize)
 	}
 	return &record{num: num, seq: seq, raw: raw}
 }
@@ -126,19 +129,9 @@ func refNum(ref uint64) uint32 { return uint32(ref & 0xFFFFFFFFFFFF) }
 // order is how a record sorts its attributes: by type, then name.
 func order(a, b *attr) int {
 	if a.typ != b.typ {
-		return cmpU32(a.typ, b.typ)
+		return cmp.Compare(a.typ, b.typ)
 	}
 	return collate(a.name, b.name)
-}
-
-func cmpU32(a, b uint32) int {
-	switch {
-	case a < b:
-		return -1
-	case a > b:
-		return 1
-	}
-	return 0
 }
 
 // add puts a new attribute in its place, with the next ID.
@@ -164,7 +157,7 @@ func placeAfter(x, a *attr) bool {
 	switch c := order(x, a); {
 	case c != 0:
 		return c < 0
-	case a.typ == atFileName:
+	case a.typ == libntfs.AttrTypeFileName:
 		return bytes.Compare(x.value, a.value) <= 0
 	}
 	return true
@@ -202,24 +195,24 @@ func (r *record) encode() ([]byte, error) {
 	off := 0x38
 	for _, a := range r.attrs {
 		e := a.encode()
-		if off+len(e)+8 > recordSize {
+		if off+len(e)+8 > libntfs.RecordSize {
 			return nil, fmt.Errorf("record %d: %w", r.num, errRecordFull)
 		}
 		copy(b[off:], e)
 		off += len(e)
 	}
-	le.PutUint32(b[off:], atEnd)
+	le.PutUint32(b[off:], libntfs.AttrTypeEnd)
 	le.PutUint32(b[off+4:], 0)
 	copy(b, "FILE")
 	le.PutUint16(b[4:], 0x30)
-	le.PutUint16(b[6:], recordSize/sectorSize+1)
+	le.PutUint16(b[6:], libntfs.RecordSize/sectorSize+1)
 	le.PutUint64(b[8:], 0)
 	le.PutUint16(b[16:], r.seq)
 	le.PutUint16(b[18:], r.links)
 	le.PutUint16(b[20:], 0x38)
 	le.PutUint16(b[22:], r.flags)
 	le.PutUint32(b[24:], uint32(off+8))
-	le.PutUint32(b[28:], recordSize)
+	le.PutUint32(b[28:], libntfs.RecordSize)
 	le.PutUint64(b[32:], 0)
 	le.PutUint16(b[40:], r.next)
 	le.PutUint16(b[42:], 0)
@@ -230,7 +223,9 @@ func (r *record) encode() ([]byte, error) {
 	le.PutUint32(b[44:], num)
 	r.usn = nextUSN(r.usn)
 	out := slices.Clone(b)
-	protect(out, r.usn)
+	if err := libntfs.ProtectFixup(out, r.usn); err != nil {
+		return nil, fmt.Errorf("record %d: %w", r.num, err)
+	}
 	return out, nil
 }
 
@@ -244,7 +239,7 @@ func nextUSN(u uint16) uint16 {
 }
 
 // fits reports whether the record holds its attributes.
-func (r *record) fits() bool { return r.used() <= recordSize }
+func (r *record) fits() bool { return r.used() <= libntfs.RecordSize }
 
 // times are the four times NTFS keeps in $STANDARD_INFORMATION and every
 // $FILE_NAME, in its order: created, data changed, record changed, read.
@@ -252,15 +247,10 @@ type times struct{ created, modified, changed, accessed time.Time }
 
 func (t times) put(b []byte) {
 	le := binary.LittleEndian
-	le.PutUint64(b[0:], filetime(t.created))
-	le.PutUint64(b[8:], filetime(t.modified))
-	le.PutUint64(b[16:], filetime(t.changed))
-	le.PutUint64(b[24:], filetime(t.accessed))
-}
-
-func readTimes(b []byte) times {
-	le := binary.LittleEndian
-	return times{fromFiletime(le.Uint64(b[0:])), fromFiletime(le.Uint64(b[8:])), fromFiletime(le.Uint64(b[16:])), fromFiletime(le.Uint64(b[24:]))}
+	le.PutUint64(b[0:], libntfs.TimeToFiletime(t.created))
+	le.PutUint64(b[8:], libntfs.TimeToFiletime(t.modified))
+	le.PutUint64(b[16:], libntfs.TimeToFiletime(t.changed))
+	le.PutUint64(b[24:], libntfs.TimeToFiletime(t.accessed))
 }
 
 func allAt(t time.Time) times { return times{t, t, t, t} }
@@ -310,27 +300,10 @@ func (f fileName) encode() []byte {
 	return b
 }
 
-func readFileName(b []byte) (fileName, error) {
-	if len(b) < 66 || len(b) < 66+2*int(b[64]) {
-		return fileName{}, errors.New("a short $FILE_NAME")
-	}
-	le := binary.LittleEndian
-	return fileName{
-		parent: le.Uint64(b[0:]), t: readTimes(b[8:]), alloc: int64(le.Uint64(b[40:])), size: int64(le.Uint64(b[48:])),
-		flags: le.Uint32(b[56:]), reparse: le.Uint32(b[60:]), namespace: b[65], name: fromUTF16le(b[66 : 66+2*int(b[64])]),
-	}, nil
-}
+// upcase is the $UpCase table Windows and mkntfs write, which the volume
+// carries and collates its names by.
+var upcase = libntfs.DefaultUpCase()
 
 // collate orders two names as NTFS indexes them: by their upper case in
 // $UpCase, code unit by code unit, then the shorter first.
-func collate(a, b string) int {
-	ua, ub := utf16le(a), utf16le(b)
-	le := binary.LittleEndian
-	for i := 0; i < len(ua) && i < len(ub); i += 2 {
-		ca, cb := upcase[le.Uint16(ua[i:])], upcase[le.Uint16(ub[i:])]
-		if ca != cb {
-			return cmpU32(uint32(ca), uint32(cb))
-		}
-	}
-	return len(ua) - len(ub)
-}
+func collate(a, b string) int { return upcase.Compare(a, b) }

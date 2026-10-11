@@ -4,6 +4,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"slices"
+
+	"github.com/aoiflux/libntfs"
 )
 
 // entry is an index entry: a directory's, filing a record under the
@@ -59,7 +61,7 @@ func (e entry) encodeIn(node bool) []byte {
 	le := binary.LittleEndian
 	b = append(b, make([]byte, 8)...)
 	le.PutUint16(b[8:], uint16(len(b)))
-	le.PutUint16(b[12:], ieNode)
+	le.PutUint16(b[12:], libntfs.IndexFlagNode)
 	le.PutUint64(b[len(b)-8:], uint64(e.child))
 	return b
 }
@@ -83,12 +85,12 @@ func endEntry(child int64) []byte {
 	if child < 0 {
 		b := make([]byte, 16)
 		le.PutUint16(b[8:], 16)
-		le.PutUint16(b[12:], ieEnd)
+		le.PutUint16(b[12:], libntfs.IndexFlagLast)
 		return b
 	}
 	b := make([]byte, 24)
 	le.PutUint16(b[8:], 24)
-	le.PutUint16(b[12:], ieEnd|ieNode)
+	le.PutUint16(b[12:], libntfs.IndexFlagLast|libntfs.IndexFlagNode)
 	le.PutUint64(b[16:], uint64(child))
 	return b
 }
@@ -110,19 +112,19 @@ func indexRoot(typ, coll uint32, g Geometry, body []byte, large bool) []byte {
 	b := make([]byte, 32, 32+len(body))
 	le.PutUint32(b[0:], typ)
 	le.PutUint32(b[4:], coll)
-	le.PutUint32(b[8:], indexSize)
+	le.PutUint32(b[8:], libntfs.IndexBlockSize)
 	b[12] = g.perIndexBlock()
 	le.PutUint32(b[16:], 16)
 	le.PutUint32(b[20:], uint32(16+len(body)))
 	le.PutUint32(b[24:], uint32(16+len(body)))
 	if large {
-		b[28] = ihLarge
+		b[28] = libntfs.IndexNodeNode
 	}
 	return append(b, body...)
 }
 
 // blockRoom is how many bytes of entries an index block holds.
-const blockRoom = indexSize - 0x40
+const blockRoom = libntfs.IndexBlockSize - 0x40
 
 // indexBlock lays the entries body out as the index block of VCN vcn,
 // over prev, its last image: past the entries what was there stays, as an
@@ -136,15 +138,15 @@ func indexBlock(prev []byte, vcn int64, body []byte, node bool) ([]byte, error) 
 	b := prev
 	copy(b, "INDX")
 	le.PutUint16(b[4:], usaOfs)
-	le.PutUint16(b[6:], indexSize/sectorSize+1)
+	le.PutUint16(b[6:], libntfs.IndexBlockSize/sectorSize+1)
 	le.PutUint64(b[8:], 0)
 	le.PutUint64(b[16:], uint64(vcn))
 	le.PutUint32(b[0x18:], entriesAt-0x18)
 	le.PutUint32(b[0x1C:], uint32(entriesAt-0x18+len(body)))
-	le.PutUint32(b[0x20:], indexSize-0x18)
+	le.PutUint32(b[0x20:], libntfs.IndexBlockSize-0x18)
 	b[0x24] = 0
 	if node {
-		b[0x24] = ihLarge
+		b[0x24] = libntfs.IndexNodeNode
 	}
 	copy(b[entriesAt:], body)
 	return b, nil
@@ -224,7 +226,9 @@ type dirIndex struct {
 }
 
 // newDirIndex is an empty directory's index.
-func newDirIndex() *dirIndex { return newIndex("$I30", atFileName, collFileName, byName) }
+func newDirIndex() *dirIndex {
+	return newIndex("$I30", libntfs.AttrTypeFileName, libntfs.CollationFileName, byName)
+}
 
 // newIndex is an empty index.
 func newIndex(name string, typ, coll uint32, cmp func(a, b entry) int) *dirIndex {
@@ -237,14 +241,7 @@ func byName(a, b entry) int { return collate(a.name, b.name) }
 // byULongs orders view entries by their keys read as 32-bit numbers, one
 // after another, as COLLATION_NTOFS_ULONGS does.
 func byULongs(a, b entry) int {
-	le := binary.LittleEndian
-	ka, kb := a.body[:a.dataOffset-16], b.body[:b.dataOffset-16]
-	for i := 0; i+4 <= len(ka) && i+4 <= len(kb); i += 4 {
-		if c := cmpU32(le.Uint32(ka[i:]), le.Uint32(kb[i:])); c != 0 {
-			return c
-		}
-	}
-	return len(ka) - len(kb)
+	return libntfs.CollateULongs(a.body[:a.dataOffset-16], b.body[:b.dataOffset-16])
 }
 
 // step is a node on the way down the index, and the place in it the way
@@ -338,8 +335,8 @@ func (f *FS) indexAdd(d *node, e entry) error {
 func (f *FS) makeRoom(d *node, room int) (bool, error) {
 	ix := d.dir
 	oldLen, newLen := align8(64+ix.root.size()), align8(64+room)
-	used := d.rec.used() - len(d.rec.find(atIndexRoot, ix.name).encode()) + oldLen
-	if after := used - oldLen + newLen; after <= recordSize && (newLen <= oldLen || after+120 <= recordSize || used+120 > recordSize) {
+	used := d.rec.used() - len(d.rec.find(libntfs.AttrTypeIndexRoot, ix.name).encode()) + oldLen
+	if after := used - oldLen + newLen; after <= libntfs.RecordSize && (newLen <= oldLen || after+120 <= libntfs.RecordSize || used+120 > libntfs.RecordSize) {
 		return true, nil
 	}
 	return false, f.reparent(d)
@@ -352,8 +349,8 @@ func (f *FS) reparent(d *node) error {
 	ix := d.dir
 	if ix.bitmap == nil {
 		ix.bitmap = make([]byte, 8)
-		d.rec.add(&attr{typ: atBitmap, name: ix.name, resident: true, value: ix.bitmap})
-		d.rec.add(nonresident(atIndexAlloc, ix.name, 0, nil, 0, 0, 0))
+		d.rec.add(&attr{typ: libntfs.AttrTypeBitmap, name: ix.name, resident: true, value: ix.bitmap})
+		d.rec.add(nonresident(libntfs.AttrTypeIndexAllocation, ix.name, 0, nil, 0, 0, 0))
 	}
 	vcn, err := f.newBlock(d, ix.root.es, ix.root.end)
 	if err != nil {
@@ -382,9 +379,9 @@ func (f *FS) newBlock(d *node, es []entry, end int64) (int64, error) {
 		ix.bitmap = append(ix.bitmap, make([]byte, 8)...)
 	}
 	ix.bitmap[bit/8] |= 1 << (bit % 8)
-	d.rec.find(atBitmap, ix.name).value = ix.bitmap
+	d.rec.find(libntfs.AttrTypeBitmap, ix.name).value = ix.bitmap
 	vcn := int64(bit) * int64(f.g.perIndexBlock())
-	ix.blocks[vcn] = &inode{es: es, end: end, vcn: vcn, raw: make([]byte, indexSize), usn: 1}
+	ix.blocks[vcn] = &inode{es: es, end: end, vcn: vcn, raw: make([]byte, libntfs.IndexBlockSize), usn: 1}
 	ix.dirty[vcn] = true
 	ix.rootDirty = true
 	return vcn, f.cover(d, vcn)

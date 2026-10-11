@@ -11,6 +11,7 @@ import (
 
 	"github.com/aoiflux/fsagen/target"
 	"github.com/aoiflux/fsagen/volume"
+	"github.com/aoiflux/libntfs"
 )
 
 // Options are what an NTFS volume is formatted with.
@@ -194,7 +195,7 @@ func (f *FS) put(runs []run, data []byte) error {
 func (f *FS) sysRecord(num uint32, seq, flags uint16, attrs, secID uint32) *record {
 	r := newRecord(num, seq, nil)
 	r.flags = flags
-	r.add(&attr{typ: atStdInfo, resident: true, value: stdInfo(allAt(f.o.Clock), attrs, secID)})
+	r.add(&attr{typ: libntfs.AttrTypeStandardInfo, resident: true, value: stdInfo(allAt(f.o.Clock), attrs, secID)})
 	f.recs[num] = r
 	return r
 }
@@ -234,7 +235,7 @@ func (f *FS) format() error {
 	}
 	// mkntfs places these from the end of the MFT zone, in this order.
 	sd := rootSD()
-	sizes := []int64{int64(len(sd)), indexSize, 2560, g.BitmapBytes, 0x40000 + 0xFC, 2 << 16}
+	sizes := []int64{int64(len(sd)), libntfs.IndexBlockSize, 2560, g.BitmapBytes, 0x40000 + 0xFC, 2 << 16}
 	placed := make([][]run, len(sizes))
 	for i, n := range sizes {
 		runs, err := f.scatter(ceil(n, cs))
@@ -244,11 +245,11 @@ func (f *FS) format() error {
 		placed[i] = runs
 	}
 	sdRuns, rootIdx, attrDefRuns, bitmapRuns, sdsRuns, upcaseRuns := placed[0], placed[1], placed[2], placed[3], placed[4], placed[5]
-	rootRef := uint64(recRoot) | recRoot<<48
-	extendRef := uint64(recExtend) | recExtend<<48
+	rootRef := uint64(libntfs.MFTEntryRoot) | libntfs.MFTEntryRoot<<48
+	extendRef := uint64(libntfs.MFTEntryExtend) | libntfs.MFTEntryExtend<<48
 	named := func(r *record, id uint16, parent uint64, alloc, size int64, flags uint32, n string) fileName {
-		fn := fileName{parent: parent, t: allAt(clock), alloc: alloc, size: size, flags: flags, name: n, namespace: nsWin32DOS}
-		r.put(&attr{typ: atFileName, id: id, resident: true, indexed: true, value: fn.encode()})
+		fn := fileName{parent: parent, t: allAt(clock), alloc: alloc, size: size, flags: flags, name: n, namespace: libntfs.NamespaceWinDOS}
+		r.put(&attr{typ: libntfs.AttrTypeFileName, id: id, resident: true, indexed: true, value: fn.encode()})
 		r.links++
 		return fn
 	}
@@ -258,69 +259,69 @@ func (f *FS) format() error {
 		rootEntries = append(rootEntries, fileEntry(r.ref(), fn))
 	}
 
-	mftBytes := g.MFTRecords * recordSize
-	mft := f.sysRecord(recMFT, 1, recInUse, faSysHidden, 0x100)
-	mft.put(nonresident(atData, "", 1, mftRuns, g.mftClusters()*cs, mftBytes, mftBytes))
+	mftBytes := g.MFTRecords * libntfs.RecordSize
+	mft := f.sysRecord(libntfs.MFTEntryMFT, 1, libntfs.MFTFlagInUse, faSysHidden, 0x100)
+	mft.put(nonresident(libntfs.AttrTypeData, "", 1, mftRuns, g.mftClusters()*cs, mftBytes, mftBytes))
 	file(mft, named(mft, 2, rootRef, ((mftBytes-1)|(cs-1))+1, mftBytes, faSysHidden, "$MFT"))
 	bitmapBytes := (ceil(g.MFTRecords, 8) + 7) &^ 7
-	mft.put(nonresident(atBitmap, "", 3, []run{{g.MFTBitmap, 1}}, cs, bitmapBytes, bitmapBytes))
+	mft.put(nonresident(libntfs.AttrTypeBitmap, "", 3, []run{{g.MFTBitmap, 1}}, cs, bitmapBytes, bitmapBytes))
 	mft.next = 4
 	f.mft = mft
 
 	mirrBytes := g.MirrorClusters * cs
-	mirr := f.sysRecord(recMFTMirr, recMFTMirr, recInUse, faSysHidden, 0x100)
-	mirr.put(nonresident(atData, "", 1, mirrRuns, mirrBytes, mirrBytes, mirrBytes))
+	mirr := f.sysRecord(libntfs.MFTEntryMFTMirr, libntfs.MFTEntryMFTMirr, libntfs.MFTFlagInUse, faSysHidden, 0x100)
+	mirr.put(nonresident(libntfs.AttrTypeData, "", 1, mirrRuns, mirrBytes, mirrBytes, mirrBytes))
 	file(mirr, named(mirr, 2, rootRef, mirrBytes, mirrBytes, faSysHidden, "$MFTMirr"))
 	mirr.next = 3
 
-	logf := f.sysRecord(recLogFile, recLogFile, recInUse, faSysHidden, 0x100)
-	logf.put(nonresident(atData, "", 1, logRuns, g.LogSize, g.LogSize, g.LogSize))
+	logf := f.sysRecord(libntfs.MFTEntryLogFile, libntfs.MFTEntryLogFile, libntfs.MFTFlagInUse, faSysHidden, 0x100)
+	logf.put(nonresident(libntfs.AttrTypeData, "", 1, logRuns, g.LogSize, g.LogSize, g.LogSize))
 	file(logf, named(logf, 2, rootRef, g.LogSize, g.LogSize, faSysHidden, "$LogFile"))
 	logf.next = 3
 
-	vol := f.sysRecord(recVolume, recVolume, recInUse, faSysHidden, 0)
+	vol := f.sysRecord(libntfs.MFTEntryVolume, libntfs.MFTEntryVolume, libntfs.MFTFlagInUse, faSysHidden, 0)
 	file(vol, named(vol, 1, rootRef, 0, 0, faSysHidden, "$Volume"))
-	vol.put(resident(atSecurity, "", 2, systemSD(recVolume)))
-	vol.put(resident(atData, "", 3, nil))
-	vol.put(resident(atVolName, "", 4, utf16le(f.o.Label)))
-	vol.put(resident(atVolInfo, "", 5, []byte{0, 0, 0, 0, 0, 0, 0, 0, 3, 1, 0, 0}))
+	vol.put(resident(libntfs.AttrTypeSecurityDesc, "", 2, systemSD(libntfs.MFTEntryVolume)))
+	vol.put(resident(libntfs.AttrTypeData, "", 3, nil))
+	vol.put(resident(libntfs.AttrTypeVolumeName, "", 4, utf16le(f.o.Label)))
+	vol.put(resident(libntfs.AttrTypeVolumeInfo, "", 5, []byte{0, 0, 0, 0, 0, 0, 0, 0, 3, 1, 0, 0}))
 	vol.next = 6
 
-	ad := f.sysRecord(recAttrDef, recAttrDef, recInUse, faSysHidden, 0)
+	ad := f.sysRecord(libntfs.MFTEntryAttrDef, libntfs.MFTEntryAttrDef, libntfs.MFTFlagInUse, faSysHidden, 0)
 	adBytes := attrDefBytes()
-	ad.put(nonresident(atData, "", 1, attrDefRuns, clusters(attrDefRuns)*cs, int64(len(adBytes)), int64(len(adBytes))))
+	ad.put(nonresident(libntfs.AttrTypeData, "", 1, attrDefRuns, clusters(attrDefRuns)*cs, int64(len(adBytes)), int64(len(adBytes))))
 	file(ad, named(ad, 2, rootRef, roundCluster(int64(len(adBytes))), int64(len(adBytes)), faSysHidden, "$AttrDef"))
-	ad.put(resident(atSecurity, "", 3, systemSD(recAttrDef)))
+	ad.put(resident(libntfs.AttrTypeSecurityDesc, "", 3, systemSD(libntfs.MFTEntryAttrDef)))
 	ad.next = 4
 
-	root := f.sysRecord(recRoot, recRoot, recInUse|recDir, faSysHidden|faArchive, 0)
-	rootFN := named(root, 1, rootRef, 0, 0, faSysHidden|faI30Index, ".")
+	root := f.sysRecord(libntfs.MFTEntryRoot, libntfs.MFTEntryRoot, libntfs.MFTFlagInUse|libntfs.MFTFlagDirectory, faSysHidden|libntfs.FileAttrArchive, 0)
+	rootFN := named(root, 1, rootRef, 0, 0, faSysHidden|libntfs.FileAttrDupFileNameIndexPresent, ".")
 	file(root, rootFN)
-	root.put(nonresident(atSecurity, "", 2, sdRuns, clusters(sdRuns)*cs, int64(len(sd)), int64(len(sd))))
-	root.put(resident(atIndexRoot, "$I30", 3, nil))
-	root.put(resident(atBitmap, "$I30", 4, []byte{1, 0, 0, 0, 0, 0, 0, 0}))
-	root.put(nonresident(atIndexAlloc, "$I30", 5, rootIdx, clusters(rootIdx)*cs, indexSize, indexSize))
+	root.put(nonresident(libntfs.AttrTypeSecurityDesc, "", 2, sdRuns, clusters(sdRuns)*cs, int64(len(sd)), int64(len(sd))))
+	root.put(resident(libntfs.AttrTypeIndexRoot, "$I30", 3, nil))
+	root.put(resident(libntfs.AttrTypeBitmap, "$I30", 4, []byte{1, 0, 0, 0, 0, 0, 0, 0}))
+	root.put(nonresident(libntfs.AttrTypeIndexAllocation, "$I30", 5, rootIdx, clusters(rootIdx)*cs, libntfs.IndexBlockSize, libntfs.IndexBlockSize))
 	root.next = 6
 
-	bm := f.sysRecord(recBitmap, recBitmap, recInUse, faSysHidden, 0x100)
-	bm.put(nonresident(atData, "", 1, bitmapRuns, clusters(bitmapRuns)*cs, g.BitmapBytes, g.BitmapBytes))
+	bm := f.sysRecord(libntfs.MFTEntryBitmap, libntfs.MFTEntryBitmap, libntfs.MFTFlagInUse, faSysHidden, 0x100)
+	bm.put(nonresident(libntfs.AttrTypeData, "", 1, bitmapRuns, clusters(bitmapRuns)*cs, g.BitmapBytes, g.BitmapBytes))
 	file(bm, named(bm, 2, rootRef, roundCluster(g.BitmapBytes), g.BitmapBytes, faSysHidden, "$Bitmap"))
 	bm.next = 3
 
-	bootRec := f.sysRecord(recBoot, recBoot, recInUse, faSysHidden, 0)
-	bootRec.put(nonresident(atData, "", 1, bootRuns, g.BootClusters*cs, 8192, 8192))
+	bootRec := f.sysRecord(libntfs.MFTEntryBoot, libntfs.MFTEntryBoot, libntfs.MFTFlagInUse, faSysHidden, 0)
+	bootRec.put(nonresident(libntfs.AttrTypeData, "", 1, bootRuns, g.BootClusters*cs, 8192, 8192))
 	file(bootRec, named(bootRec, 2, rootRef, roundCluster(8192), 8192, faSysHidden, "$Boot"))
-	bootRec.put(resident(atSecurity, "", 3, systemSD(recBoot)))
+	bootRec.put(resident(libntfs.AttrTypeSecurityDesc, "", 3, systemSD(libntfs.MFTEntryBoot)))
 	bootRec.next = 4
 
-	bad := f.sysRecord(recBadClus, recBadClus, recInUse, faSysHidden, 0x100)
-	bad.put(nonresident(atData, "$Bad", 1, []run{{-1, g.Clusters}}, g.Clusters*cs, g.Clusters*cs, 0))
-	bad.put(resident(atData, "", 2, nil))
+	bad := f.sysRecord(libntfs.MFTEntryBadClus, libntfs.MFTEntryBadClus, libntfs.MFTFlagInUse, faSysHidden, 0x100)
+	bad.put(nonresident(libntfs.AttrTypeData, "$Bad", 1, []run{{-1, g.Clusters}}, g.Clusters*cs, g.Clusters*cs, 0))
+	bad.put(resident(libntfs.AttrTypeData, "", 2, nil))
 	file(bad, named(bad, 3, rootRef, 0, 0, faSysHidden, "$BadClus"))
 	bad.next = 4
 
-	sec := f.sysRecord(recSecure, recSecure, recInUse|recViewIndex, faSysHidden|faViewIndex, 0x101)
-	file(sec, named(sec, 1, rootRef, 0, 0, faSysHidden|faViewIndex, "$Secure"))
+	sec := f.sysRecord(libntfs.MFTEntrySecure, libntfs.MFTEntrySecure, libntfs.MFTFlagInUse|libntfs.MFTFlagViewIndex, faSysHidden|libntfs.FileAttrViewIndex, 0x101)
+	file(sec, named(sec, 1, rootRef, 0, 0, faSysHidden|libntfs.FileAttrViewIndex, "$Secure"))
 	sds := make([]byte, 0x40000+0xFC)
 	var sdh, sii []entry
 	for _, s := range secureSDs {
@@ -330,30 +331,30 @@ func (f *FS) format() error {
 		f.sdsEnd += align16(int64(len(e)))
 	}
 	copy(sds[0x40000:], sds[:0xFC])
-	sec.put(nonresident(atData, "$SDS", 2, sdsRuns, clusters(sdsRuns)*cs, int64(len(sds)), int64(len(sds))))
-	sec.put(resident(atIndexRoot, "$SDH", 3, indexRoot(0, collSecHash, g, entries(sdh, -1), false)))
-	sec.put(resident(atIndexRoot, "$SII", 4, indexRoot(0, collULong, g, entries(sii, -1), false)))
+	sec.put(nonresident(libntfs.AttrTypeData, "$SDS", 2, sdsRuns, clusters(sdsRuns)*cs, int64(len(sds)), int64(len(sds))))
+	sec.put(resident(libntfs.AttrTypeIndexRoot, "$SDH", 3, indexRoot(0, libntfs.CollationSecurityHash, g, entries(sdh, -1), false)))
+	sec.put(resident(libntfs.AttrTypeIndexRoot, "$SII", 4, indexRoot(0, libntfs.CollationULong, g, entries(sii, -1), false)))
 	sec.next = 5
 	f.secure = sec
 
-	up := f.sysRecord(recUpCase, recUpCase, recInUse, faSysHidden, 0x100)
-	upBytes := upcaseBytes()
-	up.put(nonresident(atData, "", 1, upcaseRuns, clusters(upcaseRuns)*cs, int64(len(upBytes)), int64(len(upBytes))))
+	up := f.sysRecord(libntfs.MFTEntryUpCase, libntfs.MFTEntryUpCase, libntfs.MFTFlagInUse, faSysHidden, 0x100)
+	upBytes := upcase.Bytes()
+	up.put(nonresident(libntfs.AttrTypeData, "", 1, upcaseRuns, clusters(upcaseRuns)*cs, int64(len(upBytes)), int64(len(upBytes))))
 	info := make([]byte, 32)
 	binary.LittleEndian.PutUint32(info[0:], 32)
 	binary.LittleEndian.PutUint64(info[8:], crc64(upBytes))
-	up.put(resident(atData, "$Info", 2, info))
+	up.put(resident(libntfs.AttrTypeData, "$Info", 2, info))
 	file(up, named(up, 3, rootRef, roundCluster(int64(len(upBytes))), int64(len(upBytes)), faSysHidden, "$UpCase"))
 	up.next = 4
 
-	ext := f.sysRecord(recExtend, recExtend, recInUse|recDir, faSysHidden, 0x101)
-	file(ext, named(ext, 1, rootRef, 0, 0, faSysHidden|faI30Index, "$Extend"))
+	ext := f.sysRecord(libntfs.MFTEntryExtend, libntfs.MFTEntryExtend, libntfs.MFTFlagInUse|libntfs.MFTFlagDirectory, faSysHidden, 0x101)
+	file(ext, named(ext, 1, rootRef, 0, 0, faSysHidden|libntfs.FileAttrDupFileNameIndexPresent, "$Extend"))
 	ext.next = 3
 
 	for i := uint32(12); i < 16; i++ {
-		r := f.sysRecord(i, uint16(i), recInUse, faSysHidden, 0)
-		r.put(resident(atData, "", 1, nil))
-		r.put(resident(atSecurity, "", 2, systemSD(int(i))))
+		r := f.sysRecord(i, uint16(i), libntfs.MFTFlagInUse, faSysHidden, 0)
+		r.put(resident(libntfs.AttrTypeData, "", 1, nil))
+		r.put(resident(libntfs.AttrTypeSecurityDesc, "", 2, systemSD(int(i))))
 		r.next = 3
 	}
 	for i := uint32(16); i < 24; i++ {
@@ -363,22 +364,22 @@ func (f *FS) format() error {
 	}
 	var extEntries []entry
 	view := func(num uint32, n string, coll uint32, ix ...string) *record {
-		r := f.sysRecord(num, 1, recInUse|recIs4|recViewIndex, faExtendView, 0x101)
+		r := f.sysRecord(num, 1, libntfs.MFTFlagInUse|libntfs.MFTFlagIsExtend|libntfs.MFTFlagViewIndex, faExtendView, 0x101)
 		fn := named(r, 1, extendRef, 0, 0, faExtendView, n)
 		extEntries = append(extEntries, fileEntry(r.ref(), fn))
 		for i, x := range ix {
-			r.put(resident(atIndexRoot, x, uint16(2+i), indexRoot(0, coll, g, entries(nil, -1), false)))
+			r.put(resident(libntfs.AttrTypeIndexRoot, x, uint16(2+i), indexRoot(0, coll, g, entries(nil, -1), false)))
 		}
 		r.next = uint16(2 + len(ix))
 		return r
 	}
-	quota := view(recQuota, "$Quota", collULong, "$Q", "$O")
-	quota.find(atIndexRoot, "$Q").value = indexRoot(0, collULong, g, entries(quotaEntries(clock), -1), false)
-	quota.find(atIndexRoot, "$O").value = indexRoot(0, collSID, g, entries([]entry{quotaOwner()}, -1), false)
-	view(recObjID, "$ObjId", collULongs, "$O")
-	f.reparse = &node{rec: view(recReparse, "$Reparse", collULongs, "$R"), dir: newIndex("$R", 0, collULongs, byULongs)}
+	quota := view(recQuota, "$Quota", libntfs.CollationULong, "$Q", "$O")
+	quota.find(libntfs.AttrTypeIndexRoot, "$Q").value = indexRoot(0, libntfs.CollationULong, g, entries(quotaEntries(clock), -1), false)
+	quota.find(libntfs.AttrTypeIndexRoot, "$O").value = indexRoot(0, libntfs.CollationSID, g, entries([]entry{quotaOwner()}, -1), false)
+	view(recObjID, "$ObjId", libntfs.CollationULongs, "$O")
+	f.reparse = &node{rec: view(recReparse, "$Reparse", libntfs.CollationULongs, "$R"), dir: newIndex("$R", 0, libntfs.CollationULongs, byULongs)}
 	slices.SortFunc(extEntries, func(a, b entry) int { return collate(a.name, b.name) })
-	ext.put(resident(atIndexRoot, "$I30", 2, indexRoot(atFileName, collFileName, g, entries(extEntries, -1), false)))
+	ext.put(resident(libntfs.AttrTypeIndexRoot, "$I30", 2, indexRoot(libntfs.AttrTypeFileName, libntfs.CollationFileName, g, entries(extEntries, -1), false)))
 	for i := uint32(systemRecords); i < uint32(g.MFTRecords); i++ {
 		r := newRecord(i, uint16(i), nil)
 		r.unnumbered = true
@@ -388,9 +389,9 @@ func (f *FS) format() error {
 	slices.SortFunc(rootEntries, func(a, b entry) int { return collate(a.name, b.name) })
 	rootIndex := newDirIndex()
 	rootIndex.root.end = 0
-	rootIndex.blocks[0] = &inode{es: rootEntries, end: -1, raw: make([]byte, indexSize), usn: 2}
-	rootIndex.bitmap, rootIndex.dirty[0], rootIndex.rootDirty = root.find(atBitmap, "$I30").value, true, true
-	f.root = &node{rec: root, names: []*name{{fn: rootFN, a: root.find(atFileName, "")}}, si: allAt(clock), attrs: faSysHidden | faArchive, dir: rootIndex}
+	rootIndex.blocks[0] = &inode{es: rootEntries, end: -1, raw: make([]byte, libntfs.IndexBlockSize), usn: 2}
+	rootIndex.bitmap, rootIndex.dirty[0], rootIndex.rootDirty = root.find(libntfs.AttrTypeBitmap, "$I30").value, true, true
+	f.root = &node{rec: root, names: []*name{{fn: rootFN, a: root.find(libntfs.AttrTypeFileName, "")}}, si: allAt(clock), attrs: faSysHidden | libntfs.FileAttrArchive, dir: rootIndex}
 	for _, fill := range []struct {
 		runs []run
 		data []byte
@@ -448,14 +449,9 @@ func secureEntries(sdh, sii []entry, id uint32, at int64, sd []byte) ([]entry, [
 	h := entry{view: true, dataOffset: 0x18, dataLength: 20, body: slices.Concat(hkey, data, []byte{'I', 0, 'I', 0})}
 	i := entry{view: true, dataOffset: 0x14, dataLength: 20, body: slices.Concat(hkey[4:], data)}
 	sdh = append(sdh, h)
-	slices.SortFunc(sdh, func(a, b entry) int {
-		if c := cmpU32(le.Uint32(a.body), le.Uint32(b.body)); c != 0 {
-			return c
-		}
-		return cmpU32(le.Uint32(a.body[4:]), le.Uint32(b.body[4:]))
-	})
+	slices.SortFunc(sdh, func(a, b entry) int { return libntfs.CollateULongs(a.body[:8], b.body[:8]) })
 	sii = append(sii, i)
-	slices.SortFunc(sii, func(a, b entry) int { return cmpU32(le.Uint32(a.body), le.Uint32(b.body)) })
+	slices.SortFunc(sii, func(a, b entry) int { return libntfs.CollateULong(a.body[:4], b.body[:4]) })
 	return sdh, sii
 }
 
@@ -469,7 +465,7 @@ func quotaEntries(clock time.Time) []entry {
 		d := b[4:]
 		le.PutUint32(d[0:], 2) // version
 		le.PutUint32(d[4:], 1) // default limits
-		le.PutUint64(d[16:], filetime(clock))
+		le.PutUint64(d[16:], libntfs.TimeToFiletime(clock))
 		le.PutUint64(d[24:], ^uint64(0))
 		le.PutUint64(d[32:], ^uint64(0))
 		copy(d[48:], sid)
@@ -574,7 +570,7 @@ func (f *FS) readRuns(runs []run, pos, n int64) ([]byte, []target.Extent, error)
 
 // mirrorRecords is how many records $MFTMirr copies.
 func (f *FS) mirrorRecords() uint32 {
-	return uint32(f.g.MirrorClusters * int64(f.g.ClusterSize) / recordSize)
+	return uint32(f.g.MirrorClusters * int64(f.g.ClusterSize) / libntfs.RecordSize)
 }
 
 // writeRecord puts r on disk, and in the mirror too when it is one the
@@ -589,11 +585,11 @@ func (f *FS) putRecord(r *record) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := f.writeRuns(f.mft.find(atData, "").runs, int64(r.num)*recordSize, b); err != nil {
+	if err := f.writeRuns(f.mft.find(libntfs.AttrTypeData, "").runs, int64(r.num)*libntfs.RecordSize, b); err != nil {
 		return nil, err
 	}
 	if r.num < f.mirrorRecords() {
-		if _, err := f.dev.WriteAt(b, f.g.offset(f.g.Mirror)+int64(r.num)*recordSize); err != nil {
+		if _, err := f.dev.WriteAt(b, f.g.offset(f.g.Mirror)+int64(r.num)*libntfs.RecordSize); err != nil {
 			return nil, err
 		}
 	}
@@ -614,8 +610,10 @@ func (f *FS) writeIndex(d *node) error {
 		}
 		b.usn = nextUSN(b.usn)
 		out := slices.Clone(block)
-		protect(out, b.usn)
-		if err := f.writeRuns(d.rec.find(atIndexAlloc, ix.name).runs, f.blockPos(vcn), out); err != nil {
+		if err := libntfs.ProtectFixup(out, b.usn); err != nil {
+			return fmt.Errorf("record %d's index block %d: %w", d.rec.num, vcn, err)
+		}
+		if err := f.writeRuns(d.rec.find(libntfs.AttrTypeIndexAllocation, ix.name).runs, f.blockPos(vcn), out); err != nil {
 			return err
 		}
 	}
@@ -624,7 +622,7 @@ func (f *FS) writeIndex(d *node) error {
 		return nil
 	}
 	ix.rootDirty = false
-	d.rec.find(atIndexRoot, ix.name).value = ix.rootValue(f.g)
+	d.rec.find(libntfs.AttrTypeIndexRoot, ix.name).value = ix.rootValue(f.g)
 	return f.writeRecord(d.rec)
 }
 
@@ -632,7 +630,7 @@ func (f *FS) writeIndex(d *node) error {
 // count clusters, or 512-byte blocks when a cluster is bigger than an
 // index block.
 func (f *FS) blockPos(vcn int64) int64 {
-	if f.g.ClusterSize > indexSize {
+	if f.g.ClusterSize > libntfs.IndexBlockSize {
 		return vcn * sectorSize
 	}
 	return vcn * int64(f.g.ClusterSize)
@@ -642,8 +640,8 @@ func (f *FS) blockPos(vcn int64) int64 {
 // with clusters after its last ones if they are free, as libntfs-3g grows
 // it when it first writes the block.
 func (f *FS) cover(d *node, vcn int64) error {
-	ia := d.rec.find(atIndexAlloc, d.dir.name)
-	end := f.blockPos(vcn) + indexSize
+	ia := d.rec.find(libntfs.AttrTypeIndexAllocation, d.dir.name)
+	end := f.blockPos(vcn) + libntfs.IndexBlockSize
 	if end <= ia.size {
 		return nil
 	}
@@ -725,10 +723,10 @@ func (f *FS) writeBitmaps() error {
 			bm[c/8] |= 1 << (c % 8)
 		}
 	}
-	if err := f.writeRuns(f.recs[recBitmap].find(atData, "").runs, 0, bm); err != nil {
+	if err := f.writeRuns(f.recs[libntfs.MFTEntryBitmap].find(libntfs.AttrTypeData, "").runs, 0, bm); err != nil {
 		return err
 	}
-	ba := f.mft.find(atBitmap, "")
+	ba := f.mft.find(libntfs.AttrTypeBitmap, "")
 	mb := make([]byte, ba.size)
 	for i, u := range f.inUse {
 		if u {

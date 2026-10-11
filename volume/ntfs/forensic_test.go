@@ -12,6 +12,7 @@ import (
 	"github.com/aoiflux/fsagen/internal/reparse"
 	"github.com/aoiflux/fsagen/target"
 	"github.com/aoiflux/fsagen/volume"
+	"github.com/aoiflux/libntfs"
 )
 
 // Named streams are named $DATA attributes, kept in the record while they
@@ -28,26 +29,26 @@ func TestStreams(t *testing.T) {
 	big := bytes.Repeat([]byte("big stream "), 900)
 	must(t, v.WriteStream("f.txt", "big", big))
 	n := nodeOf(must2(v.Node("f.txt")))
-	if a := n.rec.find(atData, "small"); a == nil || !a.resident {
+	if a := n.rec.find(libntfs.AttrTypeData, "small"); a == nil || !a.resident {
 		t.Errorf("small stream %+v", a)
 	}
-	if a := n.rec.find(atData, "big"); a == nil || a.resident || a.size != int64(len(big)) {
+	if a := n.rec.find(libntfs.AttrTypeData, "big"); a == nil || a.resident || a.size != int64(len(big)) {
 		t.Errorf("big stream %+v", a)
 	}
 	v.BeginOp(3, time.Time{})
 	must(t, v.WriteStream("f.txt", "big", []byte("shorter")))
-	if a := n.rec.find(atData, "big"); a.resident || a.size != 7 || a.alloc != int64(v.fs.g.ClusterSize) {
+	if a := n.rec.find(libntfs.AttrTypeData, "big"); a.resident || a.size != 7 || a.alloc != int64(v.fs.g.ClusterSize) {
 		t.Errorf("replaced stream %+v", a)
 	}
 
 	must(t, v.WriteFile("crowded.txt", bytes.Repeat([]byte("c"), 500), target.FileMode))
 	must(t, v.WriteStream("crowded.txt", "s", bytes.Repeat([]byte("s"), 400)))
 	c := nodeOf(must2(v.Node("crowded.txt"))).rec
-	if !c.find(atData, "").resident || c.find(atData, "s").resident {
-		t.Errorf("the stream written last did not move out: content %+v, stream %+v", c.find(atData, ""), c.find(atData, "s"))
+	if !c.find(libntfs.AttrTypeData, "").resident || c.find(libntfs.AttrTypeData, "s").resident {
+		t.Errorf("the stream written last did not move out: content %+v, stream %+v", c.find(libntfs.AttrTypeData, ""), c.find(libntfs.AttrTypeData, "s"))
 	}
 	must(t, v.WriteFile("linked.txt", bytes.Repeat([]byte("l"), 600), target.FileMode))
-	for i := 0; nodeOf(must2(v.Node("linked.txt"))).rec.find(atData, "").resident; i++ {
+	for i := 0; nodeOf(must2(v.Node("linked.txt"))).rec.find(libntfs.AttrTypeData, "").resident; i++ {
 		if i == 10 {
 			t.Fatal("ten long names did not crowd the content out")
 		}
@@ -99,7 +100,7 @@ func TestHardLinks(t *testing.T) {
 	var values [][]byte
 	fns := map[string]fileName{}
 	for _, a := range n.rec.attrs {
-		if a.typ == atFileName {
+		if a.typ == libntfs.AttrTypeFileName {
 			values = append(values, a.value)
 			fn := must2(readFileName(a.value))
 			fns[fn.name] = fn
@@ -110,9 +111,9 @@ func TestHardLinks(t *testing.T) {
 		t.Fatalf("%d links, $FILE_NAMEs %+v", n.rec.links, fns)
 	}
 	for name, want := range map[string]fileName{
-		"f.txt": {parent: b, namespace: nsWin32, t: allAt(t1)},
-		"h.txt": {parent: b, namespace: nsPOSIX, t: times{t1, t1, t2, t1}},
-		"g.txt": {parent: a, namespace: nsPOSIX, t: times{t1, t1, t2, t1}},
+		"f.txt": {parent: b, namespace: libntfs.NamespaceWin32, t: allAt(t1)},
+		"h.txt": {parent: b, namespace: libntfs.NamespacePOSIX, t: times{t1, t1, t2, t1}},
+		"g.txt": {parent: a, namespace: libntfs.NamespacePOSIX, t: times{t1, t1, t2, t1}},
 	} {
 		if fn := fns[name]; fn.parent != want.parent || fn.namespace != want.namespace || fn.t != want.t {
 			t.Errorf("%s: $FILE_NAME %+v", name, fn)
@@ -122,10 +123,10 @@ func TestHardLinks(t *testing.T) {
 	v.BeginOp(3, t2)
 	must(t, v.Remove("b/f.txt"))
 	must(t, v.Rename("b/h.txt", "b/k.txt"))
-	if n.rec.links != 2 || len(n.names) != 2 || n.rec.flags&recInUse == 0 {
+	if n.rec.links != 2 || len(n.names) != 2 || n.rec.flags&libntfs.MFTFlagInUse == 0 {
 		t.Errorf("after one name went: %d links, %d names", n.rec.links, len(n.names))
 	}
-	if nm := n.nameIn(nodeOf(must2(v.Node("b"))), "k.txt"); nm == nil || nm.fn.namespace != nsWin32 {
+	if nm := n.nameIn(nodeOf(must2(v.Node("b"))), "k.txt"); nm == nil || nm.fn.namespace != libntfs.NamespaceWin32 {
 		t.Errorf("the renamed name %+v", nm)
 	}
 	r, res := v.finish(t)
@@ -164,28 +165,28 @@ func TestReparsePoints(t *testing.T) {
 		dir  bool
 		data []byte
 	}{
-		{"l/file", reparse.TagSymlink, false, reparse.Symlink("../x/y.txt")},
-		{"l/dir", reparse.TagSymlink, true, reparse.Symlink(`C:\Windows`)},
-		{"l/junction", reparse.TagMountPoint, true, reparse.Junction(`C:\d\e`)},
+		{"l/file", libntfs.ReparsePointSymlink, false, must2(reparse.Symlink("../x/y.txt"))},
+		{"l/dir", libntfs.ReparsePointSymlink, true, must2(reparse.Symlink(`C:\Windows`))},
+		{"l/junction", libntfs.ReparsePointMountPoint, true, must2(reparse.Junction(`C:\d\e`))},
 	} {
 		n := nodeOf(must2(v.Node(c.name)))
-		if rp := n.rec.find(atReparse, ""); rp == nil || !bytes.Equal(rp.value, c.data) {
+		if rp := n.rec.find(libntfs.AttrTypeReparsePoint, ""); rp == nil || !bytes.Equal(rp.value, c.data) {
 			t.Errorf("%s: reparse point %+v", c.name, rp)
 		}
-		if n.rec.flags&recDir != 0 != c.dir || n.attrs&faReparse == 0 || n.tag != c.tag {
+		if n.rec.flags&libntfs.MFTFlagDirectory != 0 != c.dir || n.attrs&libntfs.FileAttrReparsePoint == 0 || n.tag != c.tag {
 			t.Errorf("%s: flags %#x, attributes %#x, tag %#x", c.name, n.rec.flags, n.attrs, n.tag)
 		}
-		fn := must2(readFileName(n.rec.find(atFileName, "").value))
-		if fn.reparse != 0 || fn.flags&faReparse != 0 || (fn.flags&faI30Index != 0) != c.dir {
+		fn := must2(readFileName(n.rec.find(libntfs.AttrTypeFileName, "").value))
+		if fn.reparse != 0 || fn.flags&libntfs.FileAttrReparsePoint != 0 || (fn.flags&libntfs.FileAttrDupFileNameIndexPresent != 0) != c.dir {
 			t.Errorf("%s: the record's $FILE_NAME %+v", c.name, fn)
 		}
 		e := must2(readFileName(n.entry(n.names[0]).key))
-		if e.reparse != c.tag || e.flags&faReparse == 0 || (e.flags&faI30Index != 0) != c.dir {
+		if e.reparse != c.tag || e.flags&libntfs.FileAttrReparsePoint == 0 || (e.flags&libntfs.FileAttrDupFileNameIndexPresent != 0) != c.dir {
 			t.Errorf("%s: the entry's $FILE_NAME %+v", c.name, e)
 		}
 	}
 	must(t, v.Rename("l/file", "l/file2"))
-	if fn := must2(readFileName(nodeOf(must2(v.Node("l/file2"))).rec.find(atFileName, "").value)); fn.reparse != reparse.TagSymlink || fn.flags&faReparse == 0 {
+	if fn := must2(readFileName(nodeOf(must2(v.Node("l/file2"))).rec.find(libntfs.AttrTypeFileName, "").value)); fn.reparse != libntfs.ReparsePointSymlink || fn.flags&libntfs.FileAttrReparsePoint == 0 {
 		t.Errorf("a renamed symlink's $FILE_NAME %+v", fn)
 	}
 	must(t, v.Rename("l/file2", "l/file"))
@@ -196,7 +197,7 @@ func TestReparsePoints(t *testing.T) {
 		}
 		return out
 	}
-	if got := tags(); !slices.Equal(got, []uint32{reparse.TagMountPoint, reparse.TagSymlink, reparse.TagSymlink}) {
+	if got := tags(); !slices.Equal(got, []uint32{libntfs.ReparsePointMountPoint, libntfs.ReparsePointSymlink, libntfs.ReparsePointSymlink}) {
 		t.Errorf("$R tags %#x", got)
 	}
 	must(t, v.Remove("l/file"))
@@ -206,7 +207,7 @@ func TestReparsePoints(t *testing.T) {
 	for i := range 60 {
 		must(t, v.Symlink(fmt.Sprintf("many/link-%02d", i), "t", false))
 	}
-	if v.fs.reparse.rec.find(atIndexAlloc, "$R") == nil || v.fs.reparse.dir.root.leaf() {
+	if v.fs.reparse.rec.find(libntfs.AttrTypeIndexAllocation, "$R") == nil || v.fs.reparse.dir.root.leaf() {
 		t.Error("$R did not move to an index block")
 	}
 	r, _ := v.finish(t)
@@ -289,7 +290,7 @@ func TestSlack(t *testing.T) {
 	if got, err := r.ReadFile("f.bin"); err != nil || !bytes.Equal(got, content) {
 		t.Errorf("the content read back changed: %v", err)
 	}
-	d := nodeOf(must2(v.Node("f.bin"))).rec.find(atData, "")
+	d := nodeOf(must2(v.Node("f.bin"))).rec.find(libntfs.AttrTypeData, "")
 	got, _, err := v.fs.readRuns(d.runs, 5000, int64(len(slack)))
 	must(t, err)
 	if !bytes.Equal(got, slack) {

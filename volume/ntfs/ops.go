@@ -13,6 +13,7 @@ import (
 	"github.com/aoiflux/fsagen/internal/reparse"
 	"github.com/aoiflux/fsagen/target"
 	"github.com/aoiflux/fsagen/volume"
+	"github.com/aoiflux/libntfs"
 )
 
 // newRecordFor takes a free record for a new object: the lowest from
@@ -44,11 +45,11 @@ func (f *FS) newRecordFor() (*record, error) {
 // worth more, after its last cluster if they are free, as libntfs-3g does.
 func (f *FS) growMFT(want int64) error {
 	cs := int64(f.g.ClusterSize)
-	data := f.mft.find(atData, "")
-	for clusters(data.runs)*cs < want*recordSize {
+	data := f.mft.find(libntfs.AttrTypeData, "")
+	for clusters(data.runs)*cs < want*libntfs.RecordSize {
 		last := data.runs[len(data.runs)-1]
 		near := int(last.lcn + last.length)
-		n := ceil(mftGrowth*recordSize, cs)
+		n := ceil(mftGrowth*libntfs.RecordSize, cs)
 		a := f.zone
 		if int64(a.Free()) < n {
 			a = f.data
@@ -70,8 +71,8 @@ func (f *FS) growMFT(want int64) error {
 		}
 		data.alloc = clusters(data.runs) * cs
 	}
-	data.size, data.init = want*recordSize, want*recordSize
-	bm := f.mft.find(atBitmap, "")
+	data.size, data.init = want*libntfs.RecordSize, want*libntfs.RecordSize
+	bm := f.mft.find(libntfs.AttrTypeBitmap, "")
 	if need := (ceil(want, 8) + 7) &^ 7; need > bm.size {
 		if need > bm.alloc {
 			return fmt.Errorf("$MFT's bitmap cannot map %d records", want)
@@ -106,7 +107,7 @@ func (f *FS) security(dir bool) (uint32, error) {
 	if f.sdsEnd%half+int64(len(e)) > half {
 		return 0, errors.New("$Secure's first 256 KiB of descriptors are full")
 	}
-	sds := f.secure.find(atData, "$SDS")
+	sds := f.secure.find(libntfs.AttrTypeData, "$SDS")
 	end := f.sdsEnd + half + int64(len(e))
 	if end > sds.alloc {
 		return 0, errors.New("$Secure's $SDS has no room for another descriptor")
@@ -117,11 +118,11 @@ func (f *FS) security(dir bool) (uint32, error) {
 		}
 	}
 	sds.size, sds.init = max(sds.size, end), max(sds.init, end)
-	sdh, sii := f.secure.find(atIndexRoot, "$SDH"), f.secure.find(atIndexRoot, "$SII")
+	sdh, sii := f.secure.find(libntfs.AttrTypeIndexRoot, "$SDH"), f.secure.find(libntfs.AttrTypeIndexRoot, "$SII")
 	hs, is := viewEntries(sdh.value), viewEntries(sii.value)
 	hs, is = secureEntries(hs, is, f.nextSec, f.sdsEnd, sd)
-	sdh.value = indexRoot(0, collSecHash, f.g, entries(hs, -1), false)
-	sii.value = indexRoot(0, collULong, f.g, entries(is, -1), false)
+	sdh.value = indexRoot(0, libntfs.CollationSecurityHash, f.g, entries(hs, -1), false)
+	sii.value = indexRoot(0, libntfs.CollationULong, f.g, entries(is, -1), false)
 	if err := f.writeRecord(f.secure); err != nil {
 		return 0, err
 	}
@@ -138,7 +139,7 @@ func viewEntries(root []byte) []entry {
 	for p := 16 + int(le.Uint32(root[16:])); p < len(root); {
 		e := root[p:]
 		n := int(le.Uint16(e[8:]))
-		if le.Uint16(e[12:])&ieEnd != 0 {
+		if le.Uint16(e[12:])&libntfs.IndexFlagLast != 0 {
 			break
 		}
 		out = append(out, entry{view: true, dataOffset: le.Uint16(e[0:]), dataLength: le.Uint16(e[2:]), body: slices.Clone(e[16:n])})
@@ -154,7 +155,7 @@ const junctionDrive = `C:`
 
 // reparseData is the reparse data of the link vn is: a symlink's target as
 // given, a junction's as a path on junctionDrive.
-func reparseData(vn *volume.Node) []byte {
+func reparseData(vn *volume.Node) ([]byte, error) {
 	if vn.Kind != volume.Junction {
 		return reparse.Symlink(vn.Target)
 	}
@@ -170,15 +171,15 @@ func reparseData(vn *volume.Node) []byte {
 // short names are off.
 func namespace(leaf string) byte {
 	if isDOSName(leaf) {
-		return nsWin32DOS
+		return libntfs.NamespaceWinDOS
 	}
-	return nsWin32
+	return libntfs.NamespaceWin32
 }
 
 // fnFlags are the flags n's $FILE_NAME attributes carry.
 func (n *node) fnFlags() uint32 {
 	if n.dir != nil {
-		return faI30Index | n.attrs&faReparse
+		return libntfs.FileAttrDupFileNameIndexPresent | n.attrs&libntfs.FileAttrReparsePoint
 	}
 	return n.attrs
 }
@@ -189,7 +190,7 @@ func (n *node) fnFlags() uint32 {
 func (n *node) entry(nm *name) entry {
 	fn := nm.fn
 	if n.tag != 0 {
-		fn.flags |= faReparse
+		fn.flags |= libntfs.FileAttrReparsePoint
 		fn.reparse = n.tag
 	}
 	return fileEntry(n.rec.ref(), fn)
@@ -215,6 +216,13 @@ func (f *FS) Create(parent *volume.Node, leaf string, vn *volume.Node) error {
 	if !dir && !link && vn.Kind != volume.File {
 		return errors.ErrUnsupported
 	}
+	var data []byte
+	if link {
+		var err error
+		if data, err = reparseData(vn); err != nil {
+			return err
+		}
+	}
 	sec, err := f.security(dir)
 	if err != nil {
 		return err
@@ -225,35 +233,33 @@ func (f *FS) Create(parent *volume.Node, leaf string, vn *volume.Node) error {
 	}
 	now := f.clock()
 	n := &node{rec: r, si: allAt(now)}
-	r.flags, r.links = recInUse, 1
+	r.flags, r.links = libntfs.MFTFlagInUse, 1
 	if dir {
-		r.flags |= recDir
+		r.flags |= libntfs.MFTFlagDirectory
 		n.dir = newDirIndex()
 	} else {
-		n.attrs = faArchive
+		n.attrs = libntfs.FileAttrArchive
 		if vn.Mode&0o200 == 0 {
-			n.attrs |= faReadOnly
+			n.attrs |= libntfs.FileAttrReadOnly
 		}
 	}
-	var data []byte
 	if link {
-		data = reparseData(vn)
 		n.tag = binary.LittleEndian.Uint32(data)
-		n.attrs |= faReparse
+		n.attrs |= libntfs.FileAttrReparsePoint
 	}
-	r.add(&attr{typ: atStdInfo, resident: true, value: stdInfo(n.si, n.attrs, sec)})
+	r.add(&attr{typ: libntfs.AttrTypeStandardInfo, resident: true, value: stdInfo(n.si, n.attrs, sec)})
 	if dir {
-		r.add(&attr{typ: atIndexRoot, name: "$I30", resident: true, value: indexRoot(atFileName, collFileName, f.g, entries(nil, -1), false)})
+		r.add(&attr{typ: libntfs.AttrTypeIndexRoot, name: "$I30", resident: true, value: indexRoot(libntfs.AttrTypeFileName, libntfs.CollationFileName, f.g, entries(nil, -1), false)})
 	} else {
-		r.add(&attr{typ: atData, resident: true})
+		r.add(&attr{typ: libntfs.AttrTypeData, resident: true})
 	}
 	// The reparse point is set once the object is made, as Windows sets it,
 	// so the record's $FILE_NAME does not show it; its entry does.
-	nm := &name{parent: p, fn: fileName{parent: p.rec.ref(), t: n.si, flags: n.fnFlags() &^ faReparse, name: leaf, namespace: namespace(leaf)}}
-	nm.a = r.add(&attr{typ: atFileName, resident: true, indexed: true, value: nm.fn.encode()})
+	nm := &name{parent: p, fn: fileName{parent: p.rec.ref(), t: n.si, flags: n.fnFlags() &^ libntfs.FileAttrReparsePoint, name: leaf, namespace: namespace(leaf)}}
+	nm.a = r.add(&attr{typ: libntfs.AttrTypeFileName, resident: true, indexed: true, value: nm.fn.encode()})
 	n.names = []*name{nm}
 	if link {
-		r.add(&attr{typ: atReparse, resident: true, value: data})
+		r.add(&attr{typ: libntfs.AttrTypeReparsePoint, resident: true, value: data})
 	}
 	if err := f.writeRecord(r); err != nil {
 		return err
@@ -291,8 +297,8 @@ func (f *FS) Link(parent *volume.Node, leaf string, vn *volume.Node) error {
 	n.si.changed = f.clock()
 	f.putStdInfo(n)
 	first := n.names[0].fn
-	nm := &name{parent: p, fn: fileName{parent: p.rec.ref(), t: n.si, alloc: first.alloc, size: first.size, flags: first.flags, reparse: first.reparse, name: leaf, namespace: nsPOSIX}}
-	nm.a = n.rec.add(&attr{typ: atFileName, resident: true, indexed: true, value: nm.fn.encode()})
+	nm := &name{parent: p, fn: fileName{parent: p.rec.ref(), t: n.si, alloc: first.alloc, size: first.size, flags: first.flags, reparse: first.reparse, name: leaf, namespace: libntfs.NamespacePOSIX}}
+	nm.a = n.rec.add(&attr{typ: libntfs.AttrTypeFileName, resident: true, indexed: true, value: nm.fn.encode()})
 	n.names = append(n.names, nm)
 	n.rec.links++
 	if err := f.fit(n.rec); err != nil {
@@ -326,7 +332,7 @@ func (f *FS) touchDir(d *node) error {
 
 // putStdInfo puts n's times and flags in its $STANDARD_INFORMATION.
 func (f *FS) putStdInfo(n *node) {
-	si := n.rec.find(atStdInfo, "").value
+	si := n.rec.find(libntfs.AttrTypeStandardInfo, "").value
 	n.si.put(si)
 	binary.LittleEndian.PutUint32(si[32:], n.attrs)
 }
@@ -361,7 +367,7 @@ func (f *FS) writeParents(n *node) error {
 // $FILE_NAMEs.
 func (f *FS) setSizes(n *node) {
 	var alloc, size int64
-	if d := n.rec.find(atData, ""); d != nil && d.resident {
+	if d := n.rec.find(libntfs.AttrTypeData, ""); d != nil && d.resident {
 		alloc, size = int64(align8(len(d.value))), int64(len(d.value))
 	} else if d != nil {
 		alloc, size = d.alloc, d.size
@@ -432,7 +438,7 @@ func (f *FS) fit(r *record) error {
 	for !r.fits() {
 		var big *attr
 		for _, a := range r.attrs {
-			if a.typ == atData && a.resident && len(a.value) > 0 && (big == nil || len(a.value) > len(big.value)) {
+			if a.typ == libntfs.AttrTypeData && a.resident && len(a.value) > 0 && (big == nil || len(a.value) > len(big.value)) {
 				big = a
 			}
 		}
@@ -451,7 +457,7 @@ func (f *FS) fit(r *record) error {
 // Commit writes n's content (see store), and the sizes in its names.
 func (f *FS) Commit(vn *volume.Node, truncated bool) error {
 	n := nodeOf(vn)
-	if err := f.store(n.rec, n.rec.find(atData, ""), vn.Data, truncated); err != nil {
+	if err := f.store(n.rec, n.rec.find(libntfs.AttrTypeData, ""), vn.Data, truncated); err != nil {
 		return err
 	}
 	return f.changed(n)
@@ -478,9 +484,9 @@ func (f *FS) changed(n *node) error {
 // to be overwritten does.
 func (f *FS) WriteStream(vn *volume.Node, stream string) error {
 	n := nodeOf(vn)
-	a := n.rec.find(atData, stream)
+	a := n.rec.find(libntfs.AttrTypeData, stream)
 	if a == nil {
-		a = n.rec.add(&attr{typ: atData, name: stream, resident: true})
+		a = n.rec.add(&attr{typ: libntfs.AttrTypeData, name: stream, resident: true})
 	}
 	if err := f.store(n.rec, a, vn.Streams[stream], true); err != nil {
 		return err
@@ -568,7 +574,7 @@ func (f *FS) Remove(parent *volume.Node, leaf string, vn *volume.Node) error {
 	var content freed
 	var streams []freed
 	for _, a := range r.attrs {
-		if a.typ != atData || a.resident || a.size == 0 {
+		if a.typ != libntfs.AttrTypeData || a.resident || a.size == 0 {
 			continue
 		}
 		data, exts, err := f.readRuns(a.runs, 0, a.size)
@@ -586,7 +592,7 @@ func (f *FS) Remove(parent *volume.Node, leaf string, vn *volume.Node) error {
 			f.release(a.runs)
 		}
 	}
-	r.flags &^= recInUse
+	r.flags &^= libntfs.MFTFlagInUse
 	r.seq++
 	if r.seq == 0 {
 		r.seq = 1
@@ -596,11 +602,11 @@ func (f *FS) Remove(parent *volume.Node, leaf string, vn *volume.Node) error {
 	if err != nil {
 		return err
 	}
-	off, _, err := f.at(f.mft.find(atData, "").runs, int64(r.num)*recordSize)
+	off, _, err := f.at(f.mft.find(libntfs.AttrTypeData, "").runs, int64(r.num)*libntfs.RecordSize)
 	if err != nil {
 		return err
 	}
-	entry := &target.ResidueEntry{Type: "ntfs_mft_record", Number: int64(r.num), Seq: int(r.seq), Offset: f.dev.Abs(off), Length: recordSize}
+	entry := &target.ResidueEntry{Type: "ntfs_mft_record", Number: int64(r.num), Seq: int(r.seq), Offset: f.dev.Abs(off), Length: libntfs.RecordSize}
 	f.res.Add(target.ResidueDelete, entry, raw, content.exts, content.data)
 	for _, s := range streams {
 		f.res.Add(target.ResidueDelete, nil, nil, s.exts, s.data)
@@ -697,9 +703,9 @@ func (f *FS) Chmod(vn *volume.Node) error {
 		return nil
 	}
 	if vn.Mode&0o200 == 0 {
-		n.attrs |= faReadOnly
+		n.attrs |= libntfs.FileAttrReadOnly
 	} else {
-		n.attrs &^= faReadOnly
+		n.attrs &^= libntfs.FileAttrReadOnly
 	}
 	n.si.changed = f.clock()
 	f.putStdInfo(n)
@@ -709,7 +715,7 @@ func (f *FS) Chmod(vn *volume.Node) error {
 // WriteSlack writes data just past byte at of n's content, in the rest of
 // its last cluster.
 func (f *FS) WriteSlack(vn *volume.Node, at int64, data []byte) error {
-	d := nodeOf(vn).rec.find(atData, "")
+	d := nodeOf(vn).rec.find(libntfs.AttrTypeData, "")
 	switch {
 	case d.resident:
 		return errors.New("the content is kept in the MFT record, with no cluster and so no slack")
@@ -725,7 +731,7 @@ func mode(dir bool, attrs uint32) fs.FileMode {
 	switch {
 	case dir:
 		return fs.ModeDir | 0o777
-	case attrs&faReadOnly != 0:
+	case attrs&libntfs.FileAttrReadOnly != 0:
 		return 0o444
 	}
 	return 0o666

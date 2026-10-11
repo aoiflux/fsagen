@@ -25,6 +25,7 @@ require (
 	github.com/anchore/go-lzo v0.1.0 // indirect
 	github.com/aoiflux/libext v0.4.1 // indirect
 	github.com/aoiflux/libfat v0.3.3 // indirect
+	github.com/aoiflux/libntfs v0.3.5 // indirect
 	github.com/aoiflux/libtable v0.2.3 // indirect
 	github.com/aoiflux/libvhdi v0.4.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

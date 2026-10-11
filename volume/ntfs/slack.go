@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 
 	"github.com/aoiflux/fsagen/target"
+	"github.com/aoiflux/libntfs"
 )
 
 // goneEntry is an entry taken out of a directory's index by a delete or a
@@ -62,21 +63,21 @@ type indexImage struct {
 // tool would: every one $INDEX_ALLOCATION maps that is still an index
 // block of d.
 func (f *FS) indexImages(d *node) ([]indexImage, error) {
-	ia := d.rec.find(atIndexAlloc, "$I30")
+	ia := d.rec.find(libntfs.AttrTypeIndexAllocation, "$I30")
 	if ia == nil || d.dir == nil {
 		return nil, nil
 	}
-	live := d.rec.flags&recInUse != 0
+	live := d.rec.flags&libntfs.MFTFlagInUse != 0
 	var out []indexImage
 	per := int64(f.g.perIndexBlock())
-	for bit := int64(0); f.blockPos(bit*per)+indexSize <= ia.size; bit++ {
+	for bit := int64(0); f.blockPos(bit*per)+libntfs.IndexBlockSize <= ia.size; bit++ {
 		vcn := bit * per
 		pos := f.blockPos(vcn)
-		b, _, err := f.readRuns(ia.runs, pos, indexSize)
+		b, _, err := f.readRuns(ia.runs, pos, libntfs.IndexBlockSize)
 		if err != nil {
 			return nil, err
 		}
-		if string(b[:4]) != "INDX" || unprotect(b) != nil || int64(binary.LittleEndian.Uint64(b[16:])) != vcn {
+		if string(b[:4]) != "INDX" || libntfs.ApplyFixup(b) != nil || int64(binary.LittleEndian.Uint64(b[16:])) != vcn {
 			continue
 		}
 		from := 0x40
@@ -93,13 +94,13 @@ func (f *FS) findEntry(g goneEntry, imgs []indexImage) {
 	le := binary.LittleEndian
 	n := len(g.key)
 	for _, img := range imgs {
-		for p := (img.from + 7) &^ 7; p+16+n <= indexSize; p += 8 {
+		for p := (img.from + 7) &^ 7; p+16+n <= libntfs.IndexBlockSize; p += 8 {
 			e := img.b[p:]
 			length := int(le.Uint16(e[8:]))
-			if le.Uint64(e) != g.ref || int(le.Uint16(e[10:])) != n || length < 16+n || p+length > indexSize || !bytes.Equal(e[16:16+n], g.key) {
+			if le.Uint64(e) != g.ref || int(le.Uint16(e[10:])) != n || length < 16+n || p+length > libntfs.IndexBlockSize || !bytes.Equal(e[16:16+n], g.key) {
 				continue
 			}
-			ia := g.dir.rec.find(atIndexAlloc, "$I30")
+			ia := g.dir.rec.find(libntfs.AttrTypeIndexAllocation, "$I30")
 			off, run, err := f.at(ia.runs, img.pos+int64(p))
 			if err != nil || run < int64(length) {
 				continue

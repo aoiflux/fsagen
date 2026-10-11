@@ -28,11 +28,19 @@ func linkCaps(v volume) LinkCaps {
 // symlink writes the reparse data CreateSymbolicLinkW writes (see
 // reparse.Symlink).
 func symlink(r *os.Root, name, target string, dir bool) error {
-	return createReparse(r, name, dir, reparse.Symlink(target))
+	data, err := reparse.Symlink(target)
+	if err != nil {
+		return err
+	}
+	return createReparse(r, name, dir, data)
 }
 
 func junction(r *os.Root, name, target string) error {
-	return createReparse(r, name, true, reparse.Junction(target))
+	data, err := reparse.Junction(target)
+	if err != nil {
+		return err
+	}
+	return createReparse(r, name, true, data)
 }
 
 // createReparse creates name, a new empty file or directory, relative to

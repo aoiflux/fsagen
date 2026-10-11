@@ -14,6 +14,7 @@ import (
 
 	"github.com/aoiflux/fsagen/target"
 	"github.com/aoiflux/fsagen/volume"
+	"github.com/aoiflux/libntfs"
 )
 
 var le = binary.LittleEndian
@@ -52,16 +53,30 @@ func must(t *testing.T, err error) {
 	}
 }
 
+// readFileName reads a $FILE_NAME value back as the driver keeps it.
+func readFileName(b []byte) (fileName, error) {
+	fn, err := libntfs.ParseFileName(b)
+	if err != nil {
+		return fileName{}, err
+	}
+	return fileName{
+		parent: libntfs.MakeFileReference(fn.ParentDirectory, fn.ParentSeqNum),
+		t:      times{when(fn.CreateTime), when(fn.ModifyTime), when(fn.MFTChangeTime), when(fn.AccessTime)},
+		alloc:  int64(fn.AllocatedSize), size: int64(fn.RealSize), flags: fn.FileAttributes, reparse: fn.ReparseValue,
+		name: fn.Name, namespace: fn.Namespace,
+	}, nil
+}
+
 // record reads record num as it is on disk, its update sequence array
 // undone.
 func (v testVolume) record(t *testing.T, num uint32) []byte {
 	t.Helper()
-	off, _, err := v.fs.at(v.fs.mft.find(atData, "").runs, int64(num)*recordSize)
+	off, _, err := v.fs.at(v.fs.mft.find(libntfs.AttrTypeData, "").runs, int64(num)*libntfs.RecordSize)
 	must(t, err)
-	b := make([]byte, recordSize)
+	b := make([]byte, libntfs.RecordSize)
 	_, err = v.file.ReadAt(b, off)
 	must(t, err)
-	must(t, unprotect(b))
+	must(t, libntfs.ApplyFixup(b))
 	return b
 }
 
@@ -205,13 +220,13 @@ func normalizeImage(t *testing.T, img []byte, g Geometry) {
 		clear(img[at+0x54 : at+0x1FE])
 	}
 	cs := int64(g.ClusterSize)
-	for at := int64(0); at+indexSize <= int64(len(img)); at += min(cs, indexSize) {
-		blk := img[at : at+indexSize]
+	for at := int64(0); at+libntfs.IndexBlockSize <= int64(len(img)); at += min(cs, libntfs.IndexBlockSize) {
+		blk := img[at : at+libntfs.IndexBlockSize]
 		if string(blk[:4]) != "INDX" {
 			continue
 		}
 		usn := le.Uint16(blk[le.Uint16(blk[4:]):])
-		if err := unprotect(blk); err != nil {
+		if err := libntfs.ApplyFixup(blk); err != nil {
 			t.Fatalf("index block at %d: %v", at, err)
 		}
 		h := blk[0x18:]
@@ -219,32 +234,32 @@ func normalizeImage(t *testing.T, img []byte, g Geometry) {
 			e := h[p:]
 			n, kl, flags := int(le.Uint16(e[8:])), int(le.Uint16(e[10:])), le.Uint16(e[12:])
 			end := n
-			if flags&ieNode != 0 {
+			if flags&libntfs.IndexFlagNode != 0 {
 				end -= 8
 			}
 			clear(e[16+kl : end])
-			if flags&ieEnd != 0 {
+			if flags&libntfs.IndexFlagLast != 0 {
 				break
 			}
 			p += n
 		}
-		protect(blk, usn)
+		must(t, libntfs.ProtectFixup(blk, usn))
 	}
 	for _, base := range []int64{g.MFT * cs, g.Mirror * cs} {
 		n := g.MFTRecords
 		if base == g.Mirror*cs {
-			n = g.MirrorClusters * cs / recordSize
+			n = g.MirrorClusters * cs / libntfs.RecordSize
 		}
 		for i := range n {
-			rec := img[base+i*recordSize : base+(i+1)*recordSize]
+			rec := img[base+i*libntfs.RecordSize : base+(i+1)*libntfs.RecordSize]
 			if string(rec[:4]) != "FILE" {
 				continue
 			}
 			usn := le.Uint16(rec[le.Uint16(rec[4:]):])
-			if err := unprotect(rec); err != nil {
+			if err := libntfs.ApplyFixup(rec); err != nil {
 				t.Fatalf("record %d: %v", i, err)
 			}
-			for p := int(le.Uint16(rec[20:])); le.Uint32(rec[p:]) != atEnd; {
+			for p := int(le.Uint16(rec[20:])); le.Uint32(rec[p:]) != libntfs.AttrTypeEnd; {
 				n := int(le.Uint32(rec[p+4:]))
 				a := rec[p : p+n]
 				if a[8] == 0 {
@@ -261,7 +276,7 @@ func normalizeImage(t *testing.T, img []byte, g Geometry) {
 				}
 				p += n
 			}
-			protect(rec, usn)
+			must(t, libntfs.ProtectFixup(rec, usn))
 		}
 	}
 }
@@ -281,12 +296,12 @@ func TestSecureDescriptors(t *testing.T) {
 	must(t, v.WriteFile("other.txt", []byte("y"), target.FileMode))
 	_, _ = v.finish(t)
 	sec := func(name string) uint32 {
-		return le.Uint32(nodeOf(must2(v.Node(name))).rec.find(atStdInfo, "").value[52:])
+		return le.Uint32(nodeOf(must2(v.Node(name))).rec.find(libntfs.AttrTypeStandardInfo, "").value[52:])
 	}
 	if sec("dir") != 0x102 || sec("dir/file.txt") != 0x103 || sec("other.txt") != 0x103 {
 		t.Errorf("security IDs: dir %#x, file %#x, other %#x", sec("dir"), sec("dir/file.txt"), sec("other.txt"))
 	}
-	sds := v.fs.secure.find(atData, "$SDS")
+	sds := v.fs.secure.find(libntfs.AttrTypeData, "$SDS")
 	for _, c := range []struct {
 		id uint32
 		at int64
@@ -302,14 +317,14 @@ func TestSecureDescriptors(t *testing.T) {
 		}
 	}
 	var ids []uint32
-	for _, e := range viewEntries(v.fs.secure.find(atIndexRoot, "$SII").value) {
+	for _, e := range viewEntries(v.fs.secure.find(libntfs.AttrTypeIndexRoot, "$SII").value) {
 		ids = append(ids, le.Uint32(e.body))
 	}
 	if fmt.Sprint(ids) != "[256 257 258 259]" {
 		t.Errorf("$SII files IDs %v", ids)
 	}
 	var hashes []uint32
-	for _, e := range viewEntries(v.fs.secure.find(atIndexRoot, "$SDH").value) {
+	for _, e := range viewEntries(v.fs.secure.find(libntfs.AttrTypeIndexRoot, "$SDH").value) {
 		hashes = append(hashes, le.Uint32(e.body))
 	}
 	if !slices.IsSorted(hashes) || len(hashes) != 4 {
@@ -387,8 +402,8 @@ func TestWriteReadBack(t *testing.T) {
 		t.Errorf("the root lists %v", names)
 	}
 	// A name Windows could hold as a short name is in both namespaces.
-	for name, ns := range map[string]byte{"a/b/c/README.TXT": nsWin32DOS, "a/small.txt": nsWin32, "MixedCase.Doc": nsWin32} {
-		fn, err := readFileName(nodeOf(must2(v.Node(name))).rec.find(atFileName, "").value)
+	for name, ns := range map[string]byte{"a/b/c/README.TXT": libntfs.NamespaceWinDOS, "a/small.txt": libntfs.NamespaceWin32, "MixedCase.Doc": libntfs.NamespaceWin32} {
+		fn, err := readFileName(nodeOf(must2(v.Node(name))).rec.find(libntfs.AttrTypeFileName, "").value)
 		must(t, err)
 		if fn.namespace != ns {
 			t.Errorf("%s is in namespace %d", name, fn.namespace)
@@ -402,7 +417,7 @@ func TestWriteReadBack(t *testing.T) {
 func TestContentLeavesTheRecordForGood(t *testing.T) {
 	v := newVolume(t, 16<<20, 0, volume.NextFit)
 	must(t, v.WriteFile("f", []byte("small"), target.FileMode))
-	data := func() *attr { return nodeOf(must2(v.Node("f"))).rec.find(atData, "") }
+	data := func() *attr { return nodeOf(must2(v.Node("f"))).rec.find(libntfs.AttrTypeData, "") }
 	if !data().resident {
 		t.Fatal("5 bytes are not kept in the record")
 	}
@@ -447,15 +462,15 @@ func TestDeleteAsWindows(t *testing.T) {
 	must(t, v.WriteFile("zz-gone.bin", content, target.FileMode))
 	must(t, v.WriteFile("small.txt", []byte("tiny secret"), target.FileMode))
 	gone, small := v.num(t, "zz-gone.bin"), v.num(t, "small.txt")
-	runs := nodeOf(must2(v.Node("zz-gone.bin"))).rec.find(atData, "").runs
+	runs := nodeOf(must2(v.Node("zz-gone.bin"))).rec.find(libntfs.AttrTypeData, "").runs
 	v.BeginOp(7, time.Time{})
 	must(t, v.Remove("zz-gone.bin"))
 	must(t, v.Remove("small.txt"))
 	raw := v.record(t, gone)
-	if flags, seq := le.Uint16(raw[22:]), le.Uint16(raw[16:]); flags&recInUse != 0 || seq != 2 {
+	if flags, seq := le.Uint16(raw[22:]), le.Uint16(raw[16:]); flags&libntfs.MFTFlagInUse != 0 || seq != 2 {
 		t.Errorf("deleted record: flags %#x, sequence %d", flags, seq)
 	}
-	if !bytes.Contains(raw, utf16le("zz-gone.bin")) || !bytes.Contains(raw, mappingPairs(runs)) {
+	if !bytes.Contains(raw, utf16le("zz-gone.bin")) || !bytes.Contains(raw, runlist(runs)) {
 		t.Error("the deleted record lost its name or its runlist")
 	}
 	for _, c := range lcns(runs) {
@@ -479,17 +494,17 @@ func TestDeleteAsWindows(t *testing.T) {
 		t.Fatalf("residue %+v", res)
 	}
 	e := res[0].Entry
-	if res[0].N != 7 || res[0].Path != "zz-gone.bin" || res[0].Cause != target.ResidueDelete || e.Type != "ntfs_mft_record" || e.Number != int64(gone) || e.Seq != 2 || e.Length != recordSize || e.Overwritten ||
+	if res[0].N != 7 || res[0].Path != "zz-gone.bin" || res[0].Cause != target.ResidueDelete || e.Type != "ntfs_mft_record" || e.Number != int64(gone) || e.Seq != 2 || e.Length != libntfs.RecordSize || e.Overwritten ||
 		res[0].Size != int64(len(content)) || res[0].Recoverable != target.RecoverableFull {
 		t.Errorf("residue %+v, entry %+v", res[0], e)
 	}
 	if res[1].Entry.Number != int64(small) || res[1].Extents != nil {
 		t.Errorf("a resident file's residue %+v", res[1])
 	}
-	on := make([]byte, recordSize)
+	on := make([]byte, libntfs.RecordSize)
 	_, err := v.file.ReadAt(on, e.Offset)
 	must(t, err)
-	must(t, unprotect(on))
+	must(t, libntfs.ApplyFixup(on))
 	if !bytes.Equal(on, raw) {
 		t.Error("the residue's offset is not the record's")
 	}
@@ -529,16 +544,16 @@ func TestMFTGrows(t *testing.T) {
 		must(t, v.WriteFile(fmt.Sprintf("d%d/f%02d", i%2, i), []byte{byte(i)}, target.FileMode))
 	}
 	_, _ = v.finish(t)
-	d := v.fs.mft.find(atData, "")
+	d := v.fs.mft.find(libntfs.AttrTypeData, "")
 	g := v.fs.g
-	if want := int64(firstUser + 42); d.size != want*recordSize || len(d.runs) != 1 || d.runs[0].lcn != g.MFT || d.alloc != 28*1024+ceil(want-28, mftGrowth)*mftGrowth*recordSize {
+	if want := int64(firstUser + 42); d.size != want*libntfs.RecordSize || len(d.runs) != 1 || d.runs[0].lcn != g.MFT || d.alloc != 28*1024+ceil(want-28, mftGrowth)*mftGrowth*libntfs.RecordSize {
 		t.Errorf("$MFT: %+v", d)
 	}
-	mirror := make([]byte, recordSize)
+	mirror := make([]byte, libntfs.RecordSize)
 	_, err := v.file.ReadAt(mirror, g.offset(g.Mirror))
 	must(t, err)
-	must(t, unprotect(mirror))
-	if !bytes.Equal(mirror, v.record(t, recMFT)) {
+	must(t, libntfs.ApplyFixup(mirror))
+	if !bytes.Equal(mirror, v.record(t, libntfs.MFTEntryMFT)) {
 		t.Error("$MFTMirr's copy of $MFT's record is stale")
 	}
 }
@@ -554,16 +569,16 @@ func TestIndexMovesToBlock(t *testing.T) {
 	for ; dir.dir.root.leaf(); n++ {
 		must(t, v.WriteFile(fmt.Sprintf("d/file-%02d.txt", 99-n), nil, target.FileMode))
 	}
-	if dir.rec.find(atIndexAlloc, "$I30") == nil || dir.rec.find(atBitmap, "$I30") == nil {
+	if dir.rec.find(libntfs.AttrTypeIndexAllocation, "$I30") == nil || dir.rec.find(libntfs.AttrTypeBitmap, "$I30") == nil {
 		t.Fatalf("after %d entries: %+v", n, dir.rec.attrs)
 	}
 	// Each entry takes 104 bytes; the record held the root with n-1 of
 	// them and 120 bytes to spare, but not with n.
 	used := dir.rec.used() + align8(64+16+(n-1)*104)
-	for _, a := range []*attr{dir.rec.find(atIndexRoot, "$I30"), dir.rec.find(atIndexAlloc, "$I30"), dir.rec.find(atBitmap, "$I30")} {
+	for _, a := range []*attr{dir.rec.find(libntfs.AttrTypeIndexRoot, "$I30"), dir.rec.find(libntfs.AttrTypeIndexAllocation, "$I30"), dir.rec.find(libntfs.AttrTypeBitmap, "$I30")} {
 		used -= len(a.encode())
 	}
-	if used+120 > recordSize || used+104+120 <= recordSize {
+	if used+120 > libntfs.RecordSize || used+104+120 <= libntfs.RecordSize {
 		t.Errorf("the root moved after %d entries, with the record using %d bytes", n, used)
 	}
 	if b := dir.dir.blocks[0]; len(b.es) != n || !b.leaf() || dir.dir.root.end != 0 || len(dir.dir.root.es) != 0 {
@@ -591,7 +606,7 @@ func TestRenameRewritesFileName(t *testing.T) {
 	v.BeginOp(2, t2)
 	must(t, v.Rename("from/x.txt", "to/y.txt"))
 	n := nodeOf(must2(v.Node("to/y.txt")))
-	fn, err := readFileName(n.rec.find(atFileName, "").value)
+	fn, err := readFileName(n.rec.find(libntfs.AttrTypeFileName, "").value)
 	must(t, err)
 	to := nodeOf(must2(v.Node("to")))
 	if fn.name != "y.txt" || fn.parent != to.rec.ref() || fn.t != (times{t1, t1, t2, t1}) {
@@ -642,7 +657,7 @@ func TestTimeRange(t *testing.T) {
 		t.Errorf("range %v to %v", MinTime, MaxTime)
 	}
 	for _, tm := range []time.Time{MinTime, writeTimes.Atime, MaxTime.Truncate(100 * time.Nanosecond)} {
-		if got := fromFiletime(filetime(tm)); !got.Equal(tm) {
+		if got := libntfs.FiletimeToTime(libntfs.TimeToFiletime(tm)); !got.Equal(tm) {
 			t.Errorf("%v reads back as %v", tm, got)
 		}
 	}

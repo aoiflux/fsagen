@@ -27,16 +27,13 @@ import (
 	"math/bits"
 	"slices"
 	"strings"
-	"time"
 	"unicode/utf16"
+
+	"github.com/aoiflux/libntfs"
 )
 
 const (
 	sectorSize = 512
-	// recordSize and indexSize are the MFT record and index block sizes
-	// mkntfs and Windows use whatever the cluster size.
-	recordSize = 1024
-	indexSize  = 4096
 	// systemRecords are the records mkntfs fills: 0 to 15, the unused 16 to
 	// 23, and $Extend's $Quota, $ObjId and $Reparse.
 	systemRecords = 27
@@ -46,112 +43,32 @@ const (
 	// mftGrowth is how many records $MFT grows by when it is full, as
 	// libntfs-3g extends it.
 	mftGrowth = 16
-	// maxName is the longest name, in UTF-16 code units.
-	maxName = 255
 	// maxLabel is the longest volume label Windows accepts.
 	maxLabel = 32
 	// defaultCluster is the cluster size mkntfs and Windows give every
 	// volume up to 16 TiB.
 	defaultCluster = 4096
-	maxCluster     = 2 << 20
 )
 
-// The system records.
+// The records mkntfs gives $Extend's files.
 const (
-	recMFT     = 0
-	recMFTMirr = 1
-	recLogFile = 2
-	recVolume  = 3
-	recAttrDef = 4
-	recRoot    = 5
-	recBitmap  = 6
-	recBoot    = 7
-	recBadClus = 8
-	recSecure  = 9
-	recUpCase  = 10
-	recExtend  = 11
 	recQuota   = 24
 	recObjID   = 25
 	recReparse = 26
 )
 
-// Attribute types.
+// File attribute flags of the system files.
 const (
-	atStdInfo    = 0x10
-	atFileName   = 0x30
-	atObjectID   = 0x40
-	atSecurity   = 0x50
-	atVolName    = 0x60
-	atVolInfo    = 0x70
-	atData       = 0x80
-	atIndexRoot  = 0x90
-	atIndexAlloc = 0xA0
-	atBitmap     = 0xB0
-	atReparse    = 0xC0
-	atEnd        = 0xFFFFFFFF
-)
-
-// Record flags.
-const (
-	recInUse     = 0x0001
-	recDir       = 0x0002
-	recIs4       = 0x0004
-	recViewIndex = 0x0008
-)
-
-// File attribute flags, in $STANDARD_INFORMATION and $FILE_NAME.
-const (
-	faReadOnly   = 0x00000001
-	faHidden     = 0x00000002
-	faSystem     = 0x00000004
-	faArchive    = 0x00000020
-	faReparse    = 0x00000400
-	faI30Index   = 0x10000000
-	faViewIndex  = 0x20000000
-	faSysHidden  = faHidden | faSystem
-	faExtendView = faSysHidden | faArchive | faViewIndex
-)
-
-// $FILE_NAME namespaces.
-const (
-	nsPOSIX    = 0
-	nsWin32    = 1
-	nsWin32DOS = 3
-)
-
-// Collation rules.
-const (
-	collFileName = 0x01
-	collULong    = 0x10
-	collSID      = 0x11
-	collSecHash  = 0x12
-	collULongs   = 0x13
-)
-
-// Index entry flags, and index header flags.
-const (
-	ieNode  = 0x01
-	ieEnd   = 0x02
-	ihLarge = 0x01
+	faSysHidden  = libntfs.FileAttrHidden | libntfs.FileAttrSystem
+	faExtendView = faSysHidden | libntfs.FileAttrArchive | libntfs.FileAttrViewIndex
 )
 
 // MinTime and MaxTime are the first and last instants NTFS can store: 100 ns
 // ticks from 1601, in a signed 64-bit number.
 var (
-	MinTime = time.Date(1601, 1, 1, 0, 0, 0, 0, time.UTC)
-	MaxTime = fromFiletime(1<<63 - 1)
+	MinTime = libntfs.FiletimeToTime(0)
+	MaxTime = libntfs.FiletimeToTime(1<<63 - 1)
 )
-
-// filetime is t in NTFS's 100 ns ticks from 1601.
-func filetime(t time.Time) uint64 {
-	s, ns := t.Unix(), int64(t.Nanosecond())
-	return uint64((s+11644473600)*10_000_000 + ns/100)
-}
-
-func fromFiletime(v uint64) time.Time {
-	t := int64(v)
-	return time.Unix(t/10_000_000-11644473600, t%10_000_000*100).UTC()
-}
 
 // Geometry is where an NTFS volume keeps what, as mkntfs lays it out.
 type Geometry struct {
@@ -195,7 +112,7 @@ func Plan(size int64, clusterSize int) (Geometry, error) {
 			clusterSize <<= 1
 		}
 	}
-	if clusterSize&(clusterSize-1) != 0 || clusterSize < sectorSize || clusterSize > maxCluster {
+	if clusterSize&(clusterSize-1) != 0 || clusterSize < sectorSize || clusterSize > libntfs.MaxClusterSize {
 		return Geometry{}, fmt.Errorf("an NTFS cluster is a power of two from %d bytes to 2 MiB, not %d", sectorSize, clusterSize)
 	}
 	cs := int64(clusterSize)
@@ -207,10 +124,10 @@ func Plan(size int64, clusterSize int) (Geometry, error) {
 	g.BootClusters = ceil(8192, cs)
 	g.MFTBitmap = g.BootClusters
 	g.MFT = max(g.MFTBitmap+1, ceil(16384, cs))
-	g.MFTRecords = max(systemRecords*recordSize, cs) / recordSize
+	g.MFTRecords = max(systemRecords*libntfs.RecordSize, cs) / libntfs.RecordSize
 	g.ZoneEnd = g.MFT + g.Clusters/8
 	g.Mirror = sectors * sectorSize / 2 / cs
-	g.MirrorClusters = ceil(4*recordSize, cs)
+	g.MirrorClusters = ceil(4*libntfs.RecordSize, cs)
 	g.Log = g.Mirror + g.MirrorClusters
 	clusterBytes := g.Clusters * cs
 	switch {
@@ -238,7 +155,9 @@ func Plan(size int64, clusterSize int) (Geometry, error) {
 func ceil(n, d int64) int64 { return (n + d - 1) / d }
 
 // mftClusters is how many clusters $MFT starts with.
-func (g Geometry) mftClusters() int64 { return ceil(g.MFTRecords*recordSize, int64(g.ClusterSize)) }
+func (g Geometry) mftClusters() int64 {
+	return ceil(g.MFTRecords*libntfs.RecordSize, int64(g.ClusterSize))
+}
 
 // offset is where cluster c starts on the volume.
 func (g Geometry) offset(c int64) int64 { return c * int64(g.ClusterSize) }
@@ -247,10 +166,10 @@ func (g Geometry) offset(c int64) int64 { return c * int64(g.ClusterSize) }
 // clusters, or 512-byte blocks when a cluster is bigger than an index
 // block.
 func (g Geometry) perIndexBlock() byte {
-	if indexSize >= g.ClusterSize {
-		return byte(indexSize / g.ClusterSize)
+	if libntfs.IndexBlockSize >= g.ClusterSize {
+		return byte(libntfs.IndexBlockSize / g.ClusterSize)
 	}
-	return indexSize / sectorSize
+	return libntfs.IndexBlockSize / sectorSize
 }
 
 // sizeByte is how the boot sector gives a record of n bytes: in clusters,
@@ -285,8 +204,8 @@ func bootSector(g Geometry, hidden uint32, serial uint64) []byte {
 	le.PutUint64(b[0x28:], uint64(g.Sectors))
 	le.PutUint64(b[0x30:], uint64(g.MFT))
 	le.PutUint64(b[0x38:], uint64(g.Mirror))
-	b[0x40] = g.sizeByte(recordSize)
-	b[0x44] = g.sizeByte(indexSize)
+	b[0x40] = g.sizeByte(libntfs.RecordSize)
+	b[0x44] = g.sizeByte(libntfs.IndexBlockSize)
 	le.PutUint64(b[0x48:], serial)
 	b[0x1FE], b[0x1FF] = 0x55, 0xAA
 	return b
@@ -295,119 +214,14 @@ func bootSector(g Geometry, hidden uint32, serial uint64) []byte {
 // run is length clusters from lcn, or a hole when lcn is -1.
 type run struct{ lcn, length int64 }
 
-// significant is how many bytes n takes as a signed number.
-func significant(n int64) int {
-	l := uint64(n)
-	if n < 0 {
-		l = ^l
-	}
-	i := 1
-	if l >= 128 {
-		l >>= 7
-		for {
-			i++
-			l >>= 8
-			if l == 0 {
-				break
-			}
-		}
-	}
-	return i
-}
-
-// mappingPairs encodes runs as a runlist: each run's length and its start
+// runlist encodes runs as a runlist: each run's length and its start
 // relative to the last run's, in as few bytes as they take, and a 0.
-func mappingPairs(runs []run) []byte {
-	var out []byte
-	last := int64(0)
-	for _, r := range runs {
-		lb := significant(r.length)
-		ob := 0
-		if r.lcn >= 0 {
-			ob = significant(r.lcn - last)
-		}
-		out = append(out, byte(ob<<4|lb))
-		for i := range lb {
-			out = append(out, byte(r.length>>(8*i)))
-		}
-		if r.lcn >= 0 {
-			d := r.lcn - last
-			for i := range ob {
-				out = append(out, byte(d>>(8*i)))
-			}
-			last = r.lcn
-		}
+func runlist(runs []run) []byte {
+	drs := make([]libntfs.DataRun, len(runs))
+	for i, r := range runs {
+		drs[i] = libntfs.DataRun{LengthClusters: uint64(r.length), StartCluster: r.lcn, IsSparse: r.lcn < 0}
 	}
-	return append(out, 0)
-}
-
-// decodeRuns reads a runlist.
-func decodeRuns(b []byte) ([]run, error) {
-	var out []run
-	last := int64(0)
-	for i := 0; i < len(b) && b[i] != 0; {
-		lb, ob := int(b[i]&0x0F), int(b[i]>>4)
-		i++
-		if lb == 0 || lb > 8 || ob > 8 || i+lb+ob > len(b) {
-			return nil, fmt.Errorf("a malformed runlist")
-		}
-		length := signed(b[i : i+lb])
-		i += lb
-		r := run{lcn: -1, length: length}
-		if ob > 0 {
-			last += signed(b[i : i+ob])
-			i += ob
-			r.lcn = last
-		}
-		if length <= 0 || r.lcn < -1 {
-			return nil, fmt.Errorf("a malformed runlist")
-		}
-		out = append(out, r)
-	}
-	return out, nil
-}
-
-// signed reads b as a little-endian signed number.
-func signed(b []byte) int64 {
-	var v int64
-	for i := len(b) - 1; i >= 0; i-- {
-		v = v<<8 | int64(b[i])
-	}
-	if s := 64 - 8*len(b); s > 0 {
-		v = v << s >> s
-	}
-	return v
-}
-
-// protect fills b's update sequence array: the last two bytes of every
-// sector go into it and are replaced by the update sequence number usn.
-func protect(b []byte, usn uint16) {
-	le := binary.LittleEndian
-	ofs, n := int(le.Uint16(b[4:])), int(le.Uint16(b[6:]))
-	le.PutUint16(b[ofs:], usn)
-	for i := 1; i < n; i++ {
-		end := i*sectorSize - 2
-		copy(b[ofs+2*i:], b[end:end+2])
-		le.PutUint16(b[end:], usn)
-	}
-}
-
-// unprotect checks and undoes protect.
-func unprotect(b []byte) error {
-	le := binary.LittleEndian
-	ofs, n := int(le.Uint16(b[4:])), int(le.Uint16(b[6:]))
-	if ofs+2*n > len(b) || n == 0 || (n-1)*sectorSize > len(b) {
-		return fmt.Errorf("a malformed update sequence array")
-	}
-	usn := le.Uint16(b[ofs:])
-	for i := 1; i < n; i++ {
-		end := i*sectorSize - 2
-		if le.Uint16(b[end:]) != usn {
-			return fmt.Errorf("sector %d was torn: its update sequence number is wrong", i-1)
-		}
-		copy(b[end:end+2], b[ofs+2*i:])
-	}
-	return nil
+	return libntfs.EncodeRunlist(drs)
 }
 
 // utf16le is s as NTFS stores a name.
@@ -420,14 +234,6 @@ func utf16le(s string) []byte {
 	return b
 }
 
-func fromUTF16le(b []byte) string {
-	u := make([]uint16, len(b)/2)
-	for i := range u {
-		u[i] = binary.LittleEndian.Uint16(b[2*i:])
-	}
-	return string(utf16.Decode(u))
-}
-
 // attrDefs is $AttrDef: every attribute type NTFS 3.1 knows, with its
 // flags and its least and greatest size, as Windows and mkntfs write it.
 var attrDefs = []struct {
@@ -436,21 +242,21 @@ var attrDefs = []struct {
 	flags    uint32
 	min, max int64
 }{
-	{"$STANDARD_INFORMATION", atStdInfo, 0x40, 0x30, 0x48},
-	{"$ATTRIBUTE_LIST", 0x20, 0x80, 0, -1},
-	{"$FILE_NAME", atFileName, 0x42, 0x44, 0x242},
-	{"$OBJECT_ID", atObjectID, 0x40, 0, 0x100},
-	{"$SECURITY_DESCRIPTOR", atSecurity, 0x80, 0, -1},
-	{"$VOLUME_NAME", atVolName, 0x40, 2, 0x100},
-	{"$VOLUME_INFORMATION", atVolInfo, 0x40, 0x0C, 0x0C},
-	{"$DATA", atData, 0, 0, -1},
-	{"$INDEX_ROOT", atIndexRoot, 0x40, 0, -1},
-	{"$INDEX_ALLOCATION", atIndexAlloc, 0x80, 0, -1},
-	{"$BITMAP", atBitmap, 0x80, 0, -1},
-	{"$REPARSE_POINT", 0xC0, 0x80, 0, 0x4000},
-	{"$EA_INFORMATION", 0xD0, 0x40, 8, 8},
-	{"$EA", 0xE0, 0, 0, 0x10000},
-	{"$LOGGED_UTILITY_STREAM", 0x100, 0x80, 0, 0x10000},
+	{"$STANDARD_INFORMATION", libntfs.AttrTypeStandardInfo, libntfs.AttrDefMustBeResident, 0x30, 0x48},
+	{"$ATTRIBUTE_LIST", libntfs.AttrTypeAttributeList, libntfs.AttrDefAlwaysLog, 0, -1},
+	{"$FILE_NAME", libntfs.AttrTypeFileName, libntfs.AttrDefMustBeResident | libntfs.AttrDefIndexable, 0x44, 0x242},
+	{"$OBJECT_ID", libntfs.AttrTypeObjectID, libntfs.AttrDefMustBeResident, 0, 0x100},
+	{"$SECURITY_DESCRIPTOR", libntfs.AttrTypeSecurityDesc, libntfs.AttrDefAlwaysLog, 0, -1},
+	{"$VOLUME_NAME", libntfs.AttrTypeVolumeName, libntfs.AttrDefMustBeResident, 2, 0x100},
+	{"$VOLUME_INFORMATION", libntfs.AttrTypeVolumeInfo, libntfs.AttrDefMustBeResident, 0x0C, 0x0C},
+	{"$DATA", libntfs.AttrTypeData, 0, 0, -1},
+	{"$INDEX_ROOT", libntfs.AttrTypeIndexRoot, libntfs.AttrDefMustBeResident, 0, -1},
+	{"$INDEX_ALLOCATION", libntfs.AttrTypeIndexAllocation, libntfs.AttrDefAlwaysLog, 0, -1},
+	{"$BITMAP", libntfs.AttrTypeBitmap, libntfs.AttrDefAlwaysLog, 0, -1},
+	{"$REPARSE_POINT", libntfs.AttrTypeReparsePoint, libntfs.AttrDefAlwaysLog, 0, 0x4000},
+	{"$EA_INFORMATION", libntfs.AttrTypeEAInfo, libntfs.AttrDefMustBeResident, 8, 8},
+	{"$EA", libntfs.AttrTypeEA, 0, 0, 0x10000},
+	{"$LOGGED_UTILITY_STREAM", libntfs.AttrTypeLoggedUtility, libntfs.AttrDefAlwaysLog, 0, 0x10000},
 }
 
 // attrDefBytes is $AttrDef's content: 160 bytes an attribute type, and an
@@ -554,7 +360,7 @@ func descriptor(control uint16, aces []ace, aclSize int, owner, group []byte) []
 // and write it.
 func systemSD(rec int) []byte {
 	mask := uint32(rightsSysWrite)
-	if rec == recAttrDef || rec == recBoot {
+	if rec == libntfs.MFTEntryAttrDef || rec == libntfs.MFTEntryBoot {
 		mask = rightsSysRead
 	}
 	return descriptor(seDACLPresent, []ace{{0, mask, sidSystem}, {0, mask, sidAdmins}}, 0, sidSystem, sidAdmins)
@@ -663,8 +469,8 @@ func ValidName(name string) error {
 	switch {
 	case name == "" || name == "." || name == "..":
 		return fmt.Errorf("%q is not a file name", name)
-	case len(utf16.Encode([]rune(name))) > maxName:
-		return fmt.Errorf("%q is longer than the %d characters an NTFS name holds", name, maxName)
+	case len(utf16.Encode([]rune(name))) > libntfs.MaxFileNameLength:
+		return fmt.Errorf("%q is longer than the %d characters an NTFS name holds", name, libntfs.MaxFileNameLength)
 	}
 	for _, r := range name {
 		if r < 0x20 || strings.ContainsRune(winIllegal, r) {

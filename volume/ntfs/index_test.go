@@ -2,6 +2,7 @@ package ntfs
 
 import (
 	"bytes"
+	"errors"
 	"flag"
 	"fmt"
 	"hash/crc32"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/aoiflux/fsagen/target"
 	"github.com/aoiflux/fsagen/volume"
+	"github.com/aoiflux/libntfs"
 )
 
 var update = flag.Bool("update", false, "rewrite testdata/libntfs3g-index.txt from libntfs-3g")
@@ -33,14 +35,11 @@ func indexShape(t *testing.T, dev *volume.Device) string {
 	var b strings.Builder
 	var dir func(d *rnode, p string)
 	dir = func(d *rnode, p string) {
-		_, _, _, attrs, err := r.record(d.num)
-		must(t, err)
-		ir, ia, bm := findAttr(attrs, atIndexRoot, "$I30"), findAttr(attrs, atIndexAlloc, "$I30"), findAttr(attrs, atBitmap, "$I30")
 		fmt.Fprintf(&b, "%s:", p)
-		shapeOf(t, r, &b, ir, ia, bm, func(key []byte) string {
-			fn, err := readFileName(key)
+		shapeOf(t, r, &b, d.num, "$I30", func(e libntfs.IndexEntry) string {
+			fn, err := libntfs.ParseFileName(e.Key)
 			must(t, err)
-			return fn.name
+			return fn.Name
 		})
 		for _, c := range d.children {
 			if c.dir {
@@ -52,29 +51,33 @@ func indexShape(t *testing.T, dev *volume.Device) string {
 	return b.String()
 }
 
-// shapeOf lays out one index, as indexShape does, naming each entry by
-// what name makes of its key.
-func shapeOf(t *testing.T, r *Reader, b *strings.Builder, ir, ia, bm *rattr, name func(key []byte) string) {
+// shapeOf lays out record num's index, as indexShape does, naming each
+// entry by what name makes of it.
+func shapeOf(t *testing.T, r *Reader, b *strings.Builder, num uint64, index string, name func(e libntfs.IndexEntry) string) {
 	t.Helper()
-	if bm != nil {
-		fmt.Fprintf(b, " bitmap %x, %d bytes of blocks", bm.value, ia.size)
+	f, err := r.vol.Open(num)
+	must(t, err)
+	rec, err := r.vol.GetMFTEntry(num)
+	must(t, err)
+	switch bm, err := f.IndexBitmap(index); {
+	case err == nil:
+		fmt.Fprintf(b, " bitmap %x, %d bytes of blocks", bm, rec.FindAttribute(libntfs.AttrTypeIndexAllocation, index).NonResident.RealSize)
+	case !errors.Is(err, libntfs.ErrAttributeNotFound):
+		t.Fatal(err)
 	}
 	b.WriteString("\n")
-	var node func(label string, h []byte)
-	node = func(label string, h []byte) {
+	var node func(label string, es []libntfs.IndexEntry)
+	node = func(label string, es []libntfs.IndexEntry) {
 		var names []string
 		var kids []int64
-		for p := int(le.Uint32(h[0:])); ; {
-			e := h[p:]
-			n, kl, flags := int(le.Uint16(e[8:])), int(le.Uint16(e[10:])), le.Uint16(e[12:])
-			if flags&ieNode != 0 {
-				kids = append(kids, int64(le.Uint64(e[n-8:])))
+		for _, e := range es {
+			if e.Flags&libntfs.IndexFlagNode != 0 {
+				kids = append(kids, int64(e.SubNodeVCN))
 			}
-			if flags&ieEnd != 0 {
+			if e.Flags&libntfs.IndexFlagLast != 0 {
 				break
 			}
-			names = append(names, name(e[16:16+kl]))
-			p += n
+			names = append(names, name(e))
 		}
 		fmt.Fprintf(b, "  %s: %d entries %08x", label, len(names), crc32.ChecksumIEEE([]byte(strings.Join(names, "/"))))
 		if len(names) > 0 {
@@ -85,12 +88,17 @@ func shapeOf(t *testing.T, r *Reader, b *strings.Builder, ir, ia, bm *rattr, nam
 		}
 		b.WriteString("\n")
 		for _, vcn := range kids {
-			blk, err := r.indexBlock(ia.runs, vcn)
+			blk, err := f.ReadIndexBlock(index, vcn)
 			must(t, err)
-			node(fmt.Sprintf("block %d", vcn), blk[0x18:])
+			if blk.VCN != vcn {
+				t.Fatalf("index block %d says it is block %d", vcn, blk.VCN)
+			}
+			node(fmt.Sprintf("block %d", vcn), blk.Entries)
 		}
 	}
-	node(fmt.Sprintf("root, room %d", le.Uint32(ir.value[24:])-16), ir.value[16:])
+	root, err := f.ReadIndexRoot(index)
+	must(t, err)
+	node(fmt.Sprintf("root, room %d", root.NodeHeader.EntryListAlloc-16), root.Entries)
 }
 
 // reparseShape lays out $Extend\$Reparse's $R index as indexShape lays out
@@ -99,12 +107,11 @@ func reparseShape(t *testing.T, dev *volume.Device) string {
 	t.Helper()
 	r, err := Open(dev)
 	must(t, err)
-	_, _, _, attrs, err := r.record(recReparse)
-	must(t, err)
 	var b strings.Builder
 	b.WriteString("$R:")
-	shapeOf(t, r, &b, findAttr(attrs, atIndexRoot, "$R"), findAttr(attrs, atIndexAlloc, "$R"), findAttr(attrs, atBitmap, "$R"), func(key []byte) string {
-		return fmt.Sprintf("%08x/%d/%d", le.Uint32(key), refNum(le.Uint64(key[4:])), le.Uint64(key[4:])>>48)
+	shapeOf(t, r, &b, recReparse, "$R", func(e libntfs.IndexEntry) string {
+		ref := le.Uint64(e.Key[4:])
+		return fmt.Sprintf("%08x/%d/%d", le.Uint32(e.Key), libntfs.FileReferenceEntry(ref), libntfs.FileReferenceSequence(ref))
 	})
 	return b.String()
 }
@@ -309,7 +316,7 @@ func TestIndexGrowsAndShrinks(t *testing.T) {
 	}
 	lists(all...)
 	before := len(d.blocks)
-	ia := nodeOf(must2(v.Node("d"))).rec.find(atIndexAlloc, "$I30")
+	ia := nodeOf(must2(v.Node("d"))).rec.find(libntfs.AttrTypeIndexAllocation, "$I30")
 	for i := 399; i >= 10; i-- {
 		must(t, v.Remove(name(i)))
 	}
@@ -330,7 +337,7 @@ func TestIndexGrowsAndShrinks(t *testing.T) {
 	if len(d.blocks) >= before || lowest < 0 {
 		t.Fatalf("%d blocks after removing 390 of 400 names, %d before; lowest free %d", len(d.blocks), before, lowest)
 	}
-	blk, _, err := v.fs.readRuns(ia.runs, v.fs.blockPos(lowest), indexSize)
+	blk, _, err := v.fs.readRuns(ia.runs, v.fs.blockPos(lowest), libntfs.IndexBlockSize)
 	must(t, err)
 	if !bytes.Contains(blk, utf16le(long)) {
 		t.Errorf("freed block %d no longer holds the names it held", lowest)
@@ -437,23 +444,24 @@ func linkShape(t *testing.T, dev *volume.Device, name string) string {
 	must(t, err)
 	n, err := r.lookup(name)
 	must(t, err)
-	_, _, _, attrs, err := r.record(n.num)
+	rec, err := r.vol.GetMFTEntry(n.num)
 	must(t, err)
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s: attributes", name)
-	for _, a := range attrs {
-		fmt.Fprintf(&b, " %#x", a.typ)
+	for _, a := range rec.Attributes {
+		fmt.Fprintf(&b, " %#x", a.Header.Type)
 	}
-	fmt.Fprintf(&b, ", flags %#x, reparse point %x", le.Uint32(findAttr(attrs, atStdInfo, "").value[32:]), findAttr(attrs, atReparse, "").value)
-	fn := must2(readFileName(findAttr(attrs, atFileName, "").value))
-	fmt.Fprintf(&b, ", $FILE_NAME flags %#x tag %#x", fn.flags, fn.reparse)
+	si := must2(rec.GetStandardInformation())
+	fmt.Fprintf(&b, ", flags %#x, reparse point %x", si.FileAttributes, rec.FindAttribute(libntfs.AttrTypeReparsePoint, "").Resident.Value)
+	fn := must2(rec.FileNames())[0]
+	fmt.Fprintf(&b, ", $FILE_NAME flags %#x tag %#x", fn.FileAttributes, fn.ReparseValue)
 	parent, err := r.lookup(path.Dir(name))
 	must(t, err)
-	es, err := r.indexEntries(parent)
+	es, err := parent.f.ReadDir()
 	must(t, err)
 	for _, e := range es {
-		if e.fn.name == path.Base(name) {
-			fmt.Fprintf(&b, ", in the index %#x tag %#x", e.fn.flags, e.fn.reparse)
+		if !e.Deleted && e.Name == path.Base(name) {
+			fmt.Fprintf(&b, ", in the index %#x tag %#x", e.FileName.FileAttributes, e.FileName.ReparseValue)
 		}
 	}
 	return b.String() + "\n"

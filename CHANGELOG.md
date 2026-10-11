@@ -1180,6 +1180,47 @@ it. No byte an input produces changes.
   libext would clamp it to `MinTime`. The superblock, descriptor and inode
   encoders, the table placement and `Plan` stay in fsagen.
 
+### NTFS read back through libntfs
+
+NTFS images are now read back by libntfs v0.3.5, the owner's own NTFS
+parser. fsagen's 671-line reader in `volume/ntfs/reader.go` becomes an
+adapter of 345 lines over it. No byte an input produces changes.
+
+- **The reader** opens the volume read-only and `Strict`, and lists each
+  directory with `ReadDir`. Strict makes these errors:
+  - a torn record or index block;
+  - an index out of collation order, a block on no boundary or reached
+    twice, a node flag out of step, or a `$BITMAP` that disagrees with the
+    blocks the tree reaches;
+  - an entry whose record is not in use, has another sequence number, or
+    has no `$FILE_NAME` for it in that directory;
+  - a directory flag out of step with the record's `$I30`;
+  - a `$DATA` whose runs do not cover its allocated size.
+
+  `VerifyReparseIndex` checks that `$Extend\$Reparse`'s `$R` files exactly
+  the volume's reparse points, each under its tag. fsagen keeps its name
+  sorting, leaves out the root's system files and names in the DOS
+  namespace alone, and still checks that a reparse point's record carries
+  the reparse flag. libntfs reads a time of 0 as no time; the reader maps
+  it back to 1601, as NTFS reads it. The reader no longer refuses an MFT
+  record size fsagen does not write itself.
+- **The writer** takes these from libntfs:
+  - the record, attribute, flag, namespace, collation, index and `$AttrDef`
+    constants, and `RecordSize` and `IndexBlockSize`;
+  - `ProtectFixup` and `ApplyFixup`, `EncodeRunlist`, `TimeToFiletime` and
+    `FiletimeToTime`;
+  - `DefaultUpCase`, which is the `$UpCase` table it writes and collates
+    names by, and `CollateULong` and `CollateULongs` for `$R`, `$SII` and
+    `$SDH`.
+
+  `volume/ntfs/upcase.go` and fsagen's runlist, fixup and FILETIME codecs
+  are gone. `internal/reparse` keeps only how Windows names a target, and
+  lays out and reads the bytes with libntfs's reparse codecs. Record,
+  attribute and B-tree building, `$Secure`, `$AttrDef`, `Plan` and the
+  operations stay in fsagen.
+- **The index tests** read each node through `ReadIndexRoot`,
+  `ReadIndexBlock` and `IndexBitmap`.
+
 ## v0.2.0 — the bulk corpus becomes answerable for itself (2026-10-02)
 
 Generator version **6**, and the first tagged release whose output differs from

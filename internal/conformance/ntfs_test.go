@@ -92,9 +92,12 @@ func buildNTFS(t *testing.T, fixture, path, partition string) (map[string]ntfsOb
 		o := ntfsObject{object: object{dir: d.IsDir(), ino: m.ID, links: m.Links}, times: m.Times, fn: *m.FileName, streams: map[string]string{}}
 		switch m.Link {
 		case target.LinkSymlink:
-			o.reparse = reparse.Symlink(m.Target)
+			o.reparse, err = reparse.Symlink(m.Target)
 		case target.LinkJunction:
-			o.reparse = reparse.Junction(`C:\` + strings.ReplaceAll(m.Target, "/", `\`))
+			o.reparse, err = reparse.Junction(`C:\` + strings.ReplaceAll(m.Target, "/", `\`))
+		}
+		if err != nil {
+			return err
 		}
 		ours[name] = o
 		if o.reparse != nil {
