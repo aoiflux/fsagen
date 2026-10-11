@@ -23,6 +23,8 @@ require (
 	github.com/Velocidex/pkcs7 v0.0.0-20210524015001-8d1eee94a157 // indirect
 	github.com/Velocidex/yaml/v2 v2.2.8 // indirect
 	github.com/anchore/go-lzo v0.1.0 // indirect
+	github.com/aoiflux/libtable v0.2.3 // indirect
+	github.com/aoiflux/libvhdi v0.4.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/clipperhouse/displaywidth v0.10.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.6.0 // indirect

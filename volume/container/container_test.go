@@ -1,7 +1,6 @@
 package container
 
 import (
-	"bytes"
 	"encoding/binary"
 	"os"
 	"path/filepath"
@@ -9,6 +8,8 @@ import (
 	"time"
 
 	"github.com/aoiflux/fsagen/prng"
+	"github.com/aoiflux/libtable"
+	"github.com/aoiflux/libvhdi"
 )
 
 // The VHD specification's geometry for a 512 MiB disk, and the disk rounded
@@ -26,8 +27,8 @@ func TestVHDGeometry(t *testing.T) {
 	}
 }
 
-// The MBR entry for a partition 1 MiB in: CHS 0/32/33 as fdisk writes it,
-// type 0x0C, the LBA and count, and the signature.
+// The MBR entry for a partition 1 MiB in, as libtable reads it: CHS 0/32/33
+// as fdisk writes it, type 0x0C, the LBA and count, and the disk signature.
 func TestMBR(t *testing.T) {
 	l, _ := Plan(FormatRaw, PartitionMBR, 64<<20)
 	f, err := os.Create(filepath.Join(t.TempDir(), "d.img"))
@@ -35,20 +36,38 @@ func TestMBR(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	if err := WriteMBR(f, l, 0x0C, prng.Root(1)); err != nil {
+	if err := f.Truncate(l.File()); err != nil {
 		t.Fatal(err)
 	}
-	mbr := make([]byte, 512)
-	f.ReadAt(mbr, 0)
-	p := mbr[0x1BE:]
-	if !bytes.Equal(p[1:4], []byte{0x20, 0x21, 0x00}) || p[4] != 0x0C || binary.LittleEndian.Uint32(p[8:]) != 2048 ||
-		binary.LittleEndian.Uint32(p[12:]) != uint32(64<<20/512-2048) || mbr[510] != 0x55 || mbr[511] != 0xAA {
-		t.Errorf("partition entry % x", p[:16])
+	if err := WriteMBR(f, l, libtable.MBRTypeFAT32LBA, prng.Root(1)); err != nil {
+		t.Fatal(err)
+	}
+	tab, err := libtable.Parse(f, uint64(l.File()), libtable.Options{Type: libtable.TypeMBR})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parts []libtable.Partition
+	for _, p := range tab.Partitions {
+		if p.SlotNumber >= 0 {
+			parts = append(parts, p)
+		}
+	}
+	if len(parts) != 1 {
+		t.Fatalf("%d partitions: %+v", len(parts), tab.Partitions)
+	}
+	p := parts[0]
+	if p.FirstCHS != [3]byte{0x20, 0x21, 0x00} || p.TypeCode != uint64(libtable.MBRTypeFAT32LBA) ||
+		tab.ByteOffset(p) != uint64(l.Offset) || tab.ByteSize(p) != uint64(l.Size) || p.Bootable {
+		t.Errorf("partition %+v", p)
+	}
+	sig := binary.LittleEndian.Uint32(prng.Root(1).Derive("disk-signature").Stream().Bytes(4))
+	if tab.DiskSignature != sig || len(tab.Warnings) != 0 {
+		t.Errorf("disk signature %#x, want %#x; warnings %v", tab.DiskSignature, sig, tab.Warnings)
 	}
 }
 
-// A footer's checksum makes the one's complement of its bytes' sum come
-// out, and the footer says what the disk is.
+// libvhdi opens the disk, which it does only when the footer's checksum
+// holds, and reads back what the footer says the disk is.
 func TestVHDFooter(t *testing.T) {
 	l, _ := Plan(FormatVHD, PartitionNone, 64<<20)
 	f, err := os.Create(filepath.Join(t.TempDir(), "d.vhd"))
@@ -56,17 +75,23 @@ func TestVHDFooter(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	if err := WriteFooter(f, l, time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC), prng.Root(1)); err != nil {
+	if err := f.Truncate(l.File()); err != nil {
 		t.Fatal(err)
 	}
-	foot := make([]byte, 512)
-	f.ReadAt(foot, l.Disk)
-	be := binary.BigEndian
-	if string(foot[:8]) != "conectix" || be.Uint32(foot[60:]) != 2 || be.Uint64(foot[48:]) != uint64(l.Disk) || be.Uint32(foot[24:]) != 662774400 {
-		t.Errorf("footer % x", foot[:64])
+	when := time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := WriteFooter(f, l, when, prng.Root(1)); err != nil {
+		t.Fatal(err)
 	}
-	if be.Uint32(foot[64:]) != Checksum(foot) {
-		t.Error("checksum does not match")
+	d, err := libvhdi.OpenVHD(f, l.File())
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, pv := d.Geometry(), d.Provenance()
+	if pv.DiskType != libvhdi.DiskTypeFixed || g.VirtualSize != uint64(l.Disk) || d.FooterRecovered() || len(d.Warnings()) != 0 {
+		t.Errorf("disk %+v %+v, warnings %v", g, pv, d.Warnings())
+	}
+	if [3]int{int(g.Cylinders), int(g.Heads), int(g.SectorsPerTrack)} != l.Geometry || !pv.Created.Equal(when) || pv.CreatorOS != "Wi2k" {
+		t.Errorf("geometry %+v, created %v, OS %q", g, pv.Created, pv.CreatorOS)
 	}
 }
 

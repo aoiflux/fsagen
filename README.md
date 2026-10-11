@@ -2420,7 +2420,7 @@ phishing message to a real gap in a beacon log.
 
 ### Dependencies
 
-Five direct ones, each here for a reason the standard library does not cover.
+Seven direct ones, each here for a reason the standard library does not cover.
 `go mod tidy` is clean, and the whole product builds with `CGO_ENABLED=0`.
 
 | Module                          | Why                                                                                                                                             |
@@ -2430,6 +2430,8 @@ Five direct ones, each here for a reason the standard library does not cover.
 | `github.com/jung-kurt/gofpdf`   | writes the PDFs, with the document metadata pinned so two renders match                                                                         |
 | `golang.org/x/sys`              | `NtCreateFile` and `FILE_BASIC_INFO` on Windows, `statx` on Linux, `Birthtimespec` on the BSDs, and the last-access registry value              |
 | `golang.org/x/text`             | Unicode case folding and NFC normalisation, so the portability check catches names that collide on a case-insensitive or normalising volume     |
+| `github.com/aoiflux/libtable`   | the MBR entry, CHS and partition-type codecs and constants for disk images, from the owner's own partition-table parser                         |
+| `github.com/aoiflux/libvhdi`    | the VHD footer, its geometry, timestamp and checksum codecs, from the owner's own VHD parser                                                    |
 
 **Test-only, in their own module.** `internal/conformance` reads what fsagen
 writes with parsers fsagen did not write, so each binary format is checked

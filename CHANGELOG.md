@@ -1104,6 +1104,24 @@ Deviations from the plan:
   by fsagen's reader, go-ntfs, 7-Zip and ntfs-3g's tools, not against
   libntfs-3g.
 
+### Partition tables and VHD footers from libtable and libvhdi
+
+fsagen now uses the owner's own parsers, libtable v0.2.3 and libvhdi v0.4.1,
+for the MBR and the VHD footer. Before, it carried its own copies of their
+codecs. Both modules are pure Go with no dependencies, and neither raises the
+`go` line. No byte an input produces changes.
+
+- `volume/container` builds its MBR entry with `libtable.MBREntry` and
+  `libtable.CHS`. It takes the offsets, the `0xAA55` signature and the
+  partition types from libtable's constants. Its own `chs` is gone.
+- The VHD footer is a `types.FileFooter`. Its geometry comes from
+  `types.CHSGeometry`, its timestamp from `types.Timestamp`, and its checksum
+  from `types.FooterChecksum`. fsagen's `vhdGeometry`, its epoch and its
+  exported `Checksum` are gone.
+- `volume/container`'s tests read what it writes back through `libtable.Parse`
+  and `libvhdi.OpenVHD`, rather than at hard-coded offsets. libvhdi opens a
+  fixed disk only when its footer checksum holds.
+
 ## v0.2.0 — the bulk corpus becomes answerable for itself (2026-10-02)
 
 Generator version **6**, and the first tagged release whose output differs from

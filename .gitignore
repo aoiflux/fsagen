@@ -7,3 +7,6 @@
 
 # Release binaries and checksums from build.sh / build.ps1.
 /dist/
+
+# Planning prompts for the aoiflux libraries; kept local.
+/plans/

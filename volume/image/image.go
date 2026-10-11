@@ -25,6 +25,7 @@ import (
 	"github.com/aoiflux/fsagen/volume/ext4"
 	"github.com/aoiflux/fsagen/volume/fat"
 	"github.com/aoiflux/fsagen/volume/ntfs"
+	"github.com/aoiflux/libtable"
 )
 
 // The file systems an image can hold.
@@ -205,24 +206,17 @@ func uuid(k prng.Key) [16]byte {
 	return u
 }
 
-// The MBR partition types: FAT32 with LBA addressing, Linux, and NTFS.
-const (
-	partitionFAT32 = 0x0C
-	partitionLinux = 0x83
-	partitionNTFS  = 0x07
-)
-
 func (img *Image) start() error {
 	p := img.p
 	if err := img.f.Truncate(p.Layout.File()); err != nil {
 		return err
 	}
-	kind := byte(partitionFAT32)
+	kind := libtable.MBRTypeFAT32LBA
 	switch p.FS {
 	case FSExt4:
-		kind = partitionLinux
+		kind = libtable.MBRTypeLinux
 	case FSNTFS:
-		kind = partitionNTFS
+		kind = libtable.MBRTypeNTFS
 	}
 	if err := container.WriteMBR(img.f, p.Layout, kind, p.key()); err != nil {
 		return err
