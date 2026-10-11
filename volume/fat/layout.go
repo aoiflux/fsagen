@@ -11,36 +11,19 @@ import (
 	"encoding/binary"
 	"fmt"
 	"time"
+
+	"github.com/aoiflux/libfat"
 )
 
 const (
 	sectorSize      = 512
 	reservedSectors = 32
 	numFATs         = 2
-	rootCluster     = 2
 	fsInfoSector    = 1
 	backupBoot      = 6
-	entrySize       = 32
-	// minClusters is the fewest a FAT32 volume may have: with fewer, every
-	// reader takes it for FAT16.
-	minClusters = 65525
 	// maxClusters is the most whose numbers fit in a FAT32 entry.
 	maxClusters = 0x0FFFFFF5 - 2
-	eoc         = 0x0FFFFFFF
-	mediaFixed  = 0xF8
 )
-
-// Directory entry attributes.
-const (
-	attrReadOnly  = 0x01
-	attrVolumeID  = 0x08
-	attrDirectory = 0x10
-	attrArchive   = 0x20
-	attrLFN       = 0x0F
-)
-
-// deleted marks a free entry that was in use.
-const deleted = 0xE5
 
 // Geometry is where a FAT32 volume keeps what.
 type Geometry struct {
@@ -89,9 +72,9 @@ func Plan(size int64, clusterSize int) (Geometry, error) {
 	clusters := (sectors - reservedSectors - numFATs*fatSz) / spc
 	g := Geometry{Sectors: uint32(sectors), SecPerClus: int(spc), ClusterSize: clusterSize, FATSectors: uint32(fatSz), Clusters: int(clusters)}
 	switch {
-	case clusters < minClusters:
-		need := (minClusters*spc + reservedSectors + numFATs*((minClusters+2)*4+sectorSize-1)/sectorSize) * sectorSize
-		return Geometry{}, fmt.Errorf("a FAT32 volume needs at least %d clusters, and %d bytes of %d-byte clusters make %d: give the volume at least %d MiB, or smaller clusters", minClusters, size, clusterSize, clusters, (need+1<<20-1)>>20)
+	case clusters < libfat.FAT32MinClusters:
+		need := (libfat.FAT32MinClusters*spc + reservedSectors + numFATs*((libfat.FAT32MinClusters+2)*4+sectorSize-1)/sectorSize) * sectorSize
+		return Geometry{}, fmt.Errorf("a FAT32 volume needs at least %d clusters, and %d bytes of %d-byte clusters make %d: give the volume at least %d MiB, or smaller clusters", libfat.FAT32MinClusters, size, clusterSize, clusters, (need+1<<20-1)>>20)
 	case clusters > maxClusters:
 		return Geometry{}, fmt.Errorf("%d clusters are more than FAT32 can number; use larger clusters", clusters)
 	}
@@ -116,7 +99,7 @@ func (g Geometry) clusterOffset(c uint32) int64 {
 // address is The Sleuth Kit's number for the directory entry at off: the
 // entries of the data area counted from 3, root being 2.
 func (g Geometry) address(off int64) int64 {
-	return off/entrySize - g.dataSector()*(sectorSize/entrySize) + 3
+	return off/libfat.DirEntrySize - g.dataSector()*(sectorSize/libfat.DirEntrySize) + 3
 }
 
 // bootSector is the volume's first sector, and its backup's.
@@ -129,21 +112,21 @@ func bootSector(g Geometry, hidden uint32, serial uint32, label string) []byte {
 	b[13] = byte(g.SecPerClus)
 	le.PutUint16(b[14:], reservedSectors)
 	b[16] = numFATs
-	b[21] = mediaFixed
+	b[21] = libfat.MediaFixed
 	le.PutUint16(b[24:], 63)  // sectors per track
 	le.PutUint16(b[26:], 255) // heads
 	le.PutUint32(b[28:], hidden)
 	le.PutUint32(b[32:], g.Sectors)
 	le.PutUint32(b[36:], g.FATSectors)
-	le.PutUint32(b[44:], rootCluster)
+	le.PutUint32(b[44:], libfat.DefaultRootCluster)
 	le.PutUint16(b[48:], fsInfoSector)
 	le.PutUint16(b[50:], backupBoot)
 	b[64] = 0x80 // drive number
 	b[66] = 0x29 // extended boot signature
 	le.PutUint32(b[67:], serial)
 	copy(b[71:82], padLabel(label))
-	copy(b[82:90], "FAT32   ")
-	b[510], b[511] = 0x55, 0xAA
+	copy(b[82:90], libfat.FAT32Signature)
+	le.PutUint16(b[510:], libfat.BootSectorMagic)
 	return b
 }
 
@@ -152,11 +135,11 @@ func bootSector(g Geometry, hidden uint32, serial uint32, label string) []byte {
 func fsInfo(free, next int) []byte {
 	b := make([]byte, sectorSize)
 	le := binary.LittleEndian
-	le.PutUint32(b[0:], 0x41615252)
-	le.PutUint32(b[484:], 0x61417272)
+	le.PutUint32(b[0:], libfat.FSInfoLeadSig)
+	le.PutUint32(b[484:], libfat.FSInfoStructSig)
 	le.PutUint32(b[488:], uint32(free))
 	le.PutUint32(b[492:], uint32(next))
-	le.PutUint32(b[508:], 0xAA550000)
+	le.PutUint32(b[508:], libfat.FSInfoTrailSig)
 	return b
 }
 
@@ -195,46 +178,24 @@ var (
 	MaxTime = time.Date(2107, 12, 31, 23, 59, 59, 990_000_000, time.UTC)
 )
 
-func fatDate(t time.Time) uint16 {
-	return uint16(t.Year()-1980)<<9 | uint16(t.Month())<<5 | uint16(t.Day())
-}
-
-func fatTime(t time.Time) uint16 {
-	return uint16(t.Hour())<<11 | uint16(t.Minute())<<5 | uint16(t.Second()/2)
-}
-
-// tenths is the creation time's 10 ms count past its even second.
-func tenths(t time.Time) byte {
-	return byte(t.Second()%2*100 + t.Nanosecond()/10_000_000)
-}
-
-// decode reads a date, a time and a 10 ms count back; a zero date is no
-// time at all.
-func decode(date, tm uint16, ten byte) time.Time {
-	if date == 0 {
-		return time.Time{}
-	}
-	t := time.Date(int(date>>9)+1980, time.Month(date>>5&0xF), int(date&0x1F), int(tm>>11), int(tm>>5&0x3F), int(tm&0x1F)*2, 0, time.UTC)
-	return t.Add(time.Duration(ten) * 10 * time.Millisecond)
-}
-
 // stamp writes the times into a short entry: the creation time to 10 ms,
 // the write time to 2 s, the access date to the day. Zero times are left.
 func stamp(e []byte, atime, mtime, btime time.Time) {
 	le := binary.LittleEndian
 	if !btime.IsZero() {
-		btime = btime.UTC()
-		e[13] = tenths(btime)
-		le.PutUint16(e[14:], fatTime(btime))
-		le.PutUint16(e[16:], fatDate(btime))
+		date, clock, tenths := libfat.EncodeDateTime(btime)
+		e[13] = tenths
+		le.PutUint16(e[14:], clock)
+		le.PutUint16(e[16:], date)
 	}
 	if !atime.IsZero() {
-		le.PutUint16(e[18:], fatDate(atime.UTC()))
+		date, _, _ := libfat.EncodeDateTime(atime)
+		le.PutUint16(e[18:], date)
 	}
 	if !mtime.IsZero() {
-		mtime = mtime.UTC()
-		le.PutUint16(e[22:], fatTime(mtime))
-		le.PutUint16(e[24:], fatDate(mtime))
+		date, clock, _ := libfat.EncodeDateTime(mtime)
+		le.PutUint16(e[22:], clock)
+		le.PutUint16(e[24:], date)
 	}
 }
 

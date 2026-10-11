@@ -1122,6 +1122,34 @@ codecs. Both modules are pure Go with no dependencies, and neither raises the
   and `libvhdi.OpenVHD`, rather than at hard-coded offsets. libvhdi opens a
   fixed disk only when its footer checksum holds.
 
+### FAT32 read back through libfat
+
+FAT32 images are now read back by libfat v0.3.3, the owner's own FAT parser.
+fsagen's 350-line reader in `volume/fat/reader.go` becomes an adapter over it.
+No byte an input produces changes.
+
+- **The reader** opens the volume with `Strict` and `CacheFAT`, and lists each
+  directory with `ExcludeDeleted`. These are now errors, each located at the
+  record at fault:
+  - a chain that runs into a free cluster or is shorter or longer than its
+    size;
+  - a broken long-name sequence;
+  - a `.` or `..` out of place;
+  - a duplicate name;
+  - FAT copies that differ.
+
+  fsagen keeps its own duplicate-name check by `pathpolicy.FoldKey`, its name
+  sorting, and The Sleuth Kit's entry addresses, now computed from libfat's
+  `Geometry`. The reader no longer refuses a FAT32 layout that fsagen does not
+  write itself.
+- **The writer** takes the directory-entry, attribute, NTRes, long-name,
+  FSInfo and boot-sector constants from libfat. It encodes times with
+  `libfat.EncodeDateTime` and takes long-name checksums from
+  `libfat.LFNChecksum`. fsagen's copies are gone. Planning, 8.3 name
+  generation and long-name entry building stay in fsagen. libfat's
+  `ValidShortName` accepts more than Windows generates, so `names.go` keeps
+  its own rules.
+
 ## v0.2.0 — the bulk corpus becomes answerable for itself (2026-10-02)
 
 Generator version **6**, and the first tagged release whose output differs from

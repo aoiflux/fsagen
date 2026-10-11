@@ -2,7 +2,6 @@ package fat
 
 import (
 	"bytes"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -12,28 +11,28 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf16"
 
 	"github.com/aoiflux/fsagen/pathpolicy"
 	"github.com/aoiflux/fsagen/target"
 	"github.com/aoiflux/fsagen/volume"
+	"github.com/aoiflux/libfat"
 )
 
-// Reader reads a FAT32 volume from disk, knowing nothing of how it was
-// written: the boot sector says where everything is, and every name, time
-// and byte is read from the directories and the first FAT.
+// Reader reads a FAT32 volume from disk through libfat, knowing nothing of
+// how it was written. It opens the volume strict, so a chain that runs into
+// a free cluster or disagrees with its size, a broken long name, a "." or
+// ".." out of place, a duplicate name or FAT copies that differ are errors,
+// not a tolerant reading.
 type Reader struct {
-	dev  *volume.Device
-	g    Geometry
-	fat  []uint32
+	vol  *libfat.Volume
 	root *entryNode
 }
 
 // entryNode is one object as its directory entry describes it.
 type entryNode struct {
+	e        libfat.DirEntry
 	name     string
 	dir, ro  bool
-	first    uint32
 	size     int64
 	times    target.Times
 	addr     int64
@@ -43,148 +42,48 @@ type entryNode struct {
 
 // Open reads the volume on dev.
 func Open(dev *volume.Device) (*Reader, error) {
-	boot := make([]byte, sectorSize)
-	if _, err := dev.ReadAt(boot, 0); err != nil {
-		return nil, err
+	vol, err := libfat.OpenWithOptions(dev, libfat.OpenOptions{CacheFAT: true, Strict: true})
+	if err != nil {
+		return nil, fmt.Errorf("fat: %w", err)
 	}
-	le := binary.LittleEndian
-	if boot[510] != 0x55 || boot[511] != 0xAA || string(boot[82:90]) != "FAT32   " {
-		return nil, errors.New("fat: no FAT32 boot sector")
+	if vol.FATType() != libfat.FATType32 {
+		return nil, fmt.Errorf("fat: a %s volume, not FAT32", vol.FATType())
 	}
-	if le.Uint16(boot[11:]) != sectorSize {
-		return nil, fmt.Errorf("fat: %d-byte sectors are not read", le.Uint16(boot[11:]))
+	r := &Reader{vol: vol, root: &entryNode{dir: true, addr: 2}}
+	root, err := vol.GetRootDirectory()
+	if err != nil {
+		return nil, fmt.Errorf("fat: %w", err)
 	}
-	spc := int(boot[13])
-	g := Geometry{Sectors: le.Uint32(boot[32:]), SecPerClus: spc, ClusterSize: spc * sectorSize, FATSectors: le.Uint32(boot[36:])}
-	if le.Uint16(boot[14:]) != reservedSectors || boot[16] != numFATs || le.Uint32(boot[44:]) != rootCluster || spc == 0 {
-		return nil, errors.New("fat: a layout this reader does not know")
-	}
-	g.Clusters = int((int64(g.Sectors) - g.dataSector()) / int64(spc))
-	raw := make([]byte, int64(g.FATSectors)*sectorSize)
-	if _, err := dev.ReadAt(raw, g.fatOffset(0)); err != nil {
-		return nil, err
-	}
-	r := &Reader{dev: dev, g: g, fat: make([]uint32, g.Clusters+2)}
-	for i := range r.fat {
-		r.fat[i] = le.Uint32(raw[i*4:]) & 0x0FFFFFFF
-	}
-	r.root = &entryNode{dir: true, first: rootCluster, addr: 2}
-	if err := r.load(r.root, "."); err != nil {
+	if err := r.load(r.root, root, "."); err != nil {
 		return nil, err
 	}
 	return r, nil
 }
 
-// chain follows the FAT from first.
-func (r *Reader) chain(first uint32) ([]uint32, error) {
-	var out []uint32
-	for c := first; c >= 2 && c < 0x0FFFFFF8; c = r.fat[c] {
-		if int(c) >= len(r.fat) || len(out) > r.g.Clusters {
-			return nil, fmt.Errorf("fat: the chain from cluster %d is broken", first)
-		}
-		if r.fat[c] == 0 {
-			return nil, fmt.Errorf("fat: the chain from cluster %d runs into free cluster %d", first, c)
-		}
-		out = append(out, c)
-	}
-	return out, nil
+// address is The Sleuth Kit's number for the directory entry at off: the
+// entries of the data area counted from 3, root being 2.
+func (r *Reader) address(off int64) int64 {
+	g := r.vol.Geometry()
+	return off/libfat.DirEntrySize - int64(g.FirstDataSector)*int64(g.BytesPerSector/libfat.DirEntrySize) + 3
 }
 
-// content reads size bytes of the chain from first; a negative size reads
-// every cluster.
-func (r *Reader) content(first uint32, size int64) ([]byte, error) {
-	if first == 0 {
-		if size > 0 {
-			return nil, errors.New("fat: a non-empty file with no cluster")
-		}
-		return nil, nil
-	}
-	chain, err := r.chain(first)
+// load reads directory d, open as f and named p, and every directory under
+// it.
+func (r *Reader) load(d *entryNode, f *libfat.File, p string) error {
+	es, err := f.ReadDirWithOptions(libfat.ReadDirOptions{ExcludeDeleted: true})
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("fat: %s: %w", p, err)
 	}
-	cs := int64(r.g.ClusterSize)
-	if size < 0 {
-		size = int64(len(chain)) * cs
-	}
-	if (size+cs-1)/cs != int64(len(chain)) {
-		return nil, fmt.Errorf("fat: %d bytes in a chain of %d clusters", size, len(chain))
-	}
-	out := make([]byte, size)
-	for i, c := range chain {
-		end := min(int64(i+1)*cs, size)
-		if _, err := r.dev.ReadAt(out[int64(i)*cs:end], r.g.clusterOffset(c)); err != nil {
-			return nil, err
-		}
-	}
-	return out, nil
-}
-
-// load reads directory d, named p, and every directory under it.
-func (r *Reader) load(d *entryNode, p string) error {
-	data, err := r.content(d.first, -1)
-	if err != nil {
-		return fmt.Errorf("%s: %w", p, err)
-	}
-	chain, _ := r.chain(d.first)
 	d.byKey = map[string]*entryNode{}
-	var long []uint16
-	var sum byte
-	want := 0
-	for i := 0; i < len(data)/entrySize; i++ {
-		e := data[i*entrySize : (i+1)*entrySize]
-		if e[0] == 0 {
-			break
-		}
-		if e[0] == deleted {
-			long, want = nil, 0
-			continue
-		}
-		if e[11] == attrLFN {
-			ord := int(e[0] &^ 0x40)
-			if e[0]&0x40 != 0 {
-				long, want, sum = make([]uint16, ord*lfnUnits), ord, e[13]
-			}
-			if ord != want || ord == 0 || e[13] != sum {
-				long, want = nil, 0
-				continue
-			}
-			for k, off := range lfnOffsets {
-				long[(ord-1)*lfnUnits+k] = le16(e[off:])
-			}
-			want--
-			continue
-		}
-		if e[11]&attrVolumeID != 0 {
-			long, want = nil, 0
-			continue
-		}
-		name := shortName(e[:11])
-		if s := name.String(); s == "." || s == ".." {
-			if d == r.root || i > 1 {
-				return fmt.Errorf("%s: a %q entry out of place", p, s)
-			}
-			continue
-		}
-		n := &entryNode{dir: e[11]&attrDirectory != 0, ro: e[11]&attrReadOnly != 0, first: firstCluster(e), size: int64(le32(e[28:]))}
-		n.name = readable(name, e[12])
-		if long != nil && want == 0 && lfnChecksum(name) == sum {
-			if end := slices.Index(long, 0); end >= 0 {
-				long = long[:end]
-			}
-			n.name = string(utf16.Decode(long))
-		}
-		long, want = nil, 0
-		off := int64(i * entrySize)
-		n.addr = r.g.address(r.g.clusterOffset(chain[off/int64(r.g.ClusterSize)]) + off%int64(r.g.ClusterSize))
-		n.times = target.Times{
-			Btime: decode(le16(e[16:]), le16(e[14:]), e[13]),
-			Mtime: decode(le16(e[24:]), le16(e[22:]), 0),
-			Atime: decode(le16(e[18:]), 0, 0),
+	for _, e := range es {
+		n := &entryNode{
+			e: e, name: e.Name, dir: e.IsDirectory, ro: e.Attributes&libfat.AttrReadOnly != 0, size: int64(e.Size),
+			times: target.Times{Btime: e.CreatedAt, Mtime: e.ModifiedAt, Atime: e.AccessedAt},
+			addr:  r.address(e.EntryAbsoluteOffset),
 		}
 		key := pathpolicy.FoldKey(n.name)
 		if _, dup := d.byKey[key]; dup {
-			return fmt.Errorf("%s: two entries named %q", p, n.name)
+			return fmt.Errorf("fat: %s: two entries named %q", p, n.name)
 		}
 		d.byKey[key] = n
 		d.children = append(d.children, n)
@@ -192,34 +91,17 @@ func (r *Reader) load(d *entryNode, p string) error {
 	slices.SortFunc(d.children, func(a, b *entryNode) int { return strings.Compare(a.name, b.name) })
 	for _, c := range d.children {
 		if c.dir {
-			if err := r.load(c, path.Join(p, c.name)); err != nil {
+			cf, err := r.vol.OpenEntry(c.e)
+			if err != nil {
+				return fmt.Errorf("fat: %s: %w", path.Join(p, c.name), err)
+			}
+			if err := r.load(c, cf, path.Join(p, c.name)); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
 }
-
-// readable is a short name with the case its NTRes bits restore.
-func readable(s shortName, bits byte) string {
-	base, ext := strings.TrimRight(string(s[:8]), " "), strings.TrimRight(string(s[8:]), " ")
-	if bits&lowerBase != 0 {
-		base = strings.ToLower(base)
-	}
-	if bits&lowerExt != 0 {
-		ext = strings.ToLower(ext)
-	}
-	if base != "" && base[0] == 0x05 {
-		base = "\xE5" + base[1:]
-	}
-	if ext == "" {
-		return base
-	}
-	return base + "." + ext
-}
-
-func le16(b []byte) uint16 { return binary.LittleEndian.Uint16(b) }
-func le32(b []byte) uint32 { return binary.LittleEndian.Uint32(b) }
 
 func perr(op, name string, err error) error { return &fs.PathError{Op: op, Path: name, Err: err} }
 
@@ -313,7 +195,11 @@ func (r *Reader) ReadFile(name string) ([]byte, error) {
 	if err != nil {
 		return nil, perr("read", name, err)
 	}
-	data, err := r.content(n.first, n.size)
+	f, err := r.vol.OpenEntry(n.e)
+	if err != nil {
+		return nil, perr("read", name, err)
+	}
+	data, err := f.ReadAll()
 	if err != nil {
 		return nil, perr("read", name, err)
 	}

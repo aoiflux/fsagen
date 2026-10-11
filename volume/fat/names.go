@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf16"
+
+	"github.com/aoiflux/libfat"
 )
 
 // A short (8.3) name as a directory entry stores it: eight characters of
@@ -19,13 +21,6 @@ func (s shortName) String() string {
 	}
 	return base + "." + ext
 }
-
-// NTRes bits that say a valid 8.3 name is all lower case, so no long name
-// is needed to keep its case (Windows NT and later).
-const (
-	lowerBase = 0x08
-	lowerExt  = 0x10
-)
 
 // shortIllegal are the printable ASCII characters a short name cannot hold,
 // beyond '.', which only separates the extension.
@@ -97,7 +92,7 @@ func fits(name string) (s shortName, bits byte, mixed, ok bool) {
 		}
 		return true
 	}
-	if !part(base, 0, lowerBase) || !part(ext, 8, lowerExt) {
+	if !part(base, 0, libfat.NTResLowerBase) || !part(ext, 8, libfat.NTResLowerExt) {
 		return s, 0, false, false
 	}
 	if mixed {
@@ -191,24 +186,12 @@ func hex4(c uint16) string {
 	return string(b[:])
 }
 
-// lfnChecksum ties a long name's entries to their short entry.
-func lfnChecksum(s shortName) byte {
-	var sum byte
-	for _, c := range s {
-		sum = (sum>>1 | sum<<7) + c
-	}
-	return sum
-}
-
-// lfnUnits is how many characters each long-name entry holds.
-const lfnUnits = 13
-
 // lfnEntries are the long-name entries for name, in the order they are
 // stored: the last part first, marked 0x40.
-func lfnEntries(name string, s shortName) [][entrySize]byte {
+func lfnEntries(name string, s shortName) [][libfat.DirEntrySize]byte {
 	u := utf16.Encode([]rune(name))
-	n := (len(u) + lfnUnits - 1) / lfnUnits
-	padded := make([]uint16, n*lfnUnits)
+	n := (len(u) + libfat.LFNCharsPerSlot - 1) / libfat.LFNCharsPerSlot
+	padded := make([]uint16, n*libfat.LFNCharsPerSlot)
 	copy(padded, u)
 	for i := len(u); i < len(padded); i++ {
 		if i == len(u) {
@@ -217,23 +200,20 @@ func lfnEntries(name string, s shortName) [][entrySize]byte {
 			padded[i] = 0xFFFF
 		}
 	}
-	sum := lfnChecksum(s)
-	out := make([][entrySize]byte, n)
+	sum := libfat.LFNChecksum(s)
+	out := make([][libfat.DirEntrySize]byte, n)
 	for k := range n {
-		var e [entrySize]byte
+		var e [libfat.DirEntrySize]byte
 		ord := byte(k + 1)
 		if k == n-1 {
-			ord |= 0x40
+			ord |= libfat.LFNLastFlag
 		}
-		e[0], e[11], e[13] = ord, attrLFN, sum
-		part := padded[k*lfnUnits:]
-		for i, off := range lfnOffsets {
+		e[0], e[11], e[13] = ord, libfat.AttrLongName, sum
+		part := padded[k*libfat.LFNCharsPerSlot:]
+		for i, off := range libfat.LFNCharOffsets {
 			e[off], e[off+1] = byte(part[i]), byte(part[i]>>8)
 		}
 		out[n-1-k] = e
 	}
 	return out
 }
-
-// lfnOffsets are where a long-name entry keeps its 13 characters.
-var lfnOffsets = [lfnUnits]int{1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30}

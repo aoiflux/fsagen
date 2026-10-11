@@ -2,6 +2,8 @@ package fat
 
 import (
 	"testing"
+
+	"github.com/aoiflux/libfat"
 )
 
 // The short names Windows 11 gave these names, read with dir /x; the
@@ -51,11 +53,11 @@ func TestNamesThatFit(t *testing.T) {
 		mixed, valid bool
 	}{
 		{"README.TXT", "README.TXT", 0, false, true},
-		{"readme.txt", "README.TXT", lowerBase | lowerExt, false, true},
-		{"README.txt", "README.TXT", lowerExt, false, true},
+		{"readme.txt", "README.TXT", libfat.NTResLowerBase | libfat.NTResLowerExt, false, true},
+		{"README.txt", "README.TXT", libfat.NTResLowerExt, false, true},
 		{"ReadMe.txt", "README.TXT", 0, true, true},
 		{"NOEXT", "NOEXT", 0, false, true},
-		{"a1_$~.c", "A1_$~.C", lowerBase | lowerExt, false, true},
+		{"a1_$~.c", "A1_$~.C", libfat.NTResLowerBase | libfat.NTResLowerExt, false, true},
 		{"toolongname.txt", "", 0, false, false},
 		{"a.text", "", 0, false, false},
 		{"a b.txt", "", 0, false, false},
@@ -81,13 +83,13 @@ func TestLongNameEntries(t *testing.T) {
 	if len(es) != 3 {
 		t.Fatalf("%d entries for 27 characters, want 3", len(es))
 	}
-	sum := lfnChecksum(s)
+	sum := libfat.LFNChecksum(s)
 	for i, e := range es {
 		ord := byte(3 - i)
 		if i == 0 {
 			ord |= 0x40
 		}
-		if e[0] != ord || e[11] != attrLFN || e[13] != sum {
+		if e[0] != ord || e[11] != libfat.AttrLongName || e[13] != sum {
 			t.Errorf("entry %d: ord %#x attr %#x sum %#x", i, e[0], e[11], e[13])
 		}
 	}

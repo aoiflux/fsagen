@@ -5,6 +5,7 @@ go 1.26
 toolchain go1.27.0
 
 require (
+	github.com/aoiflux/libfat v0.3.3
 	github.com/aoiflux/libtable v0.2.3
 	github.com/aoiflux/libvhdi v0.4.1
 	github.com/glebarez/go-sqlite v1.22.0

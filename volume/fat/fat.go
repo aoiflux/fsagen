@@ -9,6 +9,7 @@ import (
 
 	"github.com/aoiflux/fsagen/target"
 	"github.com/aoiflux/fsagen/volume"
+	"github.com/aoiflux/libfat"
 )
 
 // maxEntries is how many entries a directory may hold.
@@ -83,24 +84,24 @@ func Format(dev *volume.Device, o Options, res *volume.Tracker) (*FS, error) {
 		return nil, err
 	}
 	f := &FS{dev: dev, g: g, o: o, alloc: alloc, fat: make([]uint32, g.Clusters+2), res: res}
-	f.fat[0], f.fat[1] = 0x0FFFFFF8, eoc
+	f.fat[0], f.fat[1] = 0x0FFFFFF8, libfat.FAT32EOC
 	// The reserved area and the FATs start zeroed, whatever the file held.
 	if err := dev.Zero(0, g.dataSector()*sectorSize); err != nil {
 		return nil, err
 	}
 	f.root = &node{}
 	f.root.self = &dir{owner: f.root}
-	alloc.Mark(volume.Run{Start: rootCluster, Len: 1})
-	f.root.chain = []uint32{rootCluster}
-	f.fat[rootCluster] = eoc
+	alloc.Mark(volume.Run{Start: libfat.DefaultRootCluster, Len: 1})
+	f.root.chain = []uint32{libfat.DefaultRootCluster}
+	f.fat[libfat.DefaultRootCluster] = libfat.FAT32EOC
 	f.root.self.data = make([]byte, g.ClusterSize)
 	if o.Label != "" {
-		e := f.root.self.data[:entrySize]
+		e := f.root.self.data[:libfat.DirEntrySize]
 		copy(e, padLabel(o.Label))
-		e[11] = attrVolumeID
+		e[11] = libfat.AttrVolumeID
 		stamp(e, time.Time{}, o.Clock, time.Time{})
 	}
-	if err := f.writeSlots(f.root.self, 0, f.g.ClusterSize/entrySize); err != nil {
+	if err := f.writeSlots(f.root.self, 0, f.g.ClusterSize/libfat.DirEntrySize); err != nil {
 		return nil, err
 	}
 	return f, f.writeBoot()
@@ -126,19 +127,19 @@ func rec(n *volume.Node) *node { return n.Sys.(*node) }
 
 // short is n's short entry.
 func (f *FS) short(n *node) []byte {
-	return n.parent.data[n.slot*entrySize : (n.slot+1)*entrySize]
+	return n.parent.data[n.slot*libfat.DirEntrySize : (n.slot+1)*libfat.DirEntrySize]
 }
 
 // slotOffset is where slot i of d lies on the device.
 func (f *FS) slotOffset(d *dir, i int) int64 {
-	at := i * entrySize
+	at := i * libfat.DirEntrySize
 	return f.g.clusterOffset(d.owner.chain[at/f.g.ClusterSize]) + int64(at%f.g.ClusterSize)
 }
 
 // writeSlots puts n entries of d from slot i on disk.
 func (f *FS) writeSlots(d *dir, i, n int) error {
 	for k := i; k < i+n; k++ {
-		if _, err := f.dev.WriteAt(d.data[k*entrySize:(k+1)*entrySize], f.slotOffset(d, k)); err != nil {
+		if _, err := f.dev.WriteAt(d.data[k*libfat.DirEntrySize:(k+1)*libfat.DirEntrySize], f.slotOffset(d, k)); err != nil {
 			return err
 		}
 	}
@@ -147,12 +148,12 @@ func (f *FS) writeSlots(d *dir, i, n int) error {
 
 // taken reports whether a live entry of d other than skip has short name s.
 func taken(d *dir, s shortName, skip *node) bool {
-	for i := range len(d.data) / entrySize {
-		e := d.data[i*entrySize : (i+1)*entrySize]
+	for i := range len(d.data) / libfat.DirEntrySize {
+		e := d.data[i*libfat.DirEntrySize : (i+1)*libfat.DirEntrySize]
 		switch {
 		case e[0] == 0:
 			return false
-		case e[0] == deleted || e[11] == attrLFN || e[11]&attrVolumeID != 0:
+		case e[0] == libfat.DeletedMarker || e[11] == libfat.AttrLongName || e[11]&libfat.AttrVolumeID != 0:
 			continue
 		case skip != nil && skip.parent == d && skip.slot == i:
 			continue
@@ -166,16 +167,16 @@ func taken(d *dir, s shortName, skip *node) bool {
 // entries are the entries that give name to an object in d: its long-name
 // entries when it needs them, then its short entry, which holds only the
 // name and the case bits.
-func entries(d *dir, name string, self *node) ([][entrySize]byte, error) {
+func entries(d *dir, name string, self *node) ([][libfat.DirEntrySize]byte, error) {
 	s, bits, mixed, ok := fits(name)
-	var short [entrySize]byte
+	var short [libfat.DirEntrySize]byte
 	if ok && taken(d, s, self) {
 		return nil, fmt.Errorf("%q is the short name of another file in its directory", name)
 	}
 	if ok && !mixed {
 		copy(short[:], s[:])
 		short[12] = bits
-		return [][entrySize]byte{short}, nil
+		return [][libfat.DirEntrySize]byte{short}, nil
 	}
 	if !ok {
 		var err error
@@ -192,9 +193,9 @@ func entries(d *dir, name string, self *node) ([][entrySize]byte, error) {
 // when no run is long enough.
 func (f *FS) place(d *dir, n int) (int, error) {
 	for {
-		run, total := 0, len(d.data)/entrySize
+		run, total := 0, len(d.data)/libfat.DirEntrySize
 		for i := 0; i < total; i++ {
-			if b := d.data[i*entrySize]; b == 0 || b == deleted {
+			if b := d.data[i*libfat.DirEntrySize]; b == 0 || b == libfat.DeletedMarker {
 				run++
 				if run == n {
 					return i - n + 1, nil
@@ -203,7 +204,7 @@ func (f *FS) place(d *dir, n int) (int, error) {
 				run = 0
 			}
 		}
-		if total+f.g.ClusterSize/entrySize > maxEntries {
+		if total+f.g.ClusterSize/libfat.DirEntrySize > maxEntries {
 			return 0, fmt.Errorf("the directory holds the most entries FAT allows (%d)", maxEntries)
 		}
 		if err := f.grow(d.owner, 1); err != nil {
@@ -233,7 +234,7 @@ func (f *FS) grow(n *node, count int) error {
 			f.fat[n.chain[len(n.chain)-1]] = uint32(u)
 		}
 		n.chain = append(n.chain, uint32(u))
-		f.fat[u] = eoc
+		f.fat[u] = libfat.FAT32EOC
 	}
 	return nil
 }
@@ -251,7 +252,7 @@ func (f *FS) cut(n *node, keep int) {
 	f.alloc.Release(freed)
 	n.chain = n.chain[:keep]
 	if keep > 0 {
-		f.fat[n.chain[keep-1]] = eoc
+		f.fat[n.chain[keep-1]] = libfat.FAT32EOC
 	}
 }
 
@@ -266,16 +267,16 @@ func (f *FS) Create(parent *volume.Node, name string, n *volume.Node) error {
 	}
 	r := &node{lfn: len(es) - 1}
 	short := es[len(es)-1][:]
-	attr := byte(attrArchive)
+	attr := byte(libfat.AttrArchive)
 	if n.Kind == volume.Dir {
-		attr = attrDirectory
+		attr = libfat.AttrDirectory
 		r.self = &dir{owner: r, data: make([]byte, f.g.ClusterSize)}
 		if err := f.grow(r, 1); err != nil {
 			return err
 		}
 	}
 	if n.Mode&0o200 == 0 {
-		attr |= attrReadOnly
+		attr |= libfat.AttrReadOnly
 	}
 	short[11] = attr
 	stamp(short, f.o.Clock, f.o.Clock, f.o.Clock)
@@ -286,7 +287,7 @@ func (f *FS) Create(parent *volume.Node, name string, n *volume.Node) error {
 			parentFirst = p.chain[0]
 		}
 		for i, dots := range []string{".", ".."} {
-			e := r.self.data[i*entrySize : (i+1)*entrySize]
+			e := r.self.data[i*libfat.DirEntrySize : (i+1)*libfat.DirEntrySize]
 			copy(e, short)
 			copy(e[:11], []byte(dots + "          ")[:11])
 			e[12] = 0
@@ -306,13 +307,13 @@ func (f *FS) Create(parent *volume.Node, name string, n *volume.Node) error {
 }
 
 // enter writes es into d's first free run and makes them r's.
-func (f *FS) enter(d *dir, r *node, es [][entrySize]byte) error {
+func (f *FS) enter(d *dir, r *node, es [][libfat.DirEntrySize]byte) error {
 	at, err := f.place(d, len(es))
 	if err != nil {
 		return err
 	}
 	for i, e := range es {
-		copy(d.data[(at+i)*entrySize:], e[:])
+		copy(d.data[(at+i)*libfat.DirEntrySize:], e[:])
 	}
 	r.parent, r.slot, r.lfn = d, at+len(es)-1, len(es)-1
 	return f.writeSlots(d, at, len(es))
@@ -403,7 +404,7 @@ func (f *FS) Commit(vn *volume.Node, truncated bool) error {
 	}
 	setFirst(e, first)
 	binary.LittleEndian.PutUint32(e[28:], n.size)
-	e[11] |= attrArchive
+	e[11] |= libfat.AttrArchive
 	return f.writeSlots(n.parent, n.slot, 1)
 }
 
@@ -412,7 +413,7 @@ func (f *FS) Commit(vn *volume.Node, truncated bool) error {
 func (f *FS) unname(n *node) error {
 	first := n.slot - n.lfn
 	for i := first; i <= n.slot; i++ {
-		n.parent.data[i*entrySize] = deleted
+		n.parent.data[i*libfat.DirEntrySize] = libfat.DeletedMarker
 	}
 	return f.writeSlots(n.parent, first, n.lfn+1)
 }
@@ -420,7 +421,7 @@ func (f *FS) unname(n *node) error {
 // residueEntry describes n's short entry, as a delete or rename left it.
 func (f *FS) residueEntry(n *node) (*target.ResidueEntry, []byte) {
 	off := f.slotOffset(n.parent, n.slot)
-	return &target.ResidueEntry{Type: "fat_dirent", Number: f.g.address(off), Offset: f.dev.Abs(off), Length: entrySize}, f.short(n)
+	return &target.ResidueEntry{Type: "fat_dirent", Number: f.g.address(off), Offset: f.dev.Abs(off), Length: libfat.DirEntrySize}, f.short(n)
 }
 
 // Remove deletes n's entries and frees its clusters; both keep their bytes.
@@ -471,7 +472,7 @@ func (f *FS) Rename(from *volume.Node, _ string, to *volume.Node, newName string
 		if p := rec(to); p != f.root {
 			parentFirst = p.chain[0]
 		}
-		setFirst(n.self.data[entrySize:2*entrySize], parentFirst)
+		setFirst(n.self.data[libfat.DirEntrySize:2*libfat.DirEntrySize], parentFirst)
 		return f.writeSlots(n.self, 1, 1)
 	}
 	return nil
@@ -490,9 +491,9 @@ func (f *FS) Chmod(vn *volume.Node) error {
 	n := rec(vn)
 	e := f.short(n)
 	if vn.Mode&0o200 == 0 {
-		e[11] |= attrReadOnly
+		e[11] |= libfat.AttrReadOnly
 	} else {
-		e[11] &^= attrReadOnly
+		e[11] &^= libfat.AttrReadOnly
 	}
 	return f.writeSlots(n.parent, n.slot, 1)
 }

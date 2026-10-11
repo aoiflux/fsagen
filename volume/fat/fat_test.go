@@ -2,6 +2,7 @@ package fat
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/aoiflux/fsagen/target"
 	"github.com/aoiflux/fsagen/volume"
+	"github.com/aoiflux/libfat"
 )
 
 var clock = time.Date(2022, 6, 1, 8, 0, 0, 0, time.UTC)
@@ -70,7 +72,7 @@ func (v testVolume) finish(t *testing.T) (target.Reader, []target.Residue) {
 func TestPlan(t *testing.T) {
 	g, err := Plan(512<<20, 0)
 	must(t, err)
-	if g.ClusterSize != 4096 || g.Clusters < minClusters || int64(g.FATSectors)*sectorSize/4 < int64(g.Clusters+2) {
+	if g.ClusterSize != 4096 || g.Clusters < libfat.FAT32MinClusters || int64(g.FATSectors)*sectorSize/4 < int64(g.Clusters+2) {
 		t.Errorf("512 MiB: %+v", g)
 	}
 	if _, err := Plan(32<<20, 0); err == nil || !strings.Contains(err.Error(), "MiB") {
@@ -98,13 +100,13 @@ func TestDeleteLeavesEntryAndContent(t *testing.T) {
 	if len(res) != 1 || res[0].Cause != target.ResidueDelete || res[0].Recoverable != target.RecoverableFull || res[0].Entry == nil {
 		t.Fatalf("residue %+v", res)
 	}
-	e := v.raw(t, res[0].Entry.Offset, entrySize)
-	if e[0] != deleted || string(e[1:11]) != "LONGS~1DOC" || e[11] != attrArchive || le32(e[28:]) != uint32(len(data)) {
+	e := v.raw(t, res[0].Entry.Offset, libfat.DirEntrySize)
+	if e[0] != libfat.DeletedMarker || string(e[1:11]) != "LONGS~1DOC" || e[11] != libfat.AttrArchive || binary.LittleEndian.Uint32(e[28:]) != uint32(len(data)) {
 		t.Errorf("deleted short entry % x", e)
 	}
 	// The two long-name entries before it are deleted too.
 	for k := 1; k <= 2; k++ {
-		if lfn := v.raw(t, res[0].Entry.Offset-int64(k*entrySize), entrySize); lfn[0] != deleted || lfn[11] != attrLFN {
+		if lfn := v.raw(t, res[0].Entry.Offset-int64(k*libfat.DirEntrySize), libfat.DirEntrySize); lfn[0] != libfat.DeletedMarker || lfn[11] != libfat.AttrLongName {
 			t.Errorf("long entry %d before: % x", k, lfn)
 		}
 	}
@@ -254,7 +256,7 @@ func TestRenameDirectory(t *testing.T) {
 		t.Fatalf("read after the move: %q %v", data, err)
 	}
 	sub, b := rec(mustNode(t, v, "b/Moved Sub")), rec(mustNode(t, v, "b"))
-	if dotdot := v.raw(t, v.fs.g.clusterOffset(sub.chain[0])+entrySize, entrySize); firstCluster(dotdot) != b.chain[0] {
+	if dotdot := v.raw(t, v.fs.g.clusterOffset(sub.chain[0])+libfat.DirEntrySize, libfat.DirEntrySize); firstCluster(dotdot) != b.chain[0] {
 		t.Errorf(".. points at cluster %d, want %d", firstCluster(dotdot), b.chain[0])
 	}
 	if len(res) != 1 || res[0].Cause != target.ResidueRename {
