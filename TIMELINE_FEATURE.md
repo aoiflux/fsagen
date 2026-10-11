@@ -8,7 +8,7 @@ README.md (*Forensic timelines*); examples are in
 
 | | observed (default) | modelled (`--timeline-source modelled`) |
 |---|---|---|
-| Built from | the output tree, read back after the run | the run's model and ledger; reads nothing from disk |
+| Built from | the output tree, or the finished image, read back after the run | the run's model and ledger; reads nothing from disk |
 | Deleted objects | never (they are gone) | listed, `name (deleted)`, with the times they had when deleted |
 | Inode column | NTFS MFT record number, Unix inode number | the ledger's object number |
 | Mode | as the file system reports it (on Windows, written as TSK does for NTFS) | the mode fsagen requests, before any umask |
@@ -27,11 +27,15 @@ agree (`TestModelledMatchesObserved`).
 `timeline.Entry` has a path (slash-separated, relative to the root), a type
 (`file`, `dir`, `link`, `stream`, `other`), a stream name for streams, mode,
 size, UID, GID, inode, four times (access, modification, metadata change,
-birth) each of which may be unknown (zero), an MD5 ("" when not computed) and
-a deleted flag.
+birth) each of which may be unknown (zero), an MD5 ("" when not computed), a
+deleted flag, a link's target, a file's link count, and a `$FILE_NAME` flag.
 
 A named stream is an entry of its own, carrying its file's times, as NTFS keeps
-them per file and as The Sleuth Kit lists them. The root is not an entry.
+them per file and as The Sleuth Kit lists them. So is a name's NTFS
+`$FILE_NAME`, carrying that attribute's times, where the run sets them (an
+NTFS image): `path ($FILE_NAME)` in the bodyfile, MACB and text formats, the
+type `filename` in CSV, `"file_name": true` in JSON lines. The root is not an
+entry.
 
 ## Where each time comes from
 
@@ -40,8 +44,10 @@ them per file and as The Sleuth Kit lists them. The root is not an entry.
 | Windows | `GetFileInformationByHandleEx(FileBasicInfo)` on a handle opened relative to the parent, itself opened through the root | same call (`CreationTime`) | `sandbox/times_windows.go` |
 | Linux | `statx` relative to the parent directory's descriptor, not following a final link | `statx` when it sets `STATX_BTIME`, else unknown | `sandbox/times_linux.go` |
 | macOS, FreeBSD, NetBSD | `lstat` through the root | `Birthtimespec` when not negative | `sandbox/times_bsd.go` |
+| A disk image | the image's own reader, over libfat, libext or libntfs (FAT keeps no change time) | the same reader | `volume/` |
 
-The macOS and BSD row is built and vetted, never run.
+The macOS and FreeBSD builds are compiled and vetted by the gate, never run;
+NetBSD is not built.
 
 No time is ever copied into another's column. The file ID comes from
 `FileIdInfo` on Windows (the low 48 bits of the file reference on NTFS: the MFT
@@ -53,7 +59,9 @@ Every directory listing and every digest goes through a handle on which access
 time updates are suspended: `SetFileTime` with an access time of all ones on
 Windows (for files, directories and named streams), `O_NOATIME` on Linux when
 the caller owns the file. Metadata is read with calls that do not touch access
-times. The walk goes through the sandbox, so it cannot leave the root.
+times. On a live volume the walk goes through the sandbox, so it cannot leave
+the root; on an image it goes through the image's reader (`timeline.GenerateFrom`
+takes any `target.Reader`), which touches nothing.
 
 Anything the walk cannot read (a directory it cannot list, a file another
 process holds open without sharing) is an error that names the path. The
@@ -94,8 +102,9 @@ each timeline finding in the audit brief to the test that closes it.
   fsagen uses. The Sleuth Kit reads the size of the directory index instead.
 - Times in the bodyfile are whole seconds, as in TSK's format; the other
   formats keep fractions.
-- NTFS `$FILE_NAME` times are never read or set; TSK's `fls` lists them as
-  separate `($FILE_NAME)` records.
+- On a live volume, NTFS `$FILE_NAME` times are never read or set; TSK's
+  `fls` lists them as separate `($FILE_NAME)` records. An NTFS image sets and
+  reads them.
 - An observed timeline shows whatever else happened to the output after the
   run: Windows Search adds an `OECustomProperty` stream to `.eml` files in
   indexed folders, and anything that reads a file may move its access time.

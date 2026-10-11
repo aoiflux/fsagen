@@ -1,8 +1,8 @@
 # Timeline examples
 
 Generate a scenario and write a timeline of it in one command. The timeline file
-must lie outside the output directory. See README.md, *Forensic Timeline
-Generation*, for what each format holds.
+must lie outside the output directory. See README.md, *Forensic timelines*,
+for what each format holds.
 
 ## Formats
 

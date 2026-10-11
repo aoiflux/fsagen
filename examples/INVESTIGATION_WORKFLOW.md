@@ -58,12 +58,23 @@ mactime -b apt-evidence.body -d -y -z UTC 2024-09-01T00:00:00..2024-09-01T00:03:
 ### Step 4: Score a Tool
 
 Run the tool under test on `./apt-investigation` (or on an image of it) and
-compare what it reports with `apt-investigation.fsagen/answer-key.jsonl`:
-every file created, modified, renamed and deleted, every stream, every
-timestomp, and every file that ends with its modification time before its
-creation time. fsagen's tests read its bodyfile with `mactime`, and it has been
-compared by hand with `fls` on ext4 and NTFS images; it has not been tested
-with other tools.
+let `fsagen diff-oracle` score what it reports against what the run made:
+
+```bash
+fls -r -m / apt.img > fls.body
+fsagen diff-oracle --meta apt-investigation.fsagen \
+  --model apt-intended.body --scorecard score.json fls.body
+```
+
+It scores the names present, the deleted entries, the streams, every time,
+the digests and the links, with precision, recall and F1 for each, and the
+tool's line number for everything it missed, made up or got wrong. `--model`
+takes the modelled timeline from Step 2, which supplies the times the ledger
+does not record, such as directories'. It reads The Sleuth Kit's bodyfile,
+Plaso's l2tcsv, dynamic CSV and JSON lines. `answer-key.jsonl`, beside the
+output, lists what a tool should find: every file created, modified, renamed
+and deleted, every stream and every timestomp. See the README, _Scoring a
+tool: diff-oracle_.
 
 ### Step 5: Analyze Patterns
 
@@ -117,7 +128,7 @@ from machine to machine):
 Path,Stream,Type,Size,Mode,UID,GID,Inode,Accessed,Modified,Changed,Born,MD5,Deleted
 users/alice/AppData/Local/Temp/wupdmgr32.exe,,file,8704,r/rrwxrwxrwx,0,0,4085524,2024-09-01T00:00:00Z,2024-09-01T00:00:00Z,2024-09-01T00:00:00Z,2024-09-01T00:00:00Z,5afe847345ec60a303e2af313e1fff43,
 users/alice/AppData/Local/Temp/wupdmgr32.exe,Zone.Identifier,stream,26,r/rrwxrwxrwx,0,0,4085524,2024-09-01T00:00:00Z,2024-09-01T00:00:00Z,2024-09-01T00:00:00Z,2024-09-01T00:00:00Z,fbccf14d504b7b2dbcb5a5bda75bd93b,
-users/alice/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/WindowsUpdate.lnk,,file,941,r/rrwxrwxrwx,0,0,4085579,2024-09-01T00:02:00Z,2024-08-15T10:00:00Z,2024-09-01T00:02:00Z,2024-09-01T00:02:00Z,64e1c2aa0924594f44b2dfe658b62350,
+users/alice/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/WindowsUpdate.lnk,,file,941,r/rrwxrwxrwx,0,0,4085579,2024-09-01T00:02:00Z,2024-08-15T10:00:00Z,2024-09-01T00:02:00Z,2024-09-01T00:02:00Z,ca48b43df804dcd424f76b2b5c4ac80f,
 ...
 ```
 

@@ -38,8 +38,8 @@ var inferredFormats = map[string]spec.Format{
 }
 
 // refusedExtensions promise a format fsagen still cannot build. Refusing is
-// the whole point: a file named .xlsx holding random text would be reported
-// as a corrupt spreadsheet by every tool that opened it.
+// the whole point: a file named .pptx holding random text would be reported
+// as a corrupt presentation by every tool that opened it.
 var refusedExtensions = map[string]string{
 	".pptx": "an OOXML presentation",
 	".gif":  "a GIF image", ".bmp": "a BMP image", ".mov": "a QuickTime video",

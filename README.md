@@ -95,8 +95,9 @@ is recorded rather than silently dropped.
 - `archive` zips what the scenario staged, and `edit` cuts lines back out of a
   log
 - All four timestamps (access, modification, change, creation) taken from the
-  scenario on Windows NTFS, access and modification elsewhere; set, then settled
-  and verified after the last operation (see _Timestamps_)
+  scenario on Windows NTFS and in ext4 and NTFS images (FAT images keep all but
+  the change time), access and modification elsewhere; set, then settled and
+  verified after the last operation (see _Timestamps_)
 - Forensic timelines in The Sleuth Kit's bodyfile, a mactime-style MACB listing,
   CSV, JSON lines, Timesketch JSON lines and text, with four times per entry
   and every NTFS stream;
@@ -105,7 +106,8 @@ is recorded rather than silently dropped.
 - A ledger of every operation and an answer key of what a tool should find,
   beside the output
 - `fsagen diff-oracle` scores what a forensic tool reports (a Sleuth Kit
-  bodyfile, Plaso's l2tcsv, dynamic CSV or JSON lines) against what the run
+  bodyfile, Plaso's l2tcsv, dynamic CSV or JSON lines, or one of fsagen's own
+  timelines) against what the run
   made: names, deleted entries, streams, times, digests, links and NTFS
   `$FILE_NAME` times, with precision, recall and F1 per category and a JSON
   scorecard
@@ -159,8 +161,8 @@ for your shell with the version to build. Both write to `dist/` and produce the
 same `SHA256SUMS` for the same version and toolchain:
 
 ```sh
-./build.sh v0.2.0       # POSIX
-.\build.ps1 v0.2.0      # Windows
+./build.sh v0.3.0       # POSIX
+.\build.ps1 v0.3.0      # Windows
 ```
 
 ```text
@@ -219,6 +221,7 @@ generator:
 
 ```pwsh
 fsagen [OPTIONS] <output-path>
+fsagen [OPTIONS] --image FILE --image-fs FS --image-size SIZE
 ```
 
 **Options:**
@@ -264,6 +267,10 @@ fsagen [OPTIONS] <output-path>
   larger than N bytes (default: hash everything)
 - `--generate-schema` - Write JSON schemas for manifests and playbooks and exit
   (`--schema-out DIR`, default `schemas`)
+- `--image FILE`, `--image-fs fat32|ext4|ntfs`, `--image-size SIZE` - Write
+  into a disk image instead of a directory, with `--partition`,
+  `--cluster-size`, `--image-label`, `--image-time` and `--alloc` to shape it;
+  see _Disk images_
 - `--version` - Print the module version, generator version and build
 
 **Exit status:** 0 success, 1 generation failed, 2 command-line error.
@@ -441,7 +448,7 @@ beside any other
 
 | Field                                 | Meaning                                                                                                                                                                                                                                                                                                                                       |
 | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `atime` `mtime` `ctime` `crtime`      | RFC 3339 access, modification, change and creation (birth) times, fractions of a second kept. They override what the action would otherwise set (see _Timestamps_). `ctime` needs Windows on NTFS or ReFS and `crtime` Windows; elsewhere either is a pre-flight error unless `--on-unsupported=skip`, which drops the field and records that |
+| `atime` `mtime` `ctime` `crtime`      | RFC 3339 access, modification, change and creation (birth) times, fractions of a second kept. They override what the action would otherwise set (see _Timestamps_). `ctime` needs Windows on NTFS or ReFS, or an ext4 or NTFS image, and `crtime` Windows or an image; elsewhere either is a pre-flight error unless `--on-unsupported=skip`, which drops the field and records that |
 | `stream`                              | ADS stream name (for the `ads` action, Windows-only)                                                                                                                                                                                                                                                                                          |
 | `zone_id`, `host_url`, `referrer_url` | for the `motw` action (Windows-only)                                                                                                                                                                                                                                                                                                          |
 
@@ -1045,14 +1052,14 @@ part of the answer key.
   `--clean`, and only then. `--into-existing` is refused.
 - The run's records go to `<image>.fsagen`. `run-manifest.json` says
   `"target": "image"`, describes the image (`fs`, `format`, `partition`,
-  `partition_offset`, `size`, `cluster_size`, `serial` or `uuid`, `alloc`)
-  and gives its `image_sha256`.
+  `partition_offset`, `size`, `cluster_size`, `serial` or `uuid`, `label`,
+  `time`, `alloc`, and for FAT `fat_time_zone`) and gives its `image_sha256`.
 
 **FAT32** (`--image-fs fat32`) is laid out as Windows formats and writes it:
 - **Format.** A 32-sector reserved area holds the boot sector, FSInfo and
   their backups at sectors 6 and 7. Two FATs follow, sized by Microsoft's
   formula, then the root directory in cluster 2. Clusters default to Windows'
-  size for the volume: 512 bytes up to 64 MiB, 4 KiB from 256 MiB to 8 GiB.
+  size for the volume: 512 bytes up to 64 MiB, 4 KiB above 256 MiB to 8 GiB.
   `--cluster-size` overrides the default. A volume with fewer than 65,525
   clusters is refused, as FAT32 must have that many.
 - **Names.** Every name that needs a long name gets one, and its short name
@@ -1264,9 +1271,11 @@ Slack on an image is written into the cluster itself and recorded
 `verified: true` (see _Slack_).
 
 **How it is checked.**
-- **During the run.** Every run is verified and digested through fsagen's own
-  parser of the file system, which reads the finished image and knows
-  nothing of how it was written; ext4's checks every checksum it passes.
+- **During the run.** Every run is verified and digested through a reader
+  of the file system that knows nothing of how it was written: libfat, libext
+  or libntfs, opened strict, so every FAT chain and long name, every ext4
+  checksum and every NTFS update sequence, index and bitmap it passes is
+  checked.
   Every time the run controls is compared, to the file system's resolution.
 - **Every example.** Each example a file system can hold makes an image whose
   `SHA256SUMS` and ledger are, byte for byte, those of the same run in
@@ -1443,7 +1452,9 @@ fsagen produces byte-identical:
 2. set of relative paths;
 3. `--dry-run` listing (with each operation's intended times), `ledger.jsonl`,
    `answer-key.jsonl`, `mitre-layer.json` and `run-manifest.json`;
-4. the modelled timeline (`--timeline-source modelled`), in every format.
+4. the modelled timeline (`--timeline-source modelled`), in every format;
+5. with `--image`, the image file itself (`image_sha256`): every byte of it is
+   fsagen's, so it is the same on every platform.
 
 This holds on every platform, for every operation the platform supports. Which
 operations were skipped as unsupported is recorded, and follows from the
@@ -2346,9 +2357,10 @@ What it does:
 
 - Creates a directory fan-out up to `--depth` with `--bulk` sub-branches per
   level
-- Populates each level with one file of every type in _File formats_ (txt, docx,
-  png, jpg, pdf, mp4, csv, json, xml, html, log, reg, zip, exe, jsonl, syslog,
-  md, eml, mbox, a Chrome profile and a Firefox one)
+- Populates each level with `--bulk` files of every kind _Bulk mode_ lists,
+  under _File formats_: documents, data, logs, media, archives, email, browser
+  profiles, and the Windows and Linux artefacts (.lnk, prefetch, .evtx,
+  `NTUSER.DAT`, `wtmp`, `audit.log`, .docm, .xlsm)
 - Draws names and contents from `--seed`, reproducibly (see _Determinism
   contract_); dates inside files count from `--bulk-start`
 
@@ -2383,7 +2395,8 @@ permutation of the old before believing it.
 Everything a run writes and reads back goes through the interfaces in
 `target/`: a live directory (`sandbox`) is one target, and a disk image
 (`volume/`) is another. A `volume.Volume` keeps the tree as the scenario sees
-it and hands every change to a driver (`volume/fat`), which writes it through
+it and hands every change to a driver (`volume/fat`, `volume/ext4`,
+`volume/ntfs`), which writes it through
 to the image as its file system would and, once finished, reads the image
 back. FAT32, ext4 and NTFS are read back through libfat, libext and libntfs,
 opened strict, so a chain, a long name, a FAT copy, a checksum, a block map,
@@ -2413,7 +2426,7 @@ phishing message to a real gap in a beacon log.
 4. Tag the commit you are releasing, and pass that tag to the build script. The
    version you pass names every asset and is stamped into the binaries, so
    `fsagen --version` reports the release rather than a pseudo-version.
-5. `./build.sh v0.2.0` or `.\build.ps1 v0.2.0` — six binaries and a
+5. `./build.sh v<version>` or `.\build.ps1 v<version>` — six binaries and a
    `SHA256SUMS` into `dist/`. Both produce the same checksums for the same
    version and toolchain, so it does not matter which one runs; each warns if
    the commit is not tagged, or is tagged as something else.

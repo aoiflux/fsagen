@@ -1,6 +1,6 @@
-// Package timeline describes a tree as a forensic timeline, in five formats:
-// CSV, text, The Sleuth Kit's bodyfile, a mactime-style MACB listing and
-// JSON lines.
+// Package timeline describes a tree as a forensic timeline, in six formats:
+// CSV, text, The Sleuth Kit's bodyfile, a mactime-style MACB listing, JSON
+// lines and Timesketch's JSON lines.
 //
 // A timeline has one of two sources. An observed timeline (Generate) is read
 // back from the file system after the run; it is what a tool examining the

@@ -5,10 +5,11 @@
 // can be The Sleuth Kit's bodyfile (fls -m), Plaso's l2tcsv, dynamic CSV or
 // JSON lines, or one of fsagen's own timelines.
 //
-// Six categories are scored, each with true and false positives and
+// Seven categories are scored, each with true and false positives and
 // negatives: the names present, the deleted entries, the named streams, the
-// times of every entry found, the digests the tool computed, and links
-// (hard-linked names sharing an inode, where symlinks and junctions point).
+// times of every entry found, the digests the tool computed, links
+// (hard-linked names sharing an inode, where symlinks and junctions point),
+// and the times of each name's NTFS $FILE_NAME.
 package oracle
 
 import (
@@ -422,14 +423,15 @@ func printUsage(w io.Writer) {
 	fmt.Fprintf(w, `Usage: fsagen diff-oracle --meta DIR [OPTIONS] <tool-output>
 
 Score what a forensic tool reports about a generated tree against what fsagen
-made: the names present, deleted entries, named streams, times, digests and
-links. <tool-output> is a file, or - for standard input.
+made: the names present, deleted entries, named streams, times, digests,
+links and $FILE_NAME times. <tool-output> is a file, or - for standard input.
 
   --meta DIR             the run's sidecar directory (<output>.fsagen); required
   --format F             %s
                          (default: detected from the first line)
   --model FILE           a modelled timeline of the same run (fsagen
                          --timeline-source modelled), for directory times
+                         and every name's $FILE_NAME times
   --strip-prefix P       the path the tool gives the output root (default:
                          detected, as the prefix most paths share)
   --time-tolerance D     how far a time may be off and still match, such as

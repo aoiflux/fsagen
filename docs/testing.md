@@ -126,7 +126,7 @@ file and in the README is a test that still exists.
 
 | Finding | What it was | Verified by |
 |---|---|---|
-| F-GEN-11 | Unmaintained or heavyweight dependencies | the gate runs `go mod tidy -diff`; the README says what each of the five direct dependencies is for |
+| F-GEN-11 | Unmaintained or heavyweight dependencies | the gate runs `go mod tidy -diff`; the README says what each of the ten direct dependencies is for |
 
 ## Packaging
 
@@ -177,9 +177,10 @@ recovered from the line again.
 The brief left image output as a follow-on (D-7), with NTFS to be made on a
 scratch volume and its times patched in place through aoiflux/libntfs. The
 roadmap that took it up supersedes that. Every image is built byte by byte
-in pure Go, NTFS included, so there is no scratch volume and no libntfs
-dependency. FAT32 came first, then ext4, then NTFS, formatted as mkntfs
-formats it.
+in pure Go, NTFS included, so there is no scratch volume. libntfs, like
+libfat and libext, now reads each image back and supplies constants and
+codecs; the writers are fsagen's own. FAT32 came first, then ext4, then NTFS,
+formatted as mkntfs formats it.
 
 | What | Verified by |
 |---|---|
@@ -244,10 +245,10 @@ name.
 
 ## What the consumer asked for
 
-The twelve requirements `plan.json` records. Each is checked against
-`testdata/acceptance/quilldrop-lite.playbook.yaml` by its own subtest of
-`TestConsumerAcceptance`, named for the requirement, and again by a
-narrower test of the mechanism behind it.
+The twelve requirements `plan.json` records. Each of the first eleven is
+checked against `testdata/acceptance/quilldrop-lite.playbook.yaml` by its own
+subtest of `TestConsumerAcceptance`, named for the requirement, and again by a
+narrower test of the mechanism behind it; CR-12 has no test, as its row says.
 
 | Requirement | Need | Verified by |
 |---|---|---|
@@ -300,6 +301,6 @@ The row still says "no test": nothing in the suite checks this, since it depends
 on GitHub serving the tag rather than on anything in the tree.
 
 If 62d759c and 7accc8d are ever tagged for the historical record, they must not
-get semver names above v0.1.0 — a non-semver name, or any name below the current
-release, keeps `latest` resolving to a commit whose `go.mod` declares the right
-path.
+get a semver name above the current release — a non-semver name, or any name
+below the current release, keeps `latest` resolving to a commit whose `go.mod`
+declares the right path.
