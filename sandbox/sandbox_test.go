@@ -103,7 +103,7 @@ func TestStreams(t *testing.T) {
 	if err := fsys.WriteFile("implant.exe", []byte("MZ"), FileMode); err != nil {
 		t.Fatal(err)
 	}
-	if err := fsys.WriteStream("implant.exe", "quill", []byte("hidden")); err != nil {
+	if err := fsys.WriteStream("implant.exe", "extra", []byte("hidden")); err != nil {
 		t.Fatal(err)
 	}
 	if err := fsys.WriteStream("implant.exe", "a b", []byte("12345")); err != nil {
@@ -113,10 +113,10 @@ func TestStreams(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(streams) != 2 || streams[0] != (Stream{Name: "a b", Size: 5}) || streams[1] != (Stream{Name: "quill", Size: 6}) {
+	if len(streams) != 2 || streams[0] != (Stream{Name: "a b", Size: 5}) || streams[1] != (Stream{Name: "extra", Size: 6}) {
 		t.Errorf("Streams = %+v", streams)
 	}
-	if data, err := fsys.ReadStream("implant.exe", "quill"); err != nil || string(data) != "hidden" {
+	if data, err := fsys.ReadStream("implant.exe", "extra"); err != nil || string(data) != "hidden" {
 		t.Errorf("ReadStream = %q, %v", data, err)
 	}
 	if base, _ := fsys.ReadFile("implant.exe"); string(base) != "MZ" {

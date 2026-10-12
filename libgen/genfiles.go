@@ -475,8 +475,8 @@ func bulkEmail(s *prng.Stream, date time.Time, subject string) email.Options {
 	body := s.Text(bulkEmailBodyLen)
 	return email.Options{
 		Spec: spec.EmailSpec{
-			From:      "alice@example.com",
-			To:        []string{"bob@example.com"},
+			From:      "sender@example.com",
+			To:        []string{"recipient@example.com"},
 			Subject:   subject,
 			Date:      date.Format(time.RFC3339),
 			MessageID: id,

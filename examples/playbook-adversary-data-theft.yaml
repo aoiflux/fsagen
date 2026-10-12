@@ -1,7 +1,7 @@
 start: "2021-06-01T09:00:00Z"
 actors:
   - name: intruder
-    base: users/alice
+    base: users/user1
 
 steps:
   # Stage documents in user folder

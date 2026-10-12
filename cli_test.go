@@ -281,7 +281,7 @@ steps:
   - actor: u
     actions:
       - { action: create, path: dl.exe, content: MZ, id: dl }
-      - { action: ads, ref: dl, stream: quill }
+      - { action: ads, ref: dl, stream: extra }
       - { action: motw, ref: dl, zone_id: 3, host_url: 'http://evil.test/dl.exe' }
       - { action: create, path: after.txt, content_len: 64 }
 `

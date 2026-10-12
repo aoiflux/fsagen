@@ -36,7 +36,7 @@ grep deleted intended.body
 ```
 
 ```
-ace5141c8952f9c46b6c174b58f3c2da|/users/alice/AppData/Local/Temp/creds-0.txt (deleted)|16|r/rrw-r--r--|0|0|126|1725149100|1725149100|1725149100|1725149100
+fa64417dd2612f3d6edea26d32dac5c0|/users/user1/AppData/Local/Temp/creds-0.txt (deleted)|16|r/rrw-r--r--|0|0|126|1725149100|1725149100|1725149100|1725149100
 ```
 
 (Times the platform cannot set are 0 there: on Linux, the change and creation

@@ -84,6 +84,7 @@ const (
 	FormatMP4           Format = "mp4"
 	FormatChromeHistory Format = "chrome_history"
 	FormatFirefoxPlaces Format = "firefox_places"
+	FormatChromeCookies Format = "chrome_cookies"
 	FormatLNK           Format = "lnk"
 	FormatPrefetch      Format = "prefetch"
 	FormatEvtx          Format = "evtx"
@@ -150,6 +151,7 @@ type Operation struct {
 	Vba     *VbaSpec     `yaml:"vba" json:"vba"`         // the inert macro of format: docm or xlsm
 	Pe      *PeSpec      `yaml:"pe" json:"pe"`           // for format: pe
 	History *HistorySpec `yaml:"history" json:"history"` // for format: chrome_history or firefox_places
+	Cookies *CookiesSpec `yaml:"cookies" json:"cookies"` // for format: chrome_cookies
 	Lnk     *LnkSpec     `yaml:"lnk" json:"lnk"`         // for format: lnk
 	// Prefetch is for format: prefetch, a Windows prefetch file.
 	Prefetch *PrefetchSpec `yaml:"prefetch" json:"prefetch"`
@@ -505,6 +507,10 @@ type HistoryVisit struct {
 	// FromVisit is the 1-based position in this list of the visit this one
 	// came from. Zero means none.
 	FromVisit int `yaml:"from_visit" json:"from_visit"`
+	// Redirect says the visit was not navigated to but redirected to, from
+	// its from_visit: server (an HTTP 3xx) or client (a meta refresh or a
+	// script). Empty means an ordinary navigation.
+	Redirect string `yaml:"redirect" json:"redirect"`
 }
 
 // HistoryDownload is one completed download.
@@ -516,6 +522,44 @@ type HistoryDownload struct {
 	ReceivedBytes int64  `yaml:"received_bytes" json:"received_bytes"`
 	TotalBytes    int64  `yaml:"total_bytes" json:"total_bytes"`
 	MimeType      string `yaml:"mime_type" json:"mime_type"`
+	// URLChain is every URL the download was requested from, first to last,
+	// redirects included; the last is url. Defaults to url alone.
+	URLChain []string `yaml:"url_chain" json:"url_chain"`
+	// Referrer, TabURL and TabReferrerURL are the page that linked to the
+	// download, the page the tab showed, and the page that tab came from.
+	// Referrer and TabURL default to url; TabReferrerURL to none.
+	Referrer       string `yaml:"referrer" json:"referrer"`
+	TabURL         string `yaml:"tab_url" json:"tab_url"`
+	TabReferrerURL string `yaml:"tab_referrer_url" json:"tab_referrer_url"`
+}
+
+// CookiesSpec is what a Chromium cookie jar (the profile's "Cookies" file)
+// holds.
+type CookiesSpec struct {
+	// Plaintext writes each value into the value column. By default it is
+	// encrypted, as Chrome stores it: value is empty and encrypted_value holds
+	// opaque bytes no tool can decrypt without the profile's key.
+	Plaintext bool           `yaml:"plaintext" json:"plaintext"`
+	Entries   []CookieRecord `yaml:"entries" json:"entries"`
+}
+
+// CookieRecord is one cookie.
+type CookieRecord struct {
+	// Host is the cookie's domain as Chrome stores it: a leading dot for a
+	// cookie every subdomain receives, none for a host-only cookie.
+	Host  string `yaml:"host" json:"host"`
+	Name  string `yaml:"name" json:"name"`
+	Value string `yaml:"value" json:"value"`
+	Path  string `yaml:"path" json:"path"` // default /
+	// Created, Expires and LastAccess are RFC 3339. Created defaults to the
+	// operation time and LastAccess to Created; no Expires makes a session
+	// cookie.
+	Created    string `yaml:"created" json:"created"`
+	Expires    string `yaml:"expires" json:"expires"`
+	LastAccess string `yaml:"last_access" json:"last_access"`
+	Secure     bool   `yaml:"secure" json:"secure"`
+	HTTPOnly   bool   `yaml:"httponly" json:"httponly"`
+	SameSite   string `yaml:"samesite" json:"samesite"` // unspecified (default), none, lax or strict
 }
 
 // ArchiveSpec selects what goes into an archive and how.

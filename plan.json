@@ -6,7 +6,7 @@
         "title": "fsagen: correctness, determinism and forensic-fidelity overhaul",
         "target_repository": "https://github.com/aoiflux/fsagen",
         "baseline_commit": "62d759c ('deps updated, project is fsagen'; Go pseudo-version v0.0.0-20260710120947-62d759c50547), 19 commits, no tags",
-        "produced_by": "an audit run from the Mutant repository, which consumes fsagen output for its QUILLDROP DFIR workshop (examples/workshop in Mutant)",
+        "produced_by": "an audit run from the Mutant repository, which consumes fsagen output for its DFIR workshop (examples/workshop in Mutant)",
         "how_to_use": "Paste this whole file into a Claude Code session opened at the root of an fsagen checkout, in plan mode. It is a brief for a planner, not a patch."
     },
     "role_and_mode": {
@@ -94,8 +94,8 @@
             }
         ],
         "primary_consumer": {
-            "name": "Mutant QUILLDROP workshop (Mutant repo, examples/workshop)",
-            "how_it_uses_fsagen": "fsagen --seed 88412 --playbook quilldrop.playbook.yaml --timeline case_quilldrop.body case_quilldrop, then six Mutant programs analyse the tree and the bodyfile: magic-vs-extension and Mark-of-the-Web (07), bodyfile supertimeline + Sigma (08), anti-forensics tells such as mtime < crtime and log sequence gaps (09), exfil proof by CRC-32 of zip members against originals (10), signed chain of custody whose report digest every student is promised to share (11).",
+            "name": "Downstream DFIR workshop (Mutant repo, examples/workshop)",
+            "how_it_uses_fsagen": "fsagen --seed 88412 --playbook workshop.playbook.yaml --timeline case.body case, then six Mutant programs analyse the tree and the bodyfile: magic-vs-extension and Mark-of-the-Web (07), bodyfile supertimeline + Sigma (08), anti-forensics tells such as mtime < crtime and log sequence gaps (09), exfil proof by CRC-32 of zip members against originals (10), signed chain of custody whose report digest every student is promised to share (11).",
             "what_happened_when_it_was_run": "All six programs ran; four of the six stories broke because of fsagen behaviour: the timeline silently came out as CSV, the phishing email was replaced by a generic template, the dropper was not a PE, the zip was not a zip, every file had mtime < crtime, deletions did nothing, and the bodyfile digest differed on every run. See consumer_requirements."
         },
         "how_the_findings_were_verified": {
@@ -109,7 +109,7 @@
                 "every example under examples/ run once with --seed 42",
                 "probe manifests and playbooks, reproduced in repro_fixtures below",
                 "bulk mode run twice with --seed 7 --bulk 2 --depth 2 and the trees compared",
-                "the QUILLDROP playbook run twice with --seed 88412 and the bodyfiles compared"
+                "the workshop playbook run twice with --seed 88412 and the bodyfiles compared"
             ],
             "not_verified": "Nothing was run on Linux or macOS. Linux behaviour of ads/motw is from code reading. staticcheck 2026.1 could not load Go 1.26 export data, so no staticcheck results are included."
         }
@@ -402,7 +402,7 @@
                 "playbook/playbook.go:115-126",
                 "playbook/playbook.go:245-310"
             ],
-            "verified": "reproduced (via examples/playbook-email-and-archive.yaml and the QUILLDROP playbook)",
+            "verified": "reproduced (via examples/playbook-email-and-archive.yaml and the workshop playbook)",
             "observed": "${SEQ} is a global per-action counter and ${RND}/${HASH} draw fresh values, so 'delete stg_${SEQ}_${RND:6}.tmp' names a file that never existed. There is no mechanism to capture a rendered path.",
             "fix_direction": "Add an optional 'id' on any action that creates or renames a path, and a way to reference it later: a 'ref' field (single path) and a 'refs' selector (all paths created under an id, or a glob confined to the root). Rendered paths are recorded in the ledger. Errors: duplicate id, unknown ref, a ref to a deleted path.",
             "acceptance": "Test: 24 files created with id 'staging' in one step are all deleted by a later 'delete refs: staging' step; the email-and-archive example is rewritten to use it and its deletions take effect."
@@ -574,7 +574,7 @@
                 "timeline/timeline.go:195-218"
             ],
             "verified": "reproduced",
-            "observed": "Two QUILLDROP runs with the same seed produced bodyfiles with different SHA-256 (205f7df2... vs 99e200b7...) although every MD5/path pair matched: ctime, crtime and all directory times are the moment of generation. The CSV writer formats times in the machine's local zone (+05:30 was observed), so the same run gives different CSV on machines in different zones.",
+            "observed": "Two workshop runs with the same seed produced bodyfiles with different SHA-256 (205f7df2... vs 99e200b7...) although every MD5/path pair matched: ctime, crtime and all directory times are the moment of generation. The CSV writer formats times in the machine's local zone (+05:30 was observed), so the same run gives different CSV on machines in different zones.",
             "fix_direction": "Always UTC. Provide the modelled timeline (D-2). Emit a content manifest (SHA256SUMS over generated file contents plus stream contents) that is deterministic even when the observed timeline is not, and say in the docs exactly which artefact to compare across machines.",
             "acceptance": "Test: modelled bodyfile and SHA256SUMS are byte-identical across two runs; observed CSV is zone-independent (run with TZ forced via the Go test's time.Local override, not an env var in the product)."
         },
@@ -588,7 +588,7 @@
                 "util/util.go:48-64"
             ],
             "verified": "reproduced",
-            "observed": "Removing one 'template: email' line from the QUILLDROP playbook changed the MD5 of an unrelated file (the dropper: a7f2a549... became 2c6c0926...), because every later draw shifted.",
+            "observed": "Removing one 'template: email' line from the workshop playbook changed the MD5 of an unrelated file (the dropper: a7f2a549... became 2c6c0926...), because every later draw shifted.",
             "fix_direction": "Derive an independent stream per operation from (seed, stable operation key such as step index/iteration/batch/action index or the action id), for example math/rand/v2 ChaCha8 seeded by SHA-256(seed || key). Record the derivation scheme in the generator version (D-6).",
             "acceptance": "Test: inserting an unrelated action leaves every other file's bytes unchanged."
         },
@@ -622,7 +622,7 @@
             "observed": "Only os.Chtimes (atime, mtime) is used. On Windows the creation time is the wall-clock moment of generation, so a file whose scenario time is 2026-03-11 has a creation time of the day fsagen ran. In the Mutant workshop the 'modified before born' anti-forensics check flagged all 140 generated files instead of the 4 the playbook deliberately stomped.",
             "impact": "The most important timestomping ground truth is inverted: every file carries the signature of timestomping.",
             "fix_direction": "Add 'crtime' (and set it by default to the action's scheduled time on create). On Windows set it with windows.SetFileTime or SetFileInformationByHandle(FileBasicInfo) from golang.org/x/sys/windows (pure Go, no cgo). On Linux and macOS a birth time cannot be set: per D-1, fail or skip-and-record, and never pretend.",
-            "acceptance": "Windows test: create with scenario time T yields CreationTime == T to 100 ns; the QUILLDROP scenario then yields mtime < crtime for exactly the 4 stomped files."
+            "acceptance": "Windows test: create with scenario time T yields CreationTime == T to 100 ns; the workshop scenario then yields mtime < crtime for exactly the 4 stomped files."
         },
         {
             "id": "F-TIME-2",
@@ -702,7 +702,7 @@
                 "main.go:155-170"
             ],
             "verified": "reproduced",
-            "observed": "--timeline case_quilldrop.body produced a CSV (header 'Path,Size,Mode,...'); a bodyfile parser then read zero records. The format is chosen only by extension; '.body' (a common bodyfile extension) is not one of them.",
+            "observed": "--timeline case.body produced a CSV (header 'Path,Size,Mode,...'); a bodyfile parser then read zero records. The format is chosen only by extension; '.body' (a common bodyfile extension) is not one of them.",
             "fix_direction": "Add --timeline-format=csv|txt|bodyfile|macb|jsonl. With no format flag, infer from the extension, accept '.body' as bodyfile, and fail on an unknown extension.",
             "acceptance": "Tests: '.body' yields a bodyfile; '.foo' fails without writing a file; an explicit format overrides the extension."
         },
@@ -744,9 +744,9 @@
                 "timeline/timeline.go:287-305"
             ],
             "verified": "reproduced",
-            "observed": "Only Zone.Identifier, 'metadata' and 'content' are probed. The QUILLDROP implant's stream 'quill' did not appear in the timeline's ADS column. Hidden streams with other names, which is how they are hidden in practice, are invisible.",
+            "observed": "Only Zone.Identifier, 'metadata' and 'content' are probed. The workshop implant's stream 'extra' did not appear in the timeline's ADS column. Hidden streams with other names, which is how they are hidden in practice, are invisible.",
             "fix_direction": "Enumerate streams with FindFirstStreamW/FindNextStreamW through golang.org/x/sys/windows (pure Go). In the bodyfile, emit each named stream as its own record, 'path:stream', as The Sleuth Kit does.",
-            "acceptance": "Test: a file with streams 'quill' and 'a b' reports both, with sizes."
+            "acceptance": "Test: a file with streams 'extra' and 'a b' reports both, with sizes."
         },
         {
             "id": "F-TL-5",
@@ -1128,7 +1128,7 @@
         }
     ],
     "consumer_requirements": {
-        "note": "What the Mutant QUILLDROP workshop needs from fsagen. Use these as an end-to-end acceptance scenario after the relevant phases land. The playbook is Mutant's examples/workshop/evidence/quilldrop.playbook.yaml; it will be updated on the Mutant side to use the new fields.",
+        "note": "What a downstream DFIR workshop needs from fsagen. Use these as an end-to-end acceptance scenario after the relevant phases land. The playbook is Mutant's examples/workshop/evidence/workshop.playbook.yaml; it will be updated on the Mutant side to use the new fields.",
         "requirements": [
             {
                 "id": "CR-1",
@@ -1147,7 +1147,7 @@
             },
             {
                 "id": "CR-3",
-                "need": "The dropper (Invoice_MRD-88412.pdf.exe) and implant (svchost.exe) as valid PEs whose TimeDateStamp the playbook sets (0 for the 'scrubbed build time' lesson), sized to the requested length.",
+                "need": "The dropper (Invoice_88412.pdf.exe) and implant (svchost.exe) as valid PEs whose TimeDateStamp the playbook sets (0 for the 'scrubbed build time' lesson), sized to the requested length.",
                 "findings": [
                     "F-GEN-1",
                     "F-GEN-3"
@@ -1163,7 +1163,7 @@
             },
             {
                 "id": "CR-5",
-                "need": "The implant's 'quill' stream visible in the timeline.",
+                "need": "The implant's 'extra' stream visible in the timeline.",
                 "findings": [
                     "F-TL-4"
                 ]
@@ -1400,7 +1400,7 @@
         ],
         "negative_tests": "Every validation error listed in P0 has a test with the exact message shape (file, line/column when available, step/action index, field, hint).",
         "mutation_check": "For each new test, record in the plan how it was shown to fail: revert the fix or invert the guarded condition, run, see red, restore.",
-        "consumer_acceptance": "After P4, run the updated QUILLDROP playbook and check CR-1 to CR-12 with a small Go test or script inside fsagen (no dependency on Mutant)."
+        "consumer_acceptance": "After P4, run the updated workshop playbook and check CR-1 to CR-12 with a small Go test or script inside fsagen (no dependency on Mutant)."
     },
     "cross_repo_follow_ups_not_for_this_plan": [
         "Mutant workshop: use '.bodyfile' (or --timeline-format) until F-TL-1 lands; remove 'template: email' from the lure step; replace the ${SEQ}/${RND} delete paths with refs once F-IN-8 lands; replace 'go install github.com/aoiflux/fsagen@latest' until F-PLAT-1 lands.",
@@ -1436,7 +1436,7 @@
             "    atime: 2021-06-01T00:00:00Z",
             "  - action: ads                         # observed: resets mtime to now",
             "    path: a/ads_after_mace.bin",
-            "    stream: quill",
+            "    stream: extra",
             "    content: 'hidden'",
             "  - action: motw",
             "    path: a/zone9.exe                   # observed: creates empty base file; ZoneId=3",
@@ -1489,7 +1489,7 @@
         ],
         "determinism_commands": [
             "fsagen --seed 7 --bulk 2 --depth 2 bulk1 && fsagen --seed 7 --bulk 2 --depth 2 bulk2   # compare sorted (path, sha256): differ today; also look for *-journal files",
-            "fsagen --seed 88412 --playbook quilldrop.playbook.yaml --timeline r1.bodyfile r1   # twice, into r1 and r2: MD5/path columns match, bodyfile sha256 differs",
+            "fsagen --seed 88412 --playbook workshop.playbook.yaml --timeline r1.bodyfile r1   # twice, into r1 and r2: MD5/path columns match, bodyfile sha256 differs",
             "GOOS=darwin GOARCH=amd64 go build .   # fails today"
         ]
     },

@@ -56,7 +56,7 @@ func TestBulkEmailAndPdfComeFromTheSharedBuilders(t *testing.T) {
 		t.Fatalf("got %d mbox separators, want %d:\n%q", len(seps), bulkMboxMessages, mbox)
 	}
 	for _, sep := range seps {
-		stamp := strings.TrimPrefix(sep, "From alice@example.com ")
+		stamp := strings.TrimPrefix(sep, "From sender@example.com ")
 		if _, err := time.Parse("Mon Jan _2 15:04:05 2006", stamp); err != nil {
 			t.Errorf("mbox separator is not ctime-dated: %q", sep)
 		}

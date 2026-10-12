@@ -14,7 +14,7 @@ func ctx() Context {
 		Seq:       7,
 		BatchIdx:  2,
 		Iteration: 1,
-		Actor:     "alice",
+		Actor:     "user1",
 		Timestamp: time.Date(2026, 3, 11, 9, 0, 0, 0, time.UTC),
 		Variables: map[string]string{"host": "evil.test"},
 		Rand:      prng.Root(1).Derive("op"),
@@ -27,7 +27,7 @@ func TestApplyResolvesEveryToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "7|2|1|alice|evil.test|2026-03-11|192.168.0.7"; got != want {
+	if want := "7|2|1|user1|evil.test|2026-03-11|192.168.0.7"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 	for _, tok := range []string{"${RND:8}", "${RANDOM:4}", "${UUID}", "${HASH:12}"} {

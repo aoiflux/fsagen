@@ -32,6 +32,7 @@
                   "mp4",
                   "chrome_history",
                   "firefox_places",
+                  "chrome_cookies",
                   "lnk",
                   "prefetch",
                   "evtx",
@@ -51,6 +52,7 @@
                 "content_file",
                 "content_kind",
                 "content_len",
+                "cookies",
                 "crtime",
                 "ctime",
                 "docx",
@@ -124,6 +126,7 @@
                   "mp4",
                   "chrome_history",
                   "firefox_places",
+                  "chrome_cookies",
                   "lnk",
                   "prefetch",
                   "evtx",
@@ -143,6 +146,7 @@
                 "content_file",
                 "content_kind",
                 "content_len",
+                "cookies",
                 "crtime",
                 "ctime",
                 "docx",
@@ -1049,6 +1053,9 @@
           "minimum": 1,
           "type": "integer"
         },
+        "cookies": {
+          "$ref": "#/$defs/CookiesSpec"
+        },
         "crtime": {
           "$ref": "#/$defs/Rfc3339Time",
           "description": "Creation (birth) time. Windows only; elsewhere a pre-flight error unless --on-unsupported=skip."
@@ -1105,6 +1112,7 @@
             "mp4",
             "chrome_history",
             "firefox_places",
+            "chrome_cookies",
             "lnk",
             "prefetch",
             "evtx",
@@ -1447,6 +1455,73 @@
       ],
       "type": "string"
     },
+    "CookieRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "created": {
+          "$ref": "#/$defs/Rfc3339Time"
+        },
+        "expires": {
+          "$ref": "#/$defs/Rfc3339Time"
+        },
+        "host": {
+          "description": "The cookie's domain: a leading dot for one every subdomain receives.",
+          "pattern": "^[^/:]+$",
+          "type": "string"
+        },
+        "httponly": {
+          "type": "boolean"
+        },
+        "last_access": {
+          "$ref": "#/$defs/Rfc3339Time"
+        },
+        "name": {
+          "type": "string"
+        },
+        "path": {
+          "pattern": "^/",
+          "type": "string"
+        },
+        "samesite": {
+          "enum": [
+            "unspecified",
+            "none",
+            "lax",
+            "strict"
+          ],
+          "type": "string"
+        },
+        "secure": {
+          "type": "boolean"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "host",
+        "name"
+      ],
+      "type": "object"
+    },
+    "CookiesSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/CookieRecord"
+          },
+          "type": "array"
+        },
+        "plaintext": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "entries"
+      ],
+      "type": "object"
+    },
     "DocxSpec": {
       "additionalProperties": false,
       "properties": {
@@ -1755,8 +1830,17 @@
           "minimum": 0,
           "type": "integer"
         },
+        "referrer": {
+          "type": "string"
+        },
         "start": {
           "$ref": "#/$defs/Rfc3339Time"
+        },
+        "tab_referrer_url": {
+          "type": "string"
+        },
+        "tab_url": {
+          "type": "string"
         },
         "target_path": {
           "type": "string"
@@ -1767,6 +1851,14 @@
         },
         "url": {
           "type": "string"
+        },
+        "url_chain": {
+          "description": "Every URL requested, first to last, redirects included; the last must be url.",
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "required": [
@@ -1799,6 +1891,13 @@
         "from_visit": {
           "minimum": 0,
           "type": "integer"
+        },
+        "redirect": {
+          "enum": [
+            "server",
+            "client"
+          ],
+          "type": "string"
         },
         "time": {
           "$ref": "#/$defs/Rfc3339Time"

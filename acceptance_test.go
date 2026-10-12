@@ -27,14 +27,14 @@ import (
 )
 
 // acceptancePlaybook is a compressed stand-in for the evidence playbook of
-// the Mutant QUILLDROP workshop, whose audit brief (plan.json) is where the
+// a downstream DFIR workshop, whose audit brief (plan.json) is where the
 // consumer requirements come from.
-var acceptancePlaybook = filepath.Join("testdata", "acceptance", "quilldrop-lite.playbook.yaml")
+var acceptancePlaybook = filepath.Join("testdata", "acceptance", "invoice-lure.playbook.yaml")
 
 const (
 	acceptanceSeed    = "4242"
-	acceptanceStage   = "Users/priyan.nair/AppData/Local/Temp/quill"
-	acceptanceDropper = "Users/priyan.nair/Downloads/Invoice_MRD-88412.pdf.exe"
+	acceptanceStage   = "Users/employee/AppData/Local/Temp/staging"
+	acceptanceDropper = "Users/employee/Downloads/Invoice_88412.pdf.exe"
 )
 
 // TestConsumerAcceptance checks CR-1 to CR-11 from plan.json against one
@@ -45,7 +45,7 @@ const (
 func TestConsumerAcceptance(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "corpus")
-	body := filepath.Join(dir, "quilldrop.body")
+	body := filepath.Join(dir, "acceptance.body")
 	args := []string{"--seed", acceptanceSeed, "--playbook", acceptancePlaybook, "--timeline", body}
 	if runtime.GOOS != "windows" {
 		args = append(args, "--on-unsupported=skip")
@@ -77,7 +77,7 @@ func TestConsumerAcceptance(t *testing.T) {
 		}
 		var seen bool
 		for _, f := range records {
-			if f[1] == "/Users/priyan.nair/Downloads/Invoice_MRD-88412.pdf.exe" {
+			if f[1] == "/Users/employee/Downloads/Invoice_88412.pdf.exe" {
 				seen = true
 			}
 		}
@@ -88,7 +88,7 @@ func TestConsumerAcceptance(t *testing.T) {
 
 	// CR-2: the phishing message exactly as the playbook writes it.
 	t.Run("CR-2_phishing_email", func(t *testing.T) {
-		raw := acceptanceRead(t, out, "Users/priyan.nair/AppData/Local/Microsoft/Outlook/Inbox/0001.eml")
+		raw := acceptanceRead(t, out, "Users/employee/AppData/Local/Microsoft/Outlook/Inbox/0001.eml")
 		if bytes.Contains(bytes.ReplaceAll(raw, []byte("\r\n"), nil), []byte("\n")) {
 			t.Error("the message has a bare LF in it")
 		}
@@ -97,9 +97,9 @@ func TestConsumerAcceptance(t *testing.T) {
 			t.Fatalf("net/mail will not read it: %v", err)
 		}
 		for _, h := range []struct{ name, want string }{
-			{"Subject", "Invoice MRD-88412 is overdue"},
-			{"Message-Id", "<mrd-88412@mrd-invoices.example>"},
-			{"Reply-To", "no-reply@mrd-invoices.example"},
+			{"Subject", "Invoice INV-88412 is overdue"},
+			{"Message-Id", "<inv-88412@billing-portal.example>"},
+			{"Reply-To", "no-reply@billing-portal.example"},
 			{"Date", "Wed, 11 Mar 2026 08:00:00 +0000"},
 		} {
 			if got := msg.Header.Get(h.name); got != h.want {
@@ -115,8 +115,8 @@ func TestConsumerAcceptance(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := "Dear Priyan,\r\n\r\nInvoice MRD-88412 is 21 days overdue. The statement is here:\r\n" +
-			"https://cdn.mrd-invoices.example/Invoice_MRD-88412.pdf.exe\r\n\r\nMRD Billing\r\n"
+		want := "Dear colleague,\r\n\r\nInvoice INV-88412 is 21 days overdue. The statement is here:\r\n" +
+			"https://cdn.billing-portal.example/Invoice_88412.pdf.exe\r\n\r\nBilling Desk\r\n"
 		if string(got) != want {
 			t.Errorf("body:\n%q\nwant:\n%q", got, want)
 		}
@@ -160,7 +160,7 @@ func TestConsumerAcceptance(t *testing.T) {
 			}
 		}
 
-		implant := acceptanceRead(t, out, "Users/priyan.nair/AppData/Roaming/Quill/quilld.exe")
+		implant := acceptanceRead(t, out, "Users/employee/AppData/Roaming/SyncAgent/agentd.exe")
 		imf := acceptancePE(t, implant)
 		defer imf.Close()
 		stamp := time.Date(2026, 3, 11, 8, 40, 0, 0, time.UTC)
@@ -172,7 +172,7 @@ func TestConsumerAcceptance(t *testing.T) {
 		}
 		// The version resource is what a metadata tool reports, so it has to
 		// be in the image, not just in the YAML.
-		if !bytes.Contains(implant, acceptanceUTF16("Quill Service Host")) {
+		if !bytes.Contains(implant, acceptanceUTF16("Sync Agent Host")) {
 			t.Error("the implant carries no version resource")
 		}
 	})
@@ -187,8 +187,8 @@ func TestConsumerAcceptance(t *testing.T) {
 			}
 			for _, want := range []string{
 				"ZoneId=3",
-				"HostUrl=https://cdn.mrd-invoices.example/Invoice_MRD-88412.pdf.exe",
-				"ReferrerUrl=https://mail.northwindlogistics.example/",
+				"HostUrl=https://cdn.billing-portal.example/Invoice_88412.pdf.exe",
+				"ReferrerUrl=https://mail.corp.example/",
 			} {
 				if !strings.Contains(string(zone), want) {
 					t.Errorf("Zone.Identifier = %q, want it to contain %q", zone, want)
@@ -213,16 +213,16 @@ func TestConsumerAcceptance(t *testing.T) {
 		}
 	})
 
-	// CR-5: the implant's quill stream is in the timeline, with its size.
-	t.Run("CR-5_quill_stream_in_timeline", func(t *testing.T) {
+	// CR-5: the implant's extra stream is in the timeline, with its size.
+	t.Run("CR-5_extra_stream_in_timeline", func(t *testing.T) {
 		if !fsys.SupportsStreams() {
 			t.Skip("no named streams on this volume")
 		}
-		const want = "/Users/priyan.nair/AppData/Roaming/Quill/quilld.exe:quill"
+		const want = "/Users/employee/AppData/Roaming/SyncAgent/agentd.exe:extra"
 		for _, f := range acceptanceBodyfile(t, body) {
 			if f[1] == want {
 				if f[6] != "29" {
-					t.Errorf("the quill record is %s bytes, want 29", f[6])
+					t.Errorf("the extra record is %s bytes, want 29", f[6])
 				}
 				return
 			}
@@ -280,12 +280,12 @@ func TestConsumerAcceptance(t *testing.T) {
 	// are gone by the end of the run, so the answer key is the ground truth
 	// they are compared against.
 	t.Run("CR-7_zip_matches_sources", func(t *testing.T) {
-		data := acceptanceRead(t, out, "Users/priyan.nair/AppData/Local/Temp/bkp_20260311.zip")
+		data := acceptanceRead(t, out, "Users/employee/AppData/Local/Temp/bkp_20260311.zip")
 		zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 		if err != nil {
 			t.Fatalf("the archive is not a zip: %v", err)
 		}
-		if zr.Comment != "quilldrop-lite staging" {
+		if zr.Comment != "invoice-lure staging" {
 			t.Errorf("comment %q", zr.Comment)
 		}
 		if len(zr.File) != 24 {
@@ -358,7 +358,7 @@ func TestConsumerAcceptance(t *testing.T) {
 
 	// CR-9: the beacon log has a hole in its sequence, not a short tail.
 	t.Run("CR-9_gap_in_beacon_log", func(t *testing.T) {
-		log := string(acceptanceRead(t, out, "Users/priyan.nair/AppData/Roaming/Quill/beacon.log"))
+		log := string(acceptanceRead(t, out, "Users/employee/AppData/Roaming/SyncAgent/beacon.log"))
 		var seq []int
 		for _, line := range strings.Split(strings.TrimRight(log, "\n"), "\n") {
 			n, err := strconv.Atoi(strings.TrimPrefix(strings.Fields(line)[0], "seq="))
@@ -488,10 +488,10 @@ func acceptanceFacts(t *testing.T, out string) []ledger.Fact {
 func acceptanceCrtimeUncontrolled(t *testing.T, out string) {
 	t.Helper()
 	want := []string{
-		"Users/priyan.nair/Documents/quarterly-0.docx",
-		"Users/priyan.nair/Documents/quarterly-2.docx",
-		"Users/priyan.nair/Documents/quarterly-3.docx",
-		"Users/priyan.nair/Documents/quarterly-5.docx",
+		"Users/employee/Documents/quarterly-0.docx",
+		"Users/employee/Documents/quarterly-2.docx",
+		"Users/employee/Documents/quarterly-3.docx",
+		"Users/employee/Documents/quarterly-5.docx",
 	}
 	seen := map[string]bool{}
 	for _, line := range strings.Split(string(sidecar(t, out, ledger.FileName)), "\n") {

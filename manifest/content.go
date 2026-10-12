@@ -109,6 +109,13 @@ func buildContent(c compile.Op) ([]byte, error) {
 	case spec.FormatAuditd:
 		return buildAuditd(c)
 
+	case spec.FormatChromeCookies:
+		jar, err := cookiesOf(c)
+		if err != nil {
+			return nil, err
+		}
+		return libgen.ChromeCookies(jar, c.Rand.Derive("cookies").Stream())
+
 	case spec.FormatChromeHistory, spec.FormatFirefoxPlaces:
 		hist, err := historyOf(c)
 		if err != nil {
@@ -570,7 +577,7 @@ func historyOf(c compile.Op) (libgen.HistorySpec, error) {
 			return out, err
 		}
 		out.Visits = append(out.Visits, libgen.Visit{
-			URL: v.URL, Title: v.Title, Time: when, Transition: v.Transition, FromVisit: v.FromVisit,
+			URL: v.URL, Title: v.Title, Time: when, Transition: v.Transition, FromVisit: v.FromVisit, Redirect: v.Redirect,
 		})
 	}
 	for i, d := range in.Downloads {
@@ -588,6 +595,39 @@ func historyOf(c compile.Op) (libgen.HistorySpec, error) {
 		out.Downloads = append(out.Downloads, libgen.Download{
 			URL: d.URL, TargetPath: d.TargetPath, Start: start, End: end,
 			Received: d.ReceivedBytes, Total: d.TotalBytes, MimeType: d.MimeType,
+			URLChain: d.URLChain, Referrer: d.Referrer, TabURL: d.TabURL, TabReferrerURL: d.TabReferrerURL,
+		})
+	}
+	return out, nil
+}
+
+// cookiesOf turns the scenario's cookies into the builder's: a cookie with no
+// creation time was set at the operation's time, and one never read since was
+// last accessed then.
+func cookiesOf(c compile.Op) (libgen.CookieJar, error) {
+	in := c.Cookies
+	if in == nil {
+		return libgen.CookieJar{}, fmt.Errorf("format: %s needs a cookies block", c.Format)
+	}
+	out := libgen.CookieJar{Plaintext: in.Plaintext}
+	for i, e := range in.Entries {
+		where := fmt.Sprintf("cookies.entries[%d]", i)
+		created, err := timeOr(e.Created, where+".created", c.When)
+		if err != nil {
+			return out, err
+		}
+		expires, err := optionalTime(e.Expires, where+".expires")
+		if err != nil {
+			return out, err
+		}
+		access, err := timeOr(e.LastAccess, where+".last_access", created)
+		if err != nil {
+			return out, err
+		}
+		out.Cookies = append(out.Cookies, libgen.Cookie{
+			Host: e.Host, Name: e.Name, Value: e.Value, Path: e.Path,
+			Created: created, Expires: expires, LastAccess: access,
+			Secure: e.Secure, HTTPOnly: e.HTTPOnly, SameSite: e.SameSite,
 		})
 	}
 	return out, nil

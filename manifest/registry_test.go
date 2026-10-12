@@ -18,10 +18,10 @@ variables:
   dropper: wupdmgr32
 operations:
   - action: create
-    path: C/Users/alice/NTUSER.DAT
+    path: C/Users/user1/NTUSER.DAT
     registry:
       run:
-        - { name: SystemUpdate, command: 'C:\Users\alice\AppData\Local\Temp\${VAR:dropper}.exe' }
+        - { name: SystemUpdate, command: 'C:\Users\user1\AppData\Local\Temp\${VAR:dropper}.exe' }
       userassist:
         - { path: 'C:\Windows\System32\cmd.exe', run_count: 3 }
       keys:
@@ -31,19 +31,19 @@ operations:
     path: C/Windows/System32/config/SYSTEM
     registry:
       usbstor:
-        - { vendor: SanDisk, product: Cruzer Blade, revision: '1.00', serial: 4C530001231117116491, last_removal: 2024-03-15T10:00:00Z }
+        - { vendor: Generic, product: Storage Unit, revision: '1.00', serial: 4C530001231117116491, last_removal: 2024-03-15T10:00:00Z }
 `, nil)
 
-	user := readOut(t, root, "C/Users/alice/NTUSER.DAT")
+	user := readOut(t, root, "C/Users/user1/NTUSER.DAT")
 	le := binary.LittleEndian
 	if string(user[:4]) != "regf" || le.Uint32(user[20:]) != 1 || le.Uint32(user[24:]) != 5 {
 		t.Fatalf("not a version 1.5 hive: % x", user[:28])
 	}
-	if !bytes.Contains(user[48:112], utf16le(`Users\alice\NTUSER.DAT`)) {
+	if !bytes.Contains(user[48:112], utf16le(`Users\user1\NTUSER.DAT`)) {
 		t.Errorf("the base block names %q", user[48:112])
 	}
 	for _, s := range [][]byte{
-		[]byte("SystemUpdate"), utf16le(`C:\Users\alice\AppData\Local\Temp\wupdmgr32.exe`),
+		[]byte("SystemUpdate"), utf16le(`C:\Users\user1\AppData\Local\Temp\wupdmgr32.exe`),
 		[]byte(`{1NP14R77-02R7-4R5Q-O744-2RO1NR5198O7}\pzq.rkr`), []byte("EulaAccepted"), []byte("Sysinternals"),
 	} {
 		if !bytes.Contains(user, s) {
@@ -53,7 +53,7 @@ operations:
 
 	system := readOut(t, root, "C/Windows/System32/config/SYSTEM")
 	for _, s := range [][]byte{
-		[]byte("Select"), []byte("USBSTOR"), []byte("Disk&Ven_SanDisk&Prod_Cruzer_Blade&Rev_1.00"),
+		[]byte("Select"), []byte("USBSTOR"), []byte("Disk&Ven_Generic&Prod_Storage_Unit&Rev_1.00"),
 		[]byte("4C530001231117116491&0"), []byte("{83da6326-97a6-4088-9453-a1923f573b29}"), []byte("0067"),
 	} {
 		if !bytes.Contains(system, s) {

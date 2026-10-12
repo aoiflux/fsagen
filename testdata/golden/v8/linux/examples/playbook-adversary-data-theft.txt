@@ -1,0 +1,10 @@
+# input-sha256 1daa94b98bb57d2bed7e32cbf7216f9198c0838bb8ab7e9929f5c9b080c5631b
+d users/
+d users/user1/
+d users/user1/docs/
+d users/user1/logs/
+f 2964cef22ea3842dcdab0b5eef69cdb6083062436bb28a3c8e87a7ace97ae0e5 138 users/user1/logs/exfil.log
+d users/user1/staging/
+f 7d607a179c5d2bfa4cc7cea4215cf1eb71ecc97b19e79bda31f7e397e3b7174a 512 users/user1/staging/customers.csv
+f eba30faea53de61eadb0ccf632c34056350cfab4c6d886b4940e24eaf7711e24 1250 users/user1/staging/data.zip
+f d26478ad4e827af19d7b17d813a044e2c256675acb45db004a2651f43be76b23 512 users/user1/staging/quarterly.csv

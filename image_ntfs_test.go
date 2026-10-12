@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 	"github.com/aoiflux/fsagen/target"
 	"github.com/aoiflux/fsagen/volume/container"
 	imagepkg "github.com/aoiflux/fsagen/volume/image"
+	"github.com/aoiflux/libntfs"
 )
 
 // ntfsFixture is the scenario TestNTFSImageGolden pins.
@@ -139,6 +141,56 @@ func TestNTFSRefusesWhatItCannotHold(t *testing.T) {
 	}
 	if names := entries(t, dir); len(names) != 1 {
 		t.Errorf("--validate wrote %q", names)
+	}
+}
+
+// A Mark-of-the-Web written into an NTFS image reads back, through libntfs
+// rather than fsagen's own reader, as the Zone.Identifier stream Windows
+// writes on a download: the same bytes a live run on NTFS would leave. The
+// other named stream on the file is still there beside it.
+func TestNTFSImageCarriesMarkOfTheWeb(t *testing.T) {
+	img := filepath.Join(t.TempDir(), "motw.img")
+	if code, _, stderr := runCLI(t, "--seed", "1", "--playbook", filepath.Join("examples", "playbook-windows-ads-motw.yaml"),
+		"--image", img, "--image-fs", "ntfs", "--image-size", "64M"); code != exitOK {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	f, err := os.Open(img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := int64(container.MBRStart) * 512
+	vol, err := libntfs.OpenWithOptions(io.NewSectionReader(f, start, info.Size()-start), libntfs.Options{ReadOnly: true, Strict: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer vol.Close()
+	file, err := vol.OpenPath("/users/winuser/downloads/installer.exe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := func(name string) string {
+		t.Helper()
+		s, err := file.OpenStream(name)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		b, err := s.ReadAll()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		return string(b)
+	}
+	const want = "[ZoneTransfer]\r\nZoneId=3\r\nReferrerUrl=https://example.com/\r\nHostUrl=https://example.com/downloads/installer.exe\r\n"
+	if got := read("Zone.Identifier"); got != want {
+		t.Errorf("Zone.Identifier = %q\nwant %q", got, want)
+	}
+	if got := read("Note"); got != "Downloaded by winuser" {
+		t.Errorf("Note = %q", got)
 	}
 }
 

@@ -9,7 +9,7 @@ func TestOutputRejects(t *testing.T) {
 	for _, tc := range []struct{ base, path, want string }{
 		{"", "../x", "escapes the output root"},
 		{"", "a/../../x", "escapes the output root"},
-		{"users/bob", "../../../x", "escapes the output root"},
+		{"users/user2", "../../../x", "escapes the output root"},
 		{"", "/x", "absolute"},
 		{"", "C:/x", "contains ':'"},
 		{"", "C:x", "contains ':'"},
@@ -33,8 +33,8 @@ func TestOutputRejects(t *testing.T) {
 // A ".." that stays inside the root is allowed: an actor based in AppData can
 // reach its sibling Documents directory.
 func TestOutputAllowsInsideDotDot(t *testing.T) {
-	got, dir, err := Output("users/alice/AppData/Roaming", "../../Documents/x.docx")
-	if err != nil || got != "users/alice/Documents/x.docx" || dir {
+	got, dir, err := Output("users/user1/AppData/Roaming", "../../Documents/x.docx")
+	if err != nil || got != "users/user1/Documents/x.docx" || dir {
 		t.Fatalf("got %q, %v, %v", got, dir, err)
 	}
 }
@@ -80,7 +80,7 @@ func TestStream(t *testing.T) {
 			t.Errorf("Stream(%q) accepted", bad)
 		}
 	}
-	for _, good := range []string{"quill", "a b", "Zone.Identifier"} {
+	for _, good := range []string{"extra", "a b", "Zone.Identifier"} {
 		if err := Stream(good); err != nil {
 			t.Errorf("Stream(%q) = %v", good, err)
 		}

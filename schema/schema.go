@@ -441,13 +441,28 @@ func nestedDefs(defs map[string]any) {
 	register(defs, "HistoryVisit", spec.HistoryVisit{}, "url").
 		prop("time", rfc3339()).
 		prop("transition", enumOf(libgen.Transitions)).
-		prop("from_visit", nonNegative())
+		prop("from_visit", nonNegative()).
+		prop("redirect", enumOf(libgen.Redirects))
 
 	register(defs, "HistoryDownload", spec.HistoryDownload{}, "url", "target_path").
 		prop("start", rfc3339()).
 		prop("end", rfc3339()).
 		prop("received_bytes", nonNegative()).
-		prop("total_bytes", nonNegative())
+		prop("total_bytes", nonNegative()).
+		prop("url_chain", map[string]any{
+			"type":        "array",
+			"items":       map[string]any{"type": "string", "minLength": 1},
+			"description": "Every URL requested, first to last, redirects included; the last must be url.",
+		})
+
+	register(defs, "CookiesSpec", spec.CookiesSpec{}, "entries")
+	register(defs, "CookieRecord", spec.CookieRecord{}, "host", "name").
+		prop("host", map[string]any{"type": "string", "pattern": "^[^/:]+$", "description": "The cookie's domain: a leading dot for one every subdomain receives."}).
+		prop("path", map[string]any{"type": "string", "pattern": "^/"}).
+		prop("created", rfc3339()).
+		prop("expires", rfc3339()).
+		prop("last_access", rfc3339()).
+		prop("samesite", enumOf(libgen.SameSites))
 
 	register(defs, "ArchiveSpec", spec.ArchiveSpec{}).
 		prop("method", map[string]any{

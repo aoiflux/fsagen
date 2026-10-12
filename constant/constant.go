@@ -55,8 +55,10 @@ const (
 // audit.log, and a .docm and .xlsm with an inert macro) and writes a bulk
 // corpus in the plan's order; gives each created and modified fact in the
 // answer key its MD5; and records the slack, link and $FILE_NAME
-// capabilities in the run manifest.
-const GeneratorVersion = 7
+// capabilities in the run manifest. Version 8 names no one: a bulk message
+// goes from sender@example.com to recipient@example.com rather than between
+// two people.
+const GeneratorVersion = 8
 
 const (
 	TxtExtension    = ".txt"

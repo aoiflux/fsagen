@@ -3,8 +3,8 @@
 start: "2024-03-04T08:30:00Z"
 
 variables:
-  user: jdoe
-  corp: Contoso Ltd
+  user: employee
+  corp: Example Corp
 
 operations:
   # --- Day 1: normal work -------------------------------------------------
@@ -25,9 +25,9 @@ operations:
     path: Users/${VAR:user}/Documents/Finance/Q1-budget.csv
     content: |
       department,owner,budget_usd,spent_usd
-      Engineering,a.khan,1250000,412300
-      Marketing,l.moreau,640000,301950
-      Sales,r.ito,880000,455120
+      Engineering,staff1,1250000,412300
+      Marketing,staff2,640000,301950
+      Sales,staff3,880000,455120
       Finance,${VAR:user},210000,88400
     mtime: "2024-03-04T09:10:00Z"
 
@@ -35,10 +35,10 @@ operations:
     path: Users/${VAR:user}/Documents/Finance/customers.csv
     content: |
       id,name,email,card_last4,credit_limit
-      1001,Northwind Traders,ap@northwind.example,4421,50000
-      1002,Fabrikam Inc,billing@fabrikam.example,9910,120000
-      1003,Tailspin Toys,finance@tailspin.example,0387,25000
-      1004,Wide World Importers,ar@wwi.example,5532,75000
+      1001,Vendor A Ltd,ap@vendor-a.example,4421,50000
+      1002,Vendor B Inc,billing@vendor-b.example,9910,120000
+      1003,Vendor C Co,finance@vendor-c.example,0387,25000
+      1004,Vendor D Ltd,ar@vendor-d.example,5532,75000
     mtime: "2024-03-04T09:20:00Z"
 
   - action: create
@@ -66,7 +66,7 @@ operations:
     path: Users/${VAR:user}/Documents/Finance/vendor-contract.docx
     docx:
       title: Master Services Agreement
-      author: legal@contoso.example
+      author: legal@corp.example
       created: "2024-02-20T14:00:00Z"
       modified: "2024-03-04T10:30:00Z"
     content_len: 4000
@@ -85,15 +85,15 @@ operations:
   - action: email
     path: Users/${VAR:user}/Mail/Inbox/0001.eml
     email:
-      from: "IT Support <helpdesk@contoso-support.example>"
-      to: ["${VAR:user}@contoso.example"]
+      from: "IT Support <helpdesk@corp-support.example>"
+      to: ["${VAR:user}@corp.example"]
       subject: "Mandatory: re-validate your VPN account"
       date: "2024-03-05T07:58:00Z"
       body_text: |
         Hi,
 
         Your VPN certificate expires today. Upload any files you need to keep
-        to https://share.contoso-support.example before 18:00.
+        to https://share.corp-support.example before 18:00.
 
         IT Support
 

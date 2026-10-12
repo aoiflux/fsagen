@@ -1,0 +1,177 @@
+# Workshop: malware delivered through ads
+#
+# A user searches for a driver update, clicks the sponsored result, and is
+# bounced by an ad network's servers onto a fake update page. A download
+# follows and runs once. Build it into an NTFS image, which keeps the
+# download's Mark-of-the-Web:
+#
+#   fsagen --seed 3303 --playbook workshops/malvertising.playbook.yaml \
+#          --image malvertising.img --image-fs ntfs --image-size 64M \
+#          --image-time 2026-03-12T06:00:00Z \
+#          --timeline malvertising.body --timeline-source modelled
+#
+# What a learner should find, and how:
+# - Chrome History: walk from_visit back from the download page. The search
+#   result was clicked (link); the two hops after it were never clicked: their
+#   transition carries SERVER_REDIRECT (0x80000000). That is the ad chain.
+# - The download row: its url_chain lists every URL requested, including the
+#   CDN redirect the file itself came through; referrer and tab_url name the
+#   fake update page.
+# - Chrome Cookies: every host on the chain set a cookie. px.tracker.test set
+#   one too, although the history never visited it: an embedded ad's tracker.
+#   The values are encrypted as Chrome stores them; host, name and expiry are
+#   all the question needs.
+# - The payload's Zone.Identifier stream: ZoneId=3, HostUrl is the CDN URL the
+#   chain ended at, ReferrerUrl the fake update page.
+# - Prefetch: the payload ran at 09:18:20, two minutes after the click.
+# - Decoy: a menu PDF downloaded from the staff portal also carries a
+#   Mark-of-the-Web. A downloaded file is not a finding on its own.
+
+start: 2026-03-11T08:30:00Z
+
+variables:
+  ad_net: ads.test
+  landing: driver-updates.test
+  tracker: px.tracker.test
+  payload: CodecUpdate_x64.exe
+
+actors:
+  - name: user1
+    base: Users/user1
+  - name: system
+    base: Windows
+
+steps:
+  # -- Browsing, the click, and the chain (08:40 to 09:16) -------------------
+  - actor: user1
+    offset: 46m
+    actions:
+      - action: create
+        path: AppData/Local/Google/Chrome/User Data/Default/History
+        format: chrome_history
+        mitre: [T1189]
+        history:
+          visits:
+            - url: https://portal.corp.example/
+              title: Staff portal
+              time: 2026-03-11T08:40:00Z
+              transition: typed
+            - url: https://portal.corp.example/canteen/menu.pdf
+              title: Canteen menu
+              time: 2026-03-11T08:41:10Z
+              from_visit: 1
+            - url: https://search.example/?q=video+codec+update
+              title: video codec update - Search
+              time: 2026-03-11T09:15:31Z
+              transition: typed
+            - url: https://clk.${VAR:ad_net}/c?ad=50513
+              time: 2026-03-11T09:16:05Z
+              from_visit: 3
+            - url: https://rtb.${VAR:ad_net}/r?ad=50513
+              time: 2026-03-11T09:16:06Z
+              from_visit: 4
+              redirect: server
+            - url: https://www.${VAR:landing}/codec
+              title: Codec update required
+              time: 2026-03-11T09:16:07Z
+              from_visit: 5
+              redirect: server
+            - url: https://www.${VAR:landing}/codec/download
+              title: Downloading...
+              time: 2026-03-11T09:16:40Z
+              from_visit: 6
+          downloads:
+            - url: https://portal.corp.example/canteen/menu.pdf
+              target_path: C:\Users\user1\Downloads\menu.pdf
+              start: 2026-03-11T08:41:12Z
+              end: 2026-03-11T08:41:13Z
+              received_bytes: 1384
+              total_bytes: 1384
+              mime_type: application/pdf
+              referrer: https://portal.corp.example/
+              tab_url: https://portal.corp.example/
+            - url: https://cdn.${VAR:landing}/f/${VAR:payload}
+              target_path: C:\Users\user1\Downloads\${VAR:payload}
+              start: 2026-03-11T09:16:41Z
+              end: 2026-03-11T09:16:44Z
+              received_bytes: 45056
+              total_bytes: 45056
+              mime_type: application/octet-stream
+              url_chain:
+                - https://www.${VAR:landing}/codec/get?id=7731
+                - https://cdn.${VAR:landing}/f/${VAR:payload}
+              referrer: https://www.${VAR:landing}/codec/download
+              tab_url: https://www.${VAR:landing}/codec/download
+              tab_referrer_url: https://www.${VAR:landing}/codec
+
+  # -- The cookies the chain left (09:16) -----------------------------------
+  - actor: user1
+    offset: 46m
+    actions:
+      - action: create
+        path: AppData/Local/Google/Chrome/User Data/Default/Network/Cookies
+        format: chrome_cookies
+        mitre: [T1189]
+        cookies:
+          entries:
+            - { host: portal.corp.example, name: portal_session, value: 7c1e0b2a, created: '2026-03-11T08:40:00Z', secure: true, httponly: true }
+            - { host: .search.example, name: prefs, value: 'lang=en&safe=1', created: '2026-02-03T09:00:12Z', expires: '2027-02-03T09:00:12Z', secure: true, samesite: lax }
+            - { host: '.${VAR:tracker}', name: px_id, value: 9f3d2c71e4, created: '2026-03-11T09:15:32Z', expires: '2026-06-09T09:15:32Z', secure: true, samesite: none }
+            - { host: '.${VAR:ad_net}', name: uid, value: a8e55d0c19b2, created: '2026-03-11T09:16:05Z', expires: '2027-03-11T09:16:05Z', secure: true, samesite: none }
+            - { host: 'rtb.${VAR:ad_net}', name: seg, value: 'tech,drivers', created: '2026-03-11T09:16:06Z', expires: '2026-04-10T09:16:06Z', secure: true, samesite: none }
+            - { host: 'www.${VAR:landing}', name: dl_token, value: q7731s, created: '2026-03-11T09:16:07Z', secure: true, httponly: true }
+
+  # -- The two downloads, each with its Mark-of-the-Web ----------------------
+  - actor: user1
+    offset: 11m
+    actions:
+      - action: create
+        path: Downloads/menu.pdf
+        format: pdf
+        content: "Canteen menu, week 11"
+      - action: motw
+        path: Downloads/menu.pdf
+        zone_id: 3
+        host_url: https://portal.corp.example/canteen/menu.pdf
+        referrer_url: https://portal.corp.example/
+
+  - actor: user1
+    offset: 47m
+    actions:
+      - action: create
+        path: Downloads/${VAR:payload}
+        mitre: [T1204.002]
+        content_len: 45056
+        content_kind: bytes
+        pe:
+          machine: amd64
+          subsystem: gui
+          imports:
+            - kernel32.dll!CreateProcessW
+            - urlmon.dll!URLDownloadToFileW
+            - advapi32.dll!RegSetValueExW
+          version:
+            file_version: 2.4.0.0
+            company_name: Codec Pack Project
+            file_description: Video Codec Update
+      - action: motw
+        path: Downloads/${VAR:payload}
+        mitre: [T1189]
+        zone_id: 3
+        host_url: https://cdn.${VAR:landing}/f/${VAR:payload}
+        referrer_url: https://www.${VAR:landing}/codec/download
+
+  # -- It ran once (09:18) ---------------------------------------------------
+  - actor: system
+    offset: 48m
+    actions:
+      - action: create
+        path: Prefetch/CODECUPDATE_X64.EXE-4A5BF3DB.pf
+        mitre: [T1204.002]
+        prefetch:
+          executable: 'C:\Users\user1\Downloads\CodecUpdate_x64.exe'
+          last_run_times:
+            - "2026-03-11T09:18:20Z"
+          referenced_files:
+            - 'C:\Windows\System32\urlmon.dll'
+            - 'C:\Windows\System32\advapi32.dll'

@@ -29,7 +29,7 @@ func TestLNKReadByGolnk(t *testing.T) {
 		DriveType:    "removable",
 		VolumeSerial: 0x1A2B3C4D,
 		VolumeLabel:  "USBSTICK",
-		MachineID:    "DESKTOP-QUILL",
+		MachineID:    "DESKTOP-LAB01",
 		Created:      created,
 		Accessed:     created.Add(time.Hour),
 		Modified:     created.Add(2 * time.Hour),
@@ -93,7 +93,7 @@ func TestLNKReadByGolnk(t *testing.T) {
 	for _, b := range f.DataBlocks.Blocks {
 		if b.Signature == 0xA0000003 {
 			tracker = true
-			if !bytes.HasPrefix(b.Data[8:], []byte("DESKTOP-QUILL\x00")) {
+			if !bytes.HasPrefix(b.Data[8:], []byte("DESKTOP-LAB01\x00")) {
 				t.Errorf("tracker machine id %q", b.Data[8:24])
 			}
 		}

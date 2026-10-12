@@ -34,8 +34,8 @@ func sampleUtmp() []UtmpRecord {
 	t := time.Date(2024, 3, 15, 9, 0, 0, 0, time.UTC)
 	return []UtmpRecord{
 		{Kind: "boot", Host: "6.8.0-31-generic", Time: t},
-		{Kind: "login", User: "alice", Line: "pts/0", Host: "203.0.113.7", PID: 2201, Session: 3, Time: t.Add(10*time.Minute + 123456*time.Microsecond)},
-		{Kind: "login", User: "bob", Line: "pts/1", Host: "2001:db8::7", PID: 2350, Session: 4, Time: t.Add(20 * time.Minute)},
+		{Kind: "login", User: "user1", Line: "pts/0", Host: "203.0.113.7", PID: 2201, Session: 3, Time: t.Add(10*time.Minute + 123456*time.Microsecond)},
+		{Kind: "login", User: "user2", Line: "pts/1", Host: "2001:db8::7", PID: 2350, Session: 4, Time: t.Add(20 * time.Minute)},
 		{Kind: "logout", Line: "pts/0", Time: t.Add(70 * time.Minute)},
 		{Kind: "shutdown", Host: "6.8.0-31-generic", Time: t.Add(2 * time.Hour)},
 	}
@@ -75,8 +75,8 @@ func TestUtmpLayout(t *testing.T) {
 	sec := func(r UtmpRecord) int32 { return int32(r.Time.Unix()) }
 	for i, w := range []want{
 		{2, "~", "~~", "reboot", "6.8.0-31-generic", 0, 0, sec(recs[0]), 0, [4]int32{}},
-		{7, "pts/0", "ts/0", "alice", "203.0.113.7", 2201, 3, sec(recs[1]), 123456, ip4},
-		{7, "pts/1", "ts/1", "bob", "2001:db8::7", 2350, 4, sec(recs[2]), 0, ip6},
+		{7, "pts/0", "ts/0", "user1", "203.0.113.7", 2201, 3, sec(recs[1]), 123456, ip4},
+		{7, "pts/1", "ts/1", "user2", "2001:db8::7", 2350, 4, sec(recs[2]), 0, ip6},
 		{8, "pts/0", "ts/0", "", "", 2201, 0, sec(recs[3]), 0, [4]int32{}},
 		{1, "~", "~~", "shutdown", "6.8.0-31-generic", 0, 0, sec(recs[4]), 0, [4]int32{}},
 	} {
@@ -131,7 +131,7 @@ func TestUtmpReadByUtilLinux(t *testing.T) {
 	if err != nil {
 		t.Fatalf("utmpdump: %v\n%s", err, out)
 	}
-	for _, s := range []string{"[2] [00000] [~~  ] [reboot  ] [~           ] [6.8.0-31-generic", "[7] [02201] [ts/0] [alice   ] [pts/0       ] [203.0.113.7", "203.0.113.7", "2001:db8::7", "2024-03-15T09:10:00,123456+00:00"} {
+	for _, s := range []string{"[2] [00000] [~~  ] [reboot  ] [~           ] [6.8.0-31-generic", "[7] [02201] [ts/0] [user1   ] [pts/0       ] [203.0.113.7", "203.0.113.7", "2001:db8::7", "2024-03-15T09:10:00,123456+00:00"} {
 		if !strings.Contains(string(out), s) {
 			t.Errorf("utmpdump output lacks %q:\n%s", s, out)
 		}
@@ -142,7 +142,7 @@ func TestUtmpReadByUtilLinux(t *testing.T) {
 	if err != nil {
 		t.Fatalf("last: %v\n%s", err, out)
 	}
-	for _, s := range []string{"alice    pts/0        203.0.113.7      Fri Mar 15 09:10:00 2024 - Fri Mar 15 10:10:00 2024", "reboot   system boot", "bob"} {
+	for _, s := range []string{"user1    pts/0        203.0.113.7      Fri Mar 15 09:10:00 2024 - Fri Mar 15 10:10:00 2024", "reboot   system boot", "user2"} {
 		if !strings.Contains(string(out), s) {
 			t.Errorf("last output lacks %q:\n%s", s, out)
 		}

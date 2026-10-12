@@ -1,0 +1,6 @@
+# input-sha256 68270c67b017b716685e6d6fb701c1188a2e40f0cc30a9bfca07101af85e5425
+{"event":"created","n":1,"at":"2021-09-15T10:00:00Z","object":3,"kind":"dir","path":"users/user2/mail"}
+{"event":"created","n":2,"at":"2021-09-15T10:00:00Z","object":4,"kind":"file","path":"users/user2/mail/msg-2.eml","size":262,"sha256":"8204a7dcae6c84ad260fdafe80d08fdb33058ab6fc83462dd2f3c61d9e1bb9e5","md5":"29e64d4d311a9b6bf36d7a52d6116fe1"}
+{"event":"created","n":3,"at":"2021-09-15T10:00:00Z","object":6,"kind":"file","path":"users/user2/media/pic-3.jpg","size":1457,"sha256":"f502e1bf5ee09740686cf4b1d65c17c622315fb5ded4114eca128f4dd3ebdbcf","md5":"99ad7492d9b96c15f1b979052f8f44e8"}
+{"event":"deleted","n":5,"at":"2021-09-15T10:30:00Z","object":4,"kind":"file","path":"users/user2/mail/msg-2.eml","sha256":"8204a7dcae6c84ad260fdafe80d08fdb33058ab6fc83462dd2f3c61d9e1bb9e5"}
+{"event":"deleted","n":6,"at":"2021-09-15T10:30:00Z","object":6,"kind":"file","path":"users/user2/media/pic-3.jpg","sha256":"f502e1bf5ee09740686cf4b1d65c17c622315fb5ded4114eca128f4dd3ebdbcf"}

@@ -1,0 +1,9 @@
+# input-sha256 ca47177ee7c5fb456271cf735ddcf266186d44f358fb226acd1970c7f36a2ce6
+d users/
+d users/user1/
+d users/user1/docs/
+f ef9cd38d86b8c939ee97b40fa6dd6f3fb44a32dd43d5e0fc2d895eaede16a202 64 users/user1/docs/report-0.txt
+f 58556bda1d7d198b281c94b34e235c3a87596baa92a332e7e3874270abcd8e54 64 users/user1/docs/report-1.txt
+d users/user2/
+d users/user2/media/
+d users/user2/media/photos/

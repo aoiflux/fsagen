@@ -32,7 +32,7 @@ func TestHiveReadByRegparser(t *testing.T) {
 		large[i] = byte(i * 7)
 	}
 	run := libgen.RegKey{Path: `Software\Microsoft\Windows\CurrentVersion\Run`, LastWritten: when.Add(time.Hour), Values: []libgen.RegValue{
-		val("Updater", "REG_SZ", `C:\Users\alice\AppData\Local\Temp\wupdmgr32.exe /silent`),
+		val("Updater", "REG_SZ", `C:\Users\user1\AppData\Local\Temp\wupdmgr32.exe /silent`),
 		val("Count", "REG_DWORD", "7"),
 		val("Big", "REG_QWORD", "0x1122334455667788"),
 		val("Five", "REG_BINARY", "0102030405"),
@@ -78,7 +78,7 @@ func TestHiveReadByRegparser(t *testing.T) {
 		}
 	}
 	// regparser keeps the NUL a REG_SZ is stored with, as Windows stores it.
-	if d := values[0].ValueData(); strings.TrimSuffix(d.String, "\x00") != `C:\Users\alice\AppData\Local\Temp\wupdmgr32.exe /silent` {
+	if d := values[0].ValueData(); strings.TrimSuffix(d.String, "\x00") != `C:\Users\user1\AppData\Local\Temp\wupdmgr32.exe /silent` {
 		t.Errorf("Updater reads as %q", d.String)
 	}
 	if d := values[1].ValueData(); d.Uint64 != 7 {

@@ -137,7 +137,7 @@ func TestMaceLeavesUnnamedTimes(t *testing.T) {
 // F-TIME-1 / CR-6: a timestomped file is exactly one whose modification time
 // is earlier than its creation time. Four of six files are stomped, so
 // exactly four show mtime < crtime.
-func TestQuilldropLiteStompCount(t *testing.T) {
+func TestAcceptanceStompCount(t *testing.T) {
 	needWindowsTimes(t)
 	var b strings.Builder
 	b.WriteString(pb + "  - actor: u\n    batch_count: 6\n    actions: [ { action: create, path: 'stage/doc-${BATCH}.docx', content: x } ]\n")
@@ -168,12 +168,12 @@ func TestAdsAndMotwKeepTimes(t *testing.T) {
   - actor: u
     offset: 20m
     actions:
-      - { action: ads, path: a.exe, stream: quill, content: payload }
+      - { action: ads, path: a.exe, stream: extra, content: payload }
       - { action: motw, path: a.exe, zone_id: 3, host_url: "https://evil.test/a.exe" }
 `)
 	old := time.Date(2019, 1, 1, 0, 0, 0, 0, time.UTC)
 	expect(t, fsys, "a.exe", sandbox.Times{Atime: t0, Mtime: old, Ctime: t0, Btime: old})
-	if b, err := fsys.ReadStream("a.exe", "quill"); err != nil || string(b) != "payload" {
+	if b, err := fsys.ReadStream("a.exe", "extra"); err != nil || string(b) != "payload" {
 		t.Errorf("stream = %q, %v", b, err)
 	}
 }

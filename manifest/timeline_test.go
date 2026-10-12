@@ -55,7 +55,7 @@ func TestAnswerKeyEntries(t *testing.T) {
 	caps, streams := volume(t)
 	ads := ""
 	if streams {
-		ads = "  - { actor: u, offset: 6m, actions: [ { action: ads, path: d/b.txt, stream: quill, content: payload } ] }\n"
+		ads = "  - { actor: u, offset: 6m, actions: [ { action: ads, path: d/b.txt, stream: extra, content: payload } ] }\n"
 	}
 	_, res := runRes(t, pb+`  - { actor: u, offset: 1m, actions: [ { action: create, path: d/a.txt, content: hello } ] }
   - { actor: u, offset: 2m, actions: [ { action: update, path: d/a.txt, content: world } ] }
@@ -117,7 +117,7 @@ func TestAnswerKeyEntries(t *testing.T) {
 	}
 	if streams {
 		for _, s := range byEvent[ledger.StreamWritten] {
-			if s.Stream != "quill" || *s.Size != 7 || s.SHA256 != sha("payload") {
+			if s.Stream != "extra" || *s.Size != 7 || s.SHA256 != sha("payload") {
 				t.Errorf("stream: %+v", s)
 			}
 		}

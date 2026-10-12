@@ -65,7 +65,7 @@ func TestEvtxReadByVelocidex(t *testing.T) {
 	for i, f := range logon.Event.Fields {
 		switch f.Name {
 		case "TargetUserName":
-			logon.Event.Fields[i].Value = "alice"
+			logon.Event.Fields[i].Value = "user1"
 		case "LogonType":
 			logon.Event.Fields[i].Value = "10"
 		case "TargetLogonId":
@@ -74,7 +74,7 @@ func TestEvtxReadByVelocidex(t *testing.T) {
 	}
 	cleared, _ := libgen.EvtxBuiltins(1102)
 	cleared.Event.Time, cleared.Event.ProcessID, cleared.Event.ThreadID = when.Add(time.Hour), 1180, 4412
-	cleared.Event.Fields[1].Value = "alice"
+	cleared.Event.Fields[1].Value = "user1"
 	data, err := libgen.BuildEvtx(libgen.EvtxSpec{Channel: "Security", Computer: "WS01", FirstRecordID: 40,
 		Events: []libgen.EvtxEvent{logon.Event, cleared.Event}})
 	if err != nil {
@@ -110,11 +110,11 @@ func TestEvtxReadByVelocidex(t *testing.T) {
 		d := d.(map[string]any)
 		values[d["Name"].(string)] = d["Value"]
 	}
-	if len(values) != len(logon.Event.Fields) || values["TargetUserName"] != "alice" || values["LogonType"] != 10.0 || values["TargetLogonId"] != 999.0 || values["SubjectUserSid"] != "S-1-0-0" {
+	if len(values) != len(logon.Event.Fields) || values["TargetUserName"] != "user1" || values["LogonType"] != 10.0 || values["TargetLogonId"] != 999.0 || values["SubjectUserSid"] != "S-1-0-0" {
 		t.Errorf("4624 data %v", values)
 	}
-	if got := at(events[1], "UserData", "LogFileCleared", "SubjectUserName"); got != "alice" {
-		t.Errorf("1102 SubjectUserName %v, want alice", got)
+	if got := at(events[1], "UserData", "LogFileCleared", "SubjectUserName"); got != "user1" {
+		t.Errorf("1102 SubjectUserName %v, want user1", got)
 	}
 }
 

@@ -23,12 +23,12 @@ func fixedBoundary() func() string {
 
 func baseSpec() spec.EmailSpec {
 	return spec.EmailSpec{
-		From:      "Dana Reyes <d.reyes@northbridge.example>",
-		To:        []string{"Priyan N <priyan.n@acmecorp.example>"},
+		From:      "Recruiter <recruiter@vendor-a.example>",
+		To:        []string{"Employee <employee@corp.example>"},
 		Subject:   "Technical assessment",
 		Date:      "2026-03-02T09:14:00+05:30",
-		MessageID: "<c3f1a9@northbridge.example>",
-		BodyText:  "Hi Priyan,\n\nDetails below.\n",
+		MessageID: "<c3f1a9@vendor-a.example>",
+		BodyText:  "Hi there,\n\nDetails below.\n",
 	}
 }
 
@@ -49,7 +49,7 @@ func TestBuildPlainMessage(t *testing.T) {
 	if got := parsed.Header.Get("Subject"); got != "Technical assessment" {
 		t.Errorf("Subject = %q", got)
 	}
-	if got := parsed.Header.Get("Message-ID"); got != "<c3f1a9@northbridge.example>" {
+	if got := parsed.Header.Get("Message-ID"); got != "<c3f1a9@vendor-a.example>" {
 		t.Errorf("Message-ID = %q", got)
 	}
 	if got := parsed.Header.Get("Content-Type"); !strings.HasPrefix(got, "text/plain") {
@@ -81,8 +81,8 @@ func TestBuildUsesCRLF(t *testing.T) {
 func TestBuildHeaderOrderPutsCustomHeadersFirst(t *testing.T) {
 	s := baseSpec()
 	s.Headers = []spec.Header{
-		{Name: "Received", Value: "from mx01.acmecorp.example; Mon, 2 Mar 2026 09:14:07 +0530"},
-		{Name: "Received", Value: "from smtp-out.northbridge.example; Mon, 2 Mar 2026 09:14:03 +0530"},
+		{Name: "Received", Value: "from mx01.corp.example; Mon, 2 Mar 2026 09:14:07 +0530"},
+		{Name: "Received", Value: "from smtp-out.vendor-a.example; Mon, 2 Mar 2026 09:14:03 +0530"},
 		{Name: "Authentication-Results", Value: "spf=pass; dkim=pass; dmarc=none"},
 	}
 
@@ -214,22 +214,22 @@ func TestBuildFoldsLongHeaders(t *testing.T) {
 // hand-written Received: chain keeps its shape.
 func TestBuildPreservesAuthorFolding(t *testing.T) {
 	s := baseSpec()
-	s.Headers = []spec.Header{{Name: "Received", Value: "from mx01.acmecorp.example\nby wks-0417; Mon, 2 Mar 2026 09:14:07 +0530"}}
+	s.Headers = []spec.Header{{Name: "Received", Value: "from mx01.corp.example\nby wks-0417; Mon, 2 Mar 2026 09:14:07 +0530"}}
 
 	msg, _, err := Build(Options{Spec: s, Boundary: fixedBoundary()})
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
-	if !strings.Contains(string(msg), "Received: from mx01.acmecorp.example\r\n\tby wks-0417;") {
+	if !strings.Contains(string(msg), "Received: from mx01.corp.example\r\n\tby wks-0417;") {
 		t.Errorf("author folding not preserved:\n%s", msg)
 	}
 }
 
 func TestToMboxEscapesFromLines(t *testing.T) {
 	msg := []byte("Subject: x\r\n\r\nFrom the top this must be escaped\r\nnormal line\r\n")
-	out := string(ToMbox(msg, "d.reyes@northbridge.example", time.Date(2026, 3, 1, 11, 2, 0, 0, time.UTC)))
+	out := string(ToMbox(msg, "recruiter@vendor-a.example", time.Date(2026, 3, 1, 11, 2, 0, 0, time.UTC)))
 
-	if !strings.HasPrefix(out, "From d.reyes@northbridge.example Sun Mar  1 11:02:00 2026\n") {
+	if !strings.HasPrefix(out, "From recruiter@vendor-a.example Sun Mar  1 11:02:00 2026\n") {
 		t.Errorf("bad From_ line: %q", strings.SplitN(out, "\n", 2)[0])
 	}
 	if !strings.Contains(out, "\n>From the top") {
@@ -248,7 +248,7 @@ func TestEnvelopeSenderPrefersReturnPath(t *testing.T) {
 	}
 
 	s.ReturnPath = ""
-	if got := EnvelopeSender(s); got != "d.reyes@northbridge.example" {
+	if got := EnvelopeSender(s); got != "recruiter@vendor-a.example" {
 		t.Errorf("EnvelopeSender = %q, want the From address", got)
 	}
 }
@@ -285,20 +285,20 @@ func dirReader(dir string) func(string) ([]byte, error) {
 // overridden content_type had no test of their own.
 func TestEveryDocumentedFieldIsWritten(t *testing.T) {
 	s := baseSpec()
-	s.Cc = []string{"scheduling@northbridge.example"}
-	s.Bcc = []string{"audit@northbridge.example"}
-	s.ReplyTo = "no-reply@northbridge.example"
-	s.ReturnPath = "bounces+0188@northbridge.example"
+	s.Cc = []string{"scheduling@vendor-a.example"}
+	s.Bcc = []string{"audit@vendor-a.example"}
+	s.ReplyTo = "no-reply@vendor-a.example"
+	s.ReturnPath = "bounces+0188@vendor-a.example"
 	s.Subject = "Bewerbung: Prüfung"
-	s.InReplyTo = "<b2e0d8@acmecorp.example>"
-	s.References = []string{"<a1@acmecorp.example>", "<b2e0d8@acmecorp.example>"}
-	s.BodyHTML = `<p><img src="cid:logo@northbridge.example"></p>`
+	s.InReplyTo = "<b2e0d8@corp.example>"
+	s.References = []string{"<a1@corp.example>", "<b2e0d8@corp.example>"}
+	s.BodyHTML = `<p><img src="cid:logo@vendor-a.example"></p>`
 	s.Attachments = []spec.Attachment{{
 		Content:     "GIF89a",
 		Name:        "logo.dat",
 		ContentType: "image/gif",
 		Disposition: "inline",
-		ContentID:   "<logo@northbridge.example>",
+		ContentID:   "<logo@vendor-a.example>",
 	}}
 
 	msg, _, err := Build(Options{Spec: s, Boundary: fixedBoundary()})
@@ -311,14 +311,14 @@ func TestEveryDocumentedFieldIsWritten(t *testing.T) {
 		t.Fatalf("message does not parse: %v", err)
 	}
 	for _, h := range []struct{ name, want string }{
-		{"Cc", "scheduling@northbridge.example"},
+		{"Cc", "scheduling@vendor-a.example"},
 		// A sender's own copy of a message keeps the Bcc line; a message
 		// that has been delivered has not. fsagen writes the sender's copy.
-		{"Bcc", "audit@northbridge.example"},
-		{"Reply-To", "no-reply@northbridge.example"},
-		{"Return-Path", "bounces+0188@northbridge.example"},
-		{"In-Reply-To", "<b2e0d8@acmecorp.example>"},
-		{"References", "<a1@acmecorp.example> <b2e0d8@acmecorp.example>"},
+		{"Bcc", "audit@vendor-a.example"},
+		{"Reply-To", "no-reply@vendor-a.example"},
+		{"Return-Path", "bounces+0188@vendor-a.example"},
+		{"In-Reply-To", "<b2e0d8@corp.example>"},
+		{"References", "<a1@corp.example> <b2e0d8@corp.example>"},
 	} {
 		if got := parsed.Header.Get(h.name); got != h.want {
 			t.Errorf("%s = %q, want %q", h.name, got, h.want)
@@ -337,7 +337,7 @@ func TestEveryDocumentedFieldIsWritten(t *testing.T) {
 	if !strings.Contains(text, "Content-Type: image/gif") {
 		t.Error("content_type did not override the type guessed from logo.dat")
 	}
-	if !strings.Contains(text, "Content-ID: <logo@northbridge.example>") {
+	if !strings.Contains(text, "Content-ID: <logo@vendor-a.example>") {
 		t.Error("no Content-ID for the inline part")
 	}
 	if !strings.Contains(text, "Content-Disposition: inline") {

@@ -18,7 +18,7 @@ func TestUserAssistEncoding(t *testing.T) {
 	when := time.Date(2024, 3, 15, 9, 30, 12, 0, time.UTC)
 	keys := UserAssistKeys([]UserAssist{
 		{Path: `C:\Windows\System32\cmd.exe`, RunCount: 4, FocusCount: 2, FocusTimeMs: 61000, LastRun: when},
-		{Path: `C:\Users\alice\Desktop\tool.lnk`, RunCount: 1, LastRun: when},
+		{Path: `C:\Users\user1\Desktop\tool.lnk`, RunCount: 1, LastRun: when},
 		{Path: `E:\payload.exe`, RunCount: 1, LastRun: when},
 	}, when)
 	if len(keys) != 4 {
@@ -34,7 +34,7 @@ func TestUserAssistEncoding(t *testing.T) {
 	if got := programs.Values[1].Name; got != `R:\cnlybnq.rkr` {
 		t.Errorf("a program outside a known folder is named %q", got)
 	}
-	if got := rot13(rot13(`C:\Users\alice`)); got != `C:\Users\alice` {
+	if got := rot13(rot13(`C:\Users\user1`)); got != `C:\Users\user1` {
 		t.Errorf("rot13 is not its own inverse: %q", got)
 	}
 	d := programs.Values[0].Data
@@ -51,7 +51,7 @@ func TestUserAssistEncoding(t *testing.T) {
 // FILETIME device properties.
 func TestUSBStorKeys(t *testing.T) {
 	when := time.Date(2024, 3, 15, 9, 30, 12, 0, time.UTC)
-	keys, err := USBStorKeys([]USBDevice{{Vendor: "SanDisk", Product: "Cruzer Blade", Revision: "1.00", Serial: "4C530001231117116491", FirstInstall: when, LastArrival: when}}, when)
+	keys, err := USBStorKeys([]USBDevice{{Vendor: "Generic", Product: "Storage Unit", Revision: "1.00", Serial: "4C530001231117116491", FirstInstall: when, LastArrival: when}}, when)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestUSBStorKeys(t *testing.T) {
 		t.Errorf("first key %q, want Select", keys[0].Path)
 	}
 	inst := keys[1]
-	if inst.Path != `ControlSet001\Enum\USBSTOR\Disk&Ven_SanDisk&Prod_Cruzer_Blade&Rev_1.00\4C530001231117116491&0` {
+	if inst.Path != `ControlSet001\Enum\USBSTOR\Disk&Ven_Generic&Prod_Storage_Unit&Rev_1.00\4C530001231117116491&0` {
 		t.Errorf("instance key %q", inst.Path)
 	}
 	var hwid []byte
@@ -68,7 +68,7 @@ func TestUSBStorKeys(t *testing.T) {
 			hwid = v.Data
 		}
 	}
-	if !strings.Contains(string(hwid), string(utf16le(`USBSTOR\DiskSanDisk_Cruzer_Blade____1.00`))) {
+	if !strings.Contains(string(hwid), string(utf16le(`USBSTOR\DiskGeneric_Storage_Unit____1.00`))) {
 		t.Errorf("HardwareID lacks the padded id")
 	}
 	props := keys[2:]

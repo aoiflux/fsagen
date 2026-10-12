@@ -52,7 +52,7 @@ operations:
     content_file: content/id_rsa
 `)
 
-	if err := ExecuteManifest(root, filepath.Join(baseDir, "manifest.yaml"), compile.Options{Vars: map[string]string{"org": "ACME"}}); err != nil {
+	if err := ExecuteManifest(root, filepath.Join(baseDir, "manifest.yaml"), compile.Options{Vars: map[string]string{"org": "ExampleCorp"}}); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 
@@ -77,11 +77,11 @@ operations:
     render: true
 `)
 
-	if err := ExecuteManifest(root, filepath.Join(baseDir, "manifest.yaml"), compile.Options{Vars: map[string]string{"org": "ACME Corp"}}); err != nil {
+	if err := ExecuteManifest(root, filepath.Join(baseDir, "manifest.yaml"), compile.Options{Vars: map[string]string{"org": "Example Corp"}}); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 	got, _ := os.ReadFile(filepath.Join(root, "report.md"))
-	if string(got) != "# Report for ACME Corp\n" {
+	if string(got) != "# Report for Example Corp\n" {
 		t.Errorf("got %q", got)
 	}
 }
@@ -92,10 +92,10 @@ operations:
   - action: create
     path: out.txt
     content: "org=${VAR:org} seq=${SEQ}"
-`, map[string]string{"org": "ACME"})
+`, map[string]string{"org": "ExampleCorp"})
 
 	got, _ := os.ReadFile(filepath.Join(root, "out.txt"))
-	if string(got) != "org=ACME seq=1" {
+	if string(got) != "org=ExampleCorp seq=1" {
 		t.Errorf("got %q", got)
 	}
 }
@@ -295,9 +295,9 @@ operations:
     content_file: content/report.md
     pdf:
       title: "Configuration Review"
-      author: "svc-agent@acme.local"
-      creator: "SentinelIQ 2.1.4"
-      producer: "SentinelIQ Report Engine"
+      author: "svc-agent@corp.example"
+      creator: "AnalysisSuite 2.1.4"
+      producer: "AnalysisSuite Report Engine"
       created: "2026-03-14T02:33:12Z"
       modified: "2026-03-14T02:33:12Z"
 `)
@@ -315,9 +315,9 @@ operations:
 	}
 	for _, want := range []string{
 		"/Title (Configuration Review)",
-		"/Author (svc-agent@acme.local)",
-		"/Creator (SentinelIQ 2.1.4)",
-		"/Producer (SentinelIQ Report Engine)",
+		"/Author (svc-agent@corp.example)",
+		"/Creator (AnalysisSuite 2.1.4)",
+		"/Producer (AnalysisSuite Report Engine)",
 		"/CreationDate (D:20260314023312)",
 	} {
 		if !bytes.Contains(data, []byte(want)) {
@@ -381,11 +381,11 @@ operations:
   - action: email
     path: Inbox/0001.eml
     email:
-      from: "Dana <d@northbridge.example>"
-      to: ["priyan@acme.example"]
+      from: "Recruiter <recruiter@vendor-a.example>"
+      to: ["employee@corp.example"]
       subject: "Assessment"
       date: "2026-03-02T09:14:00Z"
-      message_id: "<a@northbridge.example>"
+      message_id: "<a@vendor-a.example>"
       body_text: "Hello"
 `, nil)
 

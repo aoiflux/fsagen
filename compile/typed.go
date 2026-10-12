@@ -83,6 +83,7 @@ var blockFormats = map[string][]spec.Format{
 	"vba":      {spec.FormatDOCM, spec.FormatXLSM},
 	"pe":       {spec.FormatPE},
 	"history":  {spec.FormatChromeHistory, spec.FormatFirefoxPlaces},
+	"cookies":  {spec.FormatChromeCookies},
 	"lnk":      {spec.FormatLNK},
 	"prefetch": {spec.FormatPrefetch},
 	"evtx":     {spec.FormatEvtx},
@@ -177,6 +178,15 @@ func checkTyped(op *Op, at func(field, format string, args ...any)) {
 	if op.History != nil {
 		checkHistory(op, at)
 	}
+	if k.has("content_len") && op.Format == spec.FormatChromeCookies {
+		at("content_len", "a cookie jar is as big as its cookies make it; give cookies.entries instead")
+	}
+	if op.Format == spec.FormatChromeCookies && op.Cookies == nil {
+		at("format", "chrome_cookies needs a cookies block listing its entries")
+	}
+	if op.Cookies != nil {
+		checkCookies(op, at)
+	}
 	if op.Docx != nil {
 		checkBlockTimes(at, "docx", field{"created", op.Docx.Created}, field{"modified", op.Docx.Modified})
 	}
@@ -247,10 +257,36 @@ func checkHistory(op *Op, at func(string, string, ...any)) {
 		if v.FromVisit == i+1 {
 			at("history", "visits[%d]: from_visit points at itself", i)
 		}
+		if v.Redirect != "" {
+			if !slices.Contains(libgen.Redirects, v.Redirect) {
+				at("history", "visits[%d]: unknown redirect %q (want one of: %s)", i, v.Redirect, strings.Join(libgen.Redirects, ", "))
+			}
+			if v.FromVisit == 0 {
+				at("history", "visits[%d]: a redirect needs from_visit, the visit it was redirected from", i)
+			}
+		}
+	}
+	onward := map[int]int{}
+	for i, v := range h.Visits {
+		if v.Redirect == "" || v.FromVisit == 0 {
+			continue
+		}
+		if prev, seen := onward[v.FromVisit]; seen {
+			at("history", "visits[%d] and visits[%d] are both redirected from visit %d; a redirect chain is a line", prev, i, v.FromVisit)
+		}
+		onward[v.FromVisit] = i
 	}
 	for i, d := range h.Downloads {
 		if strings.TrimSpace(d.URL) == "" {
 			at("history", "downloads[%d] has no url", i)
+		}
+		for n, u := range d.URLChain {
+			if strings.TrimSpace(u) == "" {
+				at("history", "downloads[%d].url_chain[%d] is empty", i, n)
+			}
+		}
+		if n := len(d.URLChain); n > 0 && d.URLChain[n-1] != d.URL {
+			at("history", "downloads[%d]: url_chain must end at url %q, not %q", i, d.URL, d.URLChain[n-1])
 		}
 		if strings.TrimSpace(d.TargetPath) == "" {
 			at("history", "downloads[%d] has no target_path", i)
@@ -259,6 +295,39 @@ func checkHistory(op *Op, at func(string, string, ...any)) {
 		if d.ReceivedBytes < 0 || d.TotalBytes < 0 {
 			at("history", "downloads[%d]: a byte count cannot be negative", i)
 		}
+	}
+}
+
+// checkCookies checks every cookie as the jar's builder will, and refuses two
+// that Chrome's unique index would: the same host, name, path and scheme.
+func checkCookies(op *Op, at func(string, string, ...any)) {
+	jar := op.Cookies
+	if len(jar.Entries) == 0 {
+		at("cookies", "needs at least one entry")
+	}
+	seen := map[string]int{}
+	for i, e := range jar.Entries {
+		times := map[string]time.Time{}
+		for _, f := range []field{{"created", e.Created}, {"expires", e.Expires}, {"last_access", e.LastAccess}} {
+			if err := checkTime(f.val); err != nil {
+				at("cookies", "entries[%d].%s: %v", i, f.key, err)
+			} else if f.val != "" {
+				times[f.key], _ = time.Parse(time.RFC3339, strings.TrimSpace(f.val))
+			}
+		}
+		c := libgen.Cookie{Host: e.Host, Name: e.Name, Path: e.Path, SameSite: e.SameSite, Created: times["created"], Expires: times["expires"]}
+		if err := libgen.CheckCookie(c); err != nil {
+			at("cookies", "entries[%d]: %v", i, err)
+		}
+		path := e.Path
+		if path == "" {
+			path = "/"
+		}
+		key := fmt.Sprintf("%s\x00%s\x00%s\x00%t", e.Host, e.Name, path, e.Secure)
+		if prev, dup := seen[key]; dup {
+			at("cookies", "entries[%d] repeats entries[%d]: one jar holds one cookie per host, name and path", i, prev)
+		}
+		seen[key] = i
 	}
 }
 

@@ -13,9 +13,9 @@ import (
 func TestLinuxLogBlockRules(t *testing.T) {
 	const head = "start: 2026-01-01T00:00:00Z\noperations:\n  - action: create\n"
 	p := mustLoad(t, ModeManifest, head+
-		"    path: var/log/wtmp\n    utmp: { records: [ { type: boot }, { type: login, user: alice, host: 203.0.113.7 } ] }\n"+
+		"    path: var/log/wtmp\n    utmp: { records: [ { type: boot }, { type: login, user: user1, host: 203.0.113.7 } ] }\n"+
 		"  - action: create\n    path: var/log/btmp\n    utmp: { records: [ { type: failed, user: root } ] }\n"+
-		"  - action: create\n    path: var/log/audit/audit.log\n    auditd: { events: [ { type: execve, user: alice, argv: [curl, -o, /tmp/x] } ] }\n")
+		"  - action: create\n    path: var/log/audit/audit.log\n    auditd: { events: [ { type: execve, user: user1, argv: [curl, -o, /tmp/x] } ] }\n")
 	for i, want := range []spec.Format{spec.FormatUtmp, spec.FormatUtmp, spec.FormatAuditd} {
 		if got := p.Ops[i].Format; got != want {
 			t.Errorf("op %d (%s): format %q, want %q", i, p.Ops[i].Path, got, want)

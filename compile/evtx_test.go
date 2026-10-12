@@ -11,7 +11,7 @@ import (
 // checked against what its event takes before anything is written.
 func TestEvtxBlockRules(t *testing.T) {
 	const head = "start: 2026-01-01T00:00:00Z\noperations:\n  - action: create\n"
-	p := mustLoad(t, ModeManifest, head+"    path: Logs/Security.evtx\n    evtx: { events: [ { event_id: 4624, data: { TargetUserName: alice, LogonType: 10 } } ] }\n")
+	p := mustLoad(t, ModeManifest, head+"    path: Logs/Security.evtx\n    evtx: { events: [ { event_id: 4624, data: { TargetUserName: user1, LogonType: 10 } } ] }\n")
 	if got := p.Ops[0].Format; got != spec.FormatEvtx {
 		t.Errorf("format %q, want evtx inferred from .evtx", got)
 	}
@@ -28,9 +28,9 @@ func TestEvtxBlockRules(t *testing.T) {
 		{"two channels", "    path: a.evtx\n    evtx: { events: [ { event_id: 4624 }, { event_id: 7045 } ] }\n", "logged to System"},
 		{"no provider", "    path: a.evtx\n    evtx: { events: [ { event_id: 4625 } ] }\n", "needs the provider"},
 		{"big id", "    path: a.evtx\n    evtx: { events: [ { event_id: 70000, provider: X } ] }\n", "16 bits"},
-		{"unknown data", "    path: a.evtx\n    evtx: { events: [ { event_id: 4624, data: { Username: alice } } ] }\n", `no data named "Username"`},
+		{"unknown data", "    path: a.evtx\n    evtx: { events: [ { event_id: 4624, data: { Username: user1 } } ] }\n", `no data named "Username"`},
 		{"bad number", "    path: a.evtx\n    evtx: { events: [ { event_id: 4624, data: { LogonType: interactive } } ] }\n", "LogonType is a uint32"},
-		{"bad sid", "    path: a.evtx\n    evtx: { events: [ { event_id: 4624, data: { TargetUserSid: alice } } ] }\n", "not a SID"},
+		{"bad sid", "    path: a.evtx\n    evtx: { events: [ { event_id: 4624, data: { TargetUserSid: user1 } } ] }\n", "not a SID"},
 		{"bad guid", "    path: a.evtx\n    evtx: { events: [ { event_id: 4624, data: { LogonGuid: '{1}' } } ] }\n", "not a GUID"},
 		{"bad time", "    path: a.evtx\n    evtx: { events: [ { event_id: 4624, time: soon } ] }\n", "events[0].time"},
 		{"level", "    path: a.evtx\n    evtx: { events: [ { event_id: 4624, level: 300 } ] }\n", "level 300"},

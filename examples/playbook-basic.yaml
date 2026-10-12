@@ -1,12 +1,12 @@
 start: "2021-01-01T09:00:00Z"
 actors:
-  - name: alice
-    base: users/alice
-  - name: bob
-    base: users/bob
+  - name: user1
+    base: users/user1
+  - name: user2
+    base: users/user2
 
 steps:
-  - actor: alice
+  - actor: user1
     offset: 0s
     every: 15m
     repeat: 2
@@ -20,7 +20,7 @@ steps:
         content_len: 64
         offset: 5m
 
-  - actor: bob
+  - actor: user2
     offset: 30m
     actions:
       - action: create

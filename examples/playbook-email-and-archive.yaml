@@ -1,7 +1,7 @@
 start: "2021-09-15T10:00:00Z"
 actors:
   - name: insider
-    base: users/bob
+    base: users/user2
 
 steps:
   # Real messages and real images, then a real archive of both.
@@ -15,7 +15,7 @@ steps:
         path: mail/msg-${SEQ}.eml
         id: mail
         email:
-          from: bob@example.com
+          from: user2@example.com
           to: ["personal-${SEQ}@mail.example"]
           subject: "Handover notes ${SEQ}"
           body_text: |

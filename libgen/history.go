@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -32,9 +33,25 @@ var transitionCodes = map[string]struct{ chrome, firefox int }{
 	"reload":      {8, 9},
 }
 
-// chromeChain marks a visit that is a navigation on its own rather than one
-// hop of a redirect chain, which is how Chrome records an ordinary click.
-const chromeChain = 0x30000000
+// Chrome's transition qualifiers. A redirect chain is one navigation and the
+// hops it was redirected through: its first visit carries chainStart, its last
+// chainEnd, and every hop after the first says how it was reached. A visit
+// that is a navigation on its own carries both chain bits, which is how Chrome
+// records an ordinary click.
+const (
+	chromeChainStart     = 0x10000000
+	chromeChainEnd       = 0x20000000
+	chromeClientRedirect = 0x40000000
+	chromeServerRedirect = 0x80000000
+)
+
+// Redirects are the ways a visit can have been redirected to.
+var Redirects = []string{"server", "client"}
+
+// firefoxRedirectTemporary is Firefox's visit_type for a page reached by an
+// HTTP redirect (302). Firefox has no type for a client redirect, so such a
+// visit keeps its transition's own type.
+const firefoxRedirectTemporary = 6
 
 // Visit is one page view.
 type Visit struct {
@@ -45,6 +62,9 @@ type Visit struct {
 	// FromVisit is the 1-based position of the visit this one came from,
 	// which is how a redirect or a click-through is recorded. Zero means none.
 	FromVisit int
+	// Redirect is one of Redirects when this visit was redirected to from
+	// FromVisit; empty means it was navigated to.
+	Redirect string
 }
 
 // Download is one completed download, which Chrome records and Firefox does
@@ -57,6 +77,13 @@ type Download struct {
 	Received   int64
 	Total      int64
 	MimeType   string
+	// URLChain is every URL requested, first to last, the last being URL.
+	// Empty means URL alone.
+	URLChain []string
+	// Referrer and TabURL default to URL; TabReferrerURL to empty.
+	Referrer       string
+	TabURL         string
+	TabReferrerURL string
 }
 
 // HistorySpec is what a scenario says a profile's history holds.
@@ -129,6 +156,34 @@ func validateTransitions(spec HistorySpec) error {
 			return fmt.Errorf("history: unknown transition %q (want one of: %s)", v.Transition, strings.Join(Transitions, ", "))
 		}
 	}
+	return validateRedirects(spec)
+}
+
+// validateRedirects rejects a redirect that comes from no visit, and a visit
+// redirected onward twice: a redirect chain is a line, one hop after another.
+// A download's url chain must end at the download's own url.
+func validateRedirects(spec HistorySpec) error {
+	onward := map[int]int{}
+	for i, v := range spec.Visits {
+		if v.Redirect == "" {
+			continue
+		}
+		if !slices.Contains(Redirects, v.Redirect) {
+			return fmt.Errorf("history: visits[%d]: unknown redirect %q (want one of: %s)", i, v.Redirect, strings.Join(Redirects, ", "))
+		}
+		if v.FromVisit < 1 || v.FromVisit > len(spec.Visits) || v.FromVisit == i+1 {
+			return fmt.Errorf("history: visits[%d]: a redirect needs from_visit, the visit it was redirected from", i)
+		}
+		if prev, seen := onward[v.FromVisit]; seen {
+			return fmt.Errorf("history: visits[%d] and visits[%d] are both redirected from visit %d; a redirect chain is a line", prev, i, v.FromVisit)
+		}
+		onward[v.FromVisit] = i
+	}
+	for i, d := range spec.Downloads {
+		if n := len(d.URLChain); n > 0 && d.URLChain[n-1] != d.URL {
+			return fmt.Errorf("history: downloads[%d]: url_chain must end at url %q, not %q", i, d.URL, d.URLChain[n-1])
+		}
+	}
 	return nil
 }
 
@@ -198,8 +253,20 @@ func insertChromeURLs(db *sql.DB, rows []*pageRow) error {
 // a view of.
 func insertChromeVisits(db *sql.DB, visits []Visit, index map[string]int) error {
 	const q = `INSERT INTO visits(id, url, visit_time, from_visit, transition, visit_duration) VALUES(?,?,?,?,?,?)`
+	redirected := redirectedFrom(visits)
 	for i, v := range visits {
-		code := transitionCodes[or(v.Transition, defaultTransition)].chrome | chromeChain
+		code := transitionCodes[or(v.Transition, defaultTransition)].chrome
+		switch v.Redirect {
+		case "server":
+			code |= chromeServerRedirect
+		case "client":
+			code |= chromeClientRedirect
+		default:
+			code |= chromeChainStart
+		}
+		if !redirected[i+1] {
+			code |= chromeChainEnd
+		}
 		if _, err := db.Exec(q, i+1, index[v.URL], chromeTime(v.Time), v.FromVisit, code, 0); err != nil {
 			return err
 		}
@@ -207,20 +274,39 @@ func insertChromeVisits(db *sql.DB, visits []Visit, index map[string]int) error 
 	return nil
 }
 
-// insertChromeDownloads writes one completed download and the single-hop url
-// chain that led to it.
+// redirectedFrom is the set of visits, numbered from 1, that some later visit
+// was redirected from: those are not the end of their chain.
+func redirectedFrom(visits []Visit) map[int]bool {
+	out := map[int]bool{}
+	for _, v := range visits {
+		if v.Redirect != "" {
+			out[v.FromVisit] = true
+		}
+	}
+	return out
+}
+
+// insertChromeDownloads writes each completed download and the url chain that
+// led to it.
 func insertChromeDownloads(db *sql.DB, downloads []Download, s *prng.Stream) error {
 	const q = `INSERT INTO downloads(id, guid, current_path, target_path, start_time, received_bytes, total_bytes, state, danger_type, interrupt_reason, hash, end_time, opened, last_access_time, transient, referrer, site_url, tab_url, tab_referrer_url, http_method, by_ext_id, by_ext_name, etag, last_modified, mime_type, original_mime_type)
-				VALUES(?,?,?,?,?,?,?,1,0,0,?,?,0,?,0,?,?,?,'','GET','','','','',?,?)`
+				VALUES(?,?,?,?,?,?,?,1,0,0,?,?,0,?,0,?,?,?,?,'GET','','','','',?,?)`
 	for i, d := range downloads {
 		site := origin(d.URL)
 		if _, err := db.Exec(q,
 			i+1, s.UUID(), d.TargetPath, d.TargetPath, chromeTime(d.Start), d.Received, d.Total,
-			[]byte{}, chromeTime(d.End), chromeTime(d.End), d.URL, site, d.URL, d.MimeType, d.MimeType); err != nil {
+			[]byte{}, chromeTime(d.End), chromeTime(d.End), or(d.Referrer, d.URL), site, or(d.TabURL, d.URL), d.TabReferrerURL,
+			d.MimeType, d.MimeType); err != nil {
 			return err
 		}
-		if _, err := db.Exec(`INSERT INTO downloads_url_chains(id, chain_index, url) VALUES(?,0,?)`, i+1, d.URL); err != nil {
-			return err
+		chain := d.URLChain
+		if len(chain) == 0 {
+			chain = []string{d.URL}
+		}
+		for n, u := range chain {
+			if _, err := db.Exec(`INSERT INTO downloads_url_chains(id, chain_index, url) VALUES(?,?,?)`, i+1, n, u); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -304,6 +390,9 @@ func insertFirefoxVisits(db *sql.DB, visits []Visit, index map[string]int) error
 	const session = int64(1)
 	for i, v := range visits {
 		code := transitionCodes[or(v.Transition, defaultTransition)].firefox
+		if v.Redirect == "server" {
+			code = firefoxRedirectTemporary
+		}
 		if _, err := db.Exec(q, i+1, v.FromVisit, index[v.URL], prTime(v.Time), code, session); err != nil {
 			return err
 		}

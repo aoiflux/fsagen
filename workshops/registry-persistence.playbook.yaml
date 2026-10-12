@@ -1,0 +1,187 @@
+# Workshop: malicious registry entries
+#
+# A workstation whose hives hold an ordinary set of programs that start at
+# logon, and three entries an intruder added among them: a per-user Run value,
+# a machine-wide RunOnce, and a service. Build it into an NTFS image:
+#
+#   fsagen --seed 4404 --playbook workshops/registry-persistence.playbook.yaml \
+#          --image registry.img --image-fs ntfs --image-size 64M \
+#          --image-time 2026-03-12T06:00:00Z \
+#          --timeline registry.body --timeline-source modelled
+#
+# or, to hand out the hives and logs alone, into a directory (nothing here is
+# an executable, so a plain folder is safe to share):
+#
+#   fsagen --seed 4404 --playbook workshops/registry-persistence.playbook.yaml ./registry
+#
+# What a learner should find, and how:
+# - Users/user1/NTUSER.DAT, Software\Microsoft\Windows\CurrentVersion\Run:
+#   SyncAgent starts a program from the user's AppData\Roaming (T1547.001).
+#   The key's last-write time, 09:22 on 2026-03-11, is when it was added; the
+#   other values have been there since 2025.
+# - Windows/System32/config/SOFTWARE, ...\CurrentVersion\RunOnce: rundll32
+#   loads a DLL from C:\Users\Public, once, at the next logon (T1547.001,
+#   T1218.011).
+# - Windows/System32/config/SYSTEM, ControlSet001\Services\UpdateBroker: a
+#   service whose image is in C:\ProgramData (T1543.003). System.evtx records
+#   its installation as event 7045 at the same minute.
+# - Security.evtx: 4688 for each of the intruder's programs, which ties the
+#   entries to processes that ran.
+# - Decoys: NotesApp is installed per user under AppData\Local\Programs, a
+#   path a naive rule flags too, and it has been there for months. A Run value
+#   is not a finding because of where it points; its time and its company are
+#   what tell it apart.
+
+start: 2026-03-11T09:00:00Z
+
+actors:
+  - name: user1
+    base: Users/user1
+  - name: system
+    base: Windows/System32
+
+steps:
+  # -- The hives as they stood that morning ---------------------------------
+  - actor: user1
+    offset: 0m
+    actions:
+      - action: create
+        path: NTUSER.DAT
+        registry:
+          keys:
+            - path: Software\Microsoft\Windows\CurrentVersion\Run
+              last_written: 2025-09-15T08:12:40Z
+              values:
+                - { name: ChatClient, data: '"C:\Program Files\Vendor A\Chat\chat.exe" --minimized' }
+                - { name: FileSync, data: '"C:\Program Files (x86)\Vendor B\Sync\bsync.exe" /background' }
+                - { name: NotesApp, data: 'C:\Users\user1\AppData\Local\Programs\Vendor C Notes\notes.exe' }
+            - path: Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced
+              last_written: 2025-06-02T10:30:00Z
+              values:
+                - { name: HideFileExt, type: REG_DWORD, data: "1" }
+
+  - actor: system
+    offset: 0m
+    actions:
+      - action: create
+        path: config/SOFTWARE
+        registry:
+          keys:
+            - path: Microsoft\Windows\CurrentVersion\Run
+              last_written: 2025-08-20T16:05:00Z
+              values:
+                - { name: AudioTray, data: '"C:\Program Files\Vendor D\Audio\tray.exe"' }
+                - { name: PrinterMonitor, data: '"C:\Program Files\Vendor E\Print\monitor.exe" -silent' }
+            - path: Microsoft\Windows\CurrentVersion\RunOnce
+              last_written: 2026-03-10T17:02:11Z
+              values: []
+      - action: create
+        path: config/SYSTEM
+        registry:
+          keys:
+            - path: ControlSet001\Services\AudioSrv
+              last_written: 2025-04-01T07:00:00Z
+              values:
+                - { name: ImagePath, type: REG_EXPAND_SZ, data: '%SystemRoot%\System32\svchost.exe -k LocalServiceNetworkRestricted -p' }
+                - { name: Start, type: REG_DWORD, data: "2" }
+                - { name: Type, type: REG_DWORD, data: "32" }
+
+  # -- The intruder's three entries (09:22 to 09:24) -------------------------
+  - actor: user1
+    offset: 22m
+    actions:
+      - action: update
+        path: NTUSER.DAT
+        mitre: [T1547.001]
+        registry:
+          keys:
+            - path: Software\Microsoft\Windows\CurrentVersion\Run
+              last_written: 2026-03-11T09:22:00Z
+              values:
+                - { name: ChatClient, data: '"C:\Program Files\Vendor A\Chat\chat.exe" --minimized' }
+                - { name: FileSync, data: '"C:\Program Files (x86)\Vendor B\Sync\bsync.exe" /background' }
+                - { name: NotesApp, data: 'C:\Users\user1\AppData\Local\Programs\Vendor C Notes\notes.exe' }
+                - { name: SyncAgent, data: 'C:\Users\user1\AppData\Roaming\SyncAgent\sync-helper.exe' }
+            - path: Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced
+              last_written: 2025-06-02T10:30:00Z
+              values:
+                - { name: HideFileExt, type: REG_DWORD, data: "1" }
+
+  - actor: system
+    offset: 23m
+    actions:
+      - action: update
+        path: config/SOFTWARE
+        mitre: [T1547.001, T1218.011]
+        registry:
+          keys:
+            - path: Microsoft\Windows\CurrentVersion\Run
+              last_written: 2025-08-20T16:05:00Z
+              values:
+                - { name: AudioTray, data: '"C:\Program Files\Vendor D\Audio\tray.exe"' }
+                - { name: PrinterMonitor, data: '"C:\Program Files\Vendor E\Print\monitor.exe" -silent' }
+            - path: Microsoft\Windows\CurrentVersion\RunOnce
+              last_written: 2026-03-11T09:23:00Z
+              values:
+                - { name: CacheRebuild, data: 'rundll32.exe C:\Users\Public\libcache.dll,Start' }
+
+  - actor: system
+    offset: 24m
+    actions:
+      - action: update
+        path: config/SYSTEM
+        mitre: [T1543.003]
+        registry:
+          keys:
+            - path: ControlSet001\Services\AudioSrv
+              last_written: 2025-04-01T07:00:00Z
+              values:
+                - { name: ImagePath, type: REG_EXPAND_SZ, data: '%SystemRoot%\System32\svchost.exe -k LocalServiceNetworkRestricted -p' }
+                - { name: Start, type: REG_DWORD, data: "2" }
+                - { name: Type, type: REG_DWORD, data: "32" }
+            - path: ControlSet001\Services\UpdateBroker
+              last_written: 2026-03-11T09:24:00Z
+              values:
+                - { name: ImagePath, type: REG_EXPAND_SZ, data: 'C:\ProgramData\UpdateBroker\broker.exe' }
+                - { name: DisplayName, data: Update Broker }
+                - { name: Start, type: REG_DWORD, data: "2" }
+                - { name: Type, type: REG_DWORD, data: "16" }
+                - { name: ObjectName, data: LocalSystem }
+
+  # -- What the logs saw ------------------------------------------------------
+  - actor: system
+    offset: 25m
+    actions:
+      - action: create
+        path: winevt/Logs/System.evtx
+        mitre: [T1543.003]
+        evtx:
+          computer: WS-0417.corp.example
+          events:
+            - event_id: 7045
+              time: "2026-03-11T09:24:00Z"
+              data:
+                ServiceName: Update Broker
+                ImagePath: 'C:\ProgramData\UpdateBroker\broker.exe'
+                ServiceType: user mode service
+                StartType: auto start
+                AccountName: LocalSystem
+      - action: create
+        path: winevt/Logs/Security.evtx
+        mitre: [T1547.001]
+        evtx:
+          computer: WS-0417.corp.example
+          events:
+            - event_id: 4688
+              time: "2026-03-11T09:21:40Z"
+              data:
+                NewProcessName: 'C:\Users\user1\AppData\Roaming\SyncAgent\sync-helper.exe'
+                SubjectUserName: user1
+                SubjectDomainName: CORP
+            - event_id: 4688
+              time: "2026-03-11T09:23:05Z"
+              data:
+                NewProcessName: 'C:\Windows\System32\rundll32.exe'
+                CommandLine: 'rundll32.exe C:\Users\Public\libcache.dll,Start'
+                SubjectUserName: user1
+                SubjectDomainName: CORP

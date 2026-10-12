@@ -13,8 +13,8 @@ import (
 func TestRegistryBlockRules(t *testing.T) {
 	const head = "start: 2026-01-01T00:00:00Z\noperations:\n  - action: create\n"
 	p := mustLoad(t, ModeManifest, head+
-		"    path: Users/alice/NTUSER.DAT\n    registry: { run: [ { name: Updater, command: 'C:\\x.exe' } ] }\n"+
-		"  - action: create\n    path: config/SYSTEM\n    registry: { usbstor: [ { vendor: SanDisk, product: Cruzer, revision: '1.00', serial: ABC123 } ] }\n"+
+		"    path: Users/user1/NTUSER.DAT\n    registry: { run: [ { name: Updater, command: 'C:\\x.exe' } ] }\n"+
+		"  - action: create\n    path: config/SYSTEM\n    registry: { usbstor: [ { vendor: Generic, product: Storage, revision: '1.00', serial: ABC123 } ] }\n"+
 		"  - action: create\n    path: lab/sample.hve\n    registry: { keys: [ { path: 'A\\B' } ] }\n"+
 		"  - action: create\n    path: stage/0.dat\n    content_len: 16\n")
 	for i, want := range []spec.Format{spec.FormatRegistry, spec.FormatRegistry, spec.FormatRegistry, ""} {

@@ -213,7 +213,7 @@ func TestPreconditions(t *testing.T) {
 	mustFail(t, ModeManifest, "operations:\n  - action: update\n    path: never_created.txt\n    content: x\n", "does not exist; use create")
 	mustFail(t, ModeManifest, "operations:\n  - action: truncate\n    path: log.txt\n", "does not exist; use create")
 	mustFail(t, ModeManifest, "operations:\n  - action: motw\n    path: a/zone9.exe\n    zone_id: 3\n", "base a/zone9.exe does not exist")
-	mustFail(t, ModeManifest, "operations:\n  - action: ads\n    path: x.bin\n    stream: quill\n    content: h\n", "base x.bin does not exist")
+	mustFail(t, ModeManifest, "operations:\n  - action: ads\n    path: x.bin\n    stream: extra\n    content: h\n", "base x.bin does not exist")
 	mustFail(t, ModeManifest, "operations:\n  - action: create\n    path: a\n    content: a\n  - action: create\n    path: b\n    content: b\n  - action: rename\n    path: a\n    new_path: b\n", "b already exists")
 	mustFail(t, ModeManifest, "operations:\n  - action: copy\n    path: nope\n    new_path: b\n", "nope does not exist")
 	mustFail(t, ModeManifest, "operations:\n  - action: mace\n    path: nope\n    mtime: 2020-01-01T00:00:00Z\n", "nope does not exist")
@@ -476,14 +476,14 @@ func TestPrepareOperationRendersNestedSpecs(t *testing.T) {
 		},
 	}
 	got, err := Prepare(op, nil, render.Context{
-		Variables: map[string]string{"box": "Inbox", "domain": "acme.example", "who": "priyan"},
+		Variables: map[string]string{"box": "Inbox", "domain": "corp.example", "who": "employee"},
 	})
 	if err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
-	if got.Path != "mail/Inbox/msg.eml" || got.Email.From != "a@acme.example" || got.Email.To[0] != "b@acme.example" ||
-		got.Email.Subject != "Hello priyan" || got.Email.Headers[0].Value != "acme.example" ||
-		got.Email.Attachments[0].SourceFile != "content/priyan.pdf" {
+	if got.Path != "mail/Inbox/msg.eml" || got.Email.From != "a@corp.example" || got.Email.To[0] != "b@corp.example" ||
+		got.Email.Subject != "Hello employee" || got.Email.Headers[0].Value != "corp.example" ||
+		got.Email.Attachments[0].SourceFile != "content/employee.pdf" {
 		t.Errorf("not fully templated: %+v %+v", got, got.Email)
 	}
 }

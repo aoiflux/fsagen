@@ -152,7 +152,7 @@ func TestTimelinePassKeepsAtime(t *testing.T) {
 		}
 	}
 	if fsys.SupportsStreams() {
-		if err := fsys.WriteStream("d/b.txt", "quill", []byte("payload")); err != nil {
+		if err := fsys.WriteStream("d/b.txt", "extra", []byte("payload")); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -184,7 +184,7 @@ func TestTimelinePassKeepsAtime(t *testing.T) {
 // F-TL-4: every named stream is its own record, with its size and digest,
 // whatever its name (here one with a space in it), as The Sleuth Kit lists
 // them.
-func TestStreamsQuillAndSpaceNameWithSizes(t *testing.T) {
+func TestStreamsNamedAndSpaceNameWithSizes(t *testing.T) {
 	root, fsys := openRoot(t)
 	if !fsys.SupportsStreams() {
 		t.Skip("no named streams on this volume")
@@ -192,7 +192,7 @@ func TestStreamsQuillAndSpaceNameWithSizes(t *testing.T) {
 	if err := fsys.WriteFile("a.txt", []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	streams := map[string]string{"quill": "payload", "my notes": "twelve bytes", "Zone.Identifier": "[ZoneTransfer]\r\nZoneId=3\r\n"}
+	streams := map[string]string{"extra": "payload", "my notes": "twelve bytes", "Zone.Identifier": "[ZoneTransfer]\r\nZoneId=3\r\n"}
 	for name, data := range streams {
 		if err := fsys.WriteStream("a.txt", name, []byte(data)); err != nil {
 			t.Fatal(err)
@@ -200,7 +200,7 @@ func TestStreamsQuillAndSpaceNameWithSizes(t *testing.T) {
 	}
 	body := out(t, generate(t, root), "bodyfile")
 	for name, data := range streams {
-		md5 := map[string]string{"quill": "321c3cf486ed509164edec1e1981fec8", "my notes": "c91fa94e14cf2fa5474beceff788c0dc", "Zone.Identifier": "fbccf14d504b7b2dbcb5a5bda75bd93b"}[name]
+		md5 := map[string]string{"extra": "321c3cf486ed509164edec1e1981fec8", "my notes": "c91fa94e14cf2fa5474beceff788c0dc", "Zone.Identifier": "fbccf14d504b7b2dbcb5a5bda75bd93b"}[name]
 		re := regexp.MustCompile(`(?m)^([0-9a-f]{32})\|/a\.txt:` + regexp.QuoteMeta(name) + `\|[^|]+\|r/r[-rwx]{9}\|0\|0\|` + strconv.Itoa(len(data)) + `\|`)
 		m := re.FindStringSubmatch(body)
 		if m == nil {
@@ -244,7 +244,7 @@ func sample() *Timeline {
 	return &Timeline{Source: SourceModelled, Entries: []Entry{
 		{Path: "docs", Type: TypeDir, Mode: fs.ModeDir | 0o755, Inode: "2", Atime: at(1), Mtime: at(4), Ctime: at(4), Btime: at(1)},
 		{Path: "docs/a.txt", Type: TypeFile, Mode: 0o644, Size: 5, Inode: "3", MD5: "5d41402abc4b2a76b9719d911017c592", Atime: at(1), Mtime: at(2), Ctime: at(3), Btime: at(1)},
-		{Path: "docs/a.txt", Stream: "quill", Type: TypeStream, Mode: 0o644, Size: 7, Inode: "3", MD5: "321c3cf486ed509164edec1e1981fec8", Atime: at(1), Mtime: at(2), Ctime: at(3), Btime: at(1)},
+		{Path: "docs/a.txt", Stream: "extra", Type: TypeStream, Mode: 0o644, Size: 7, Inode: "3", MD5: "321c3cf486ed509164edec1e1981fec8", Atime: at(1), Mtime: at(2), Ctime: at(3), Btime: at(1)},
 		{Path: "docs/gone.txt", Type: TypeFile, Mode: 0o600, Size: 0, Inode: "4", MD5: "d41d8cd98f00b204e9800998ecf8427e", Mtime: at(3), Deleted: true},
 		{Path: "docs/big.bin", Type: TypeFile, Mode: 0o444, Size: 1 << 40, Inode: "5", UID: 1000, GID: 100, Mtime: at(5), Atime: at(5)},
 		{Path: "link", Type: TypeLink, Mode: 0o777, Inode: "6", LinkTarget: "docs"},
@@ -361,7 +361,7 @@ func TestMactimeAccepts(t *testing.T) {
 	for _, want := range []string{
 		`2021-03-01T09:00:01Z,0,.a.b,d/drwxr-xr-x,0,0,2,"/docs"`,
 		`2021-03-01T09:00:02Z,5,m...,r/rrw-r--r--,0,0,3,"/docs/a.txt"`,
-		`2021-03-01T09:00:02Z,7,m...,r/rrw-r--r--,0,0,3,"/docs/a.txt:quill"`,
+		`2021-03-01T09:00:02Z,7,m...,r/rrw-r--r--,0,0,3,"/docs/a.txt:extra"`,
 		`2021-03-01T09:00:03Z,0,m...,r/rrw-------,0,0,4,"/docs/gone.txt (deleted)"`,
 		`2021-03-01T09:00:04Z,0,m.c.,d/drwxr-xr-x,0,0,2,"/docs"`,
 		`2021-03-01T09:00:05Z,1099511627776,ma..,r/rr--r--r--,1000,100,5,"/docs/big.bin"`,

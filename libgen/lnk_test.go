@@ -193,7 +193,7 @@ func sampleLNKSpec() LNKSpec {
 		DriveType:    "removable",
 		VolumeSerial: 0x1A2B3C4D,
 		VolumeLabel:  "USBSTICK",
-		MachineID:    "DESKTOP-QUILL",
+		MachineID:    "DESKTOP-LAB01",
 		Created:      created,
 		Accessed:     created.Add(time.Hour),
 		Modified:     created.Add(2 * time.Hour),
@@ -274,7 +274,7 @@ func TestLNKRoundTrip(t *testing.T) {
 		}
 	}
 
-	if p.machine != "DESKTOP-QUILL" {
+	if p.machine != "DESKTOP-LAB01" {
 		t.Errorf("machine %q", p.machine)
 	}
 	if p.droids[0] != p.droids[2] || p.droids[1] != p.droids[3] {

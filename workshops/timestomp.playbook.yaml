@@ -1,0 +1,128 @@
+# Workshop: detecting timestomping
+#
+# A workstation where an intruder drops a tool and backdates it to look like
+# it arrived with last autumn's updates, then backdates a staged archive to
+# blend into an old folder. Build it into an NTFS image, where both of NTFS's
+# clocks exist:
+#
+#   fsagen --seed 2902 --playbook workshops/timestomp.playbook.yaml \
+#          --image timestomp.img --image-fs ntfs --image-size 64M \
+#          --image-time 2026-03-12T06:00:00Z \
+#          --timeline timestomp.body --timeline-source modelled
+#
+# What a learner should find, and how:
+# - sync-helper.exe: its $STANDARD_INFORMATION times say 2025-11-04, its
+#   $FILE_NAME times say 2026-03-11 09:20, when the name was really made. A
+#   file created before it was given its name has been timestomped (T1070.006).
+#   The stomped times also sit on a whole second, where every scheduled time
+#   in this scenario carries a fraction (subsecond_jitter).
+# - collect.zip: modified in 2024, created in 2026. Only its modification time
+#   was moved, so both clocks agree on its birth; the contradiction is between
+#   its own times.
+# - Security.evtx records the tool's process at 09:20:30 on 2026-03-11, months
+#   after the date the file claims.
+# - Decoy: Documents/policy-2023.txt is also older than its creation time, the
+#   way a copied file is, and nothing else about it is wrong. Not a finding.
+#
+# The answer key (<image>.fsagen/answer-key.jsonl) lists each as a "stomped"
+# or "mtime_before_crtime" fact, with timestomp_detected and the $FILE_NAME
+# times.
+
+start: 2026-03-11T09:00:00Z
+subsecond_jitter: true
+
+actors:
+  - name: user1
+    base: Users/user1
+  - name: system
+    base: Windows/System32
+
+steps:
+  # -- An ordinary morning ---------------------------------------------------
+  - actor: user1
+    offset: 0m
+    every: 11m
+    repeat: 8
+    actions:
+      - action: create
+        path: Documents/reports/weekly-${SEQ}.txt
+        content_len: 3072
+
+  # A document copied from a share: it keeps the modification time it had
+  # there, so it is older than its own creation here. That is normal.
+  - actor: user1
+    offset: 6m
+    actions:
+      - action: create
+        path: Documents/policy-2023.txt
+        content: "Acceptable use policy, revision 4.\n"
+        mtime: 2023-05-02T14:30:00Z
+
+  # -- The tool arrives (09:20) ----------------------------------------------
+  - actor: user1
+    offset: 20m
+    actions:
+      - action: create
+        path: AppData/Roaming/SyncAgent/sync-helper.exe
+        mitre: [T1105]
+        content_len: 40960
+        content_kind: bytes
+        pe:
+          machine: amd64
+          subsystem: console
+          imports:
+            - kernel32.dll!CreateFileW
+            - kernel32.dll!WriteFile
+            - ws2_32.dll!connect
+          version:
+            file_version: 3.2.1.0
+            company_name: Example Software
+            file_description: Sync Helper
+
+  # It runs once; Windows logs the new process.
+  - actor: system
+    offset: 20m
+    actions:
+      - action: create
+        path: winevt/Logs/Security.evtx
+        evtx:
+          computer: WS-0417.corp.example
+          events:
+            - event_id: 4688
+              time: "2026-03-11T09:20:30Z"
+              data:
+                NewProcessName: 'C:\Users\user1\AppData\Roaming\SyncAgent\sync-helper.exe'
+                SubjectUserName: user1
+                SubjectDomainName: CORP
+
+  # -- ANTI-FORENSICS: the tool backdates itself (09:21) ---------------------
+  # SetFileTime writes $STANDARD_INFORMATION; $FILE_NAME keeps 09:20 today.
+  - actor: user1
+    offset: 21m
+    actions:
+      - action: timestomp
+        path: AppData/Roaming/SyncAgent/sync-helper.exe
+        mitre: [T1070.006]
+        atime: "2025-11-04T10:12:00Z"
+        mtime: "2025-11-04T10:12:00Z"
+        crtime: "2025-11-04T10:12:00Z"
+
+  # -- Collection, archived and backdated (09:40) ----------------------------
+  - actor: user1
+    offset: 40m
+    actions:
+      - action: archive
+        path: AppData/Local/Temp/collect.zip
+        mitre: [T1560.001]
+        archive:
+          method: store
+          base: Documents/reports
+          members: ["Documents/reports/*.txt"]
+
+  - actor: user1
+    offset: 45m
+    actions:
+      - action: mace
+        path: AppData/Local/Temp/collect.zip
+        mitre: [T1070.006]
+        mtime: 2024-07-02T11:00:00Z

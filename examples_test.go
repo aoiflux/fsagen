@@ -40,8 +40,14 @@ func exampleFiles(t *testing.T) []string {
 	return files
 }
 
+// exampleMode says how an example is read. A manifest is named manifest-*, or
+// says so with a top-level operations key: scene.yaml keeps its short name so
+// that the README's `--manifest scene.yaml` works.
 func exampleMode(path string) compile.Mode {
 	if strings.HasPrefix(filepath.Base(path), "manifest") {
+		return compile.ModeManifest
+	}
+	if b, err := os.ReadFile(path); err == nil && (bytes.HasPrefix(b, []byte("operations:")) || bytes.Contains(b, []byte("\noperations:"))) {
 		return compile.ModeManifest
 	}
 	return compile.ModePlaybook
@@ -193,20 +199,20 @@ var exampleChecks = map[string]func(t *testing.T, root string, fsys *sandbox.FS)
 		}
 	},
 	"playbook-basic": func(t *testing.T, root string, _ *sandbox.FS) {
-		for _, p := range []string{"users/alice/docs/report-0.txt", "users/alice/docs/report-1.txt"} {
+		for _, p := range []string{"users/user1/docs/report-0.txt", "users/user1/docs/report-1.txt"} {
 			if b := read(t, root, p); len(b) != 64 {
 				t.Errorf("%s: %d bytes, want the 64 written by its update", p, len(b))
 			}
 		}
-		mustBeEmpty(t, root, "users/bob/media/photos")
+		mustBeEmpty(t, root, "users/user2/media/photos")
 	},
 	"playbook-email-and-archive": func(t *testing.T, root string, _ *sandbox.FS) {
-		mustExist(t, root, "users/bob/bundles/bundle.zip")
-		mustBeEmpty(t, root, "users/bob/mail")
-		mustBeEmpty(t, root, "users/bob/media")
+		mustExist(t, root, "users/user2/bundles/bundle.zip")
+		mustBeEmpty(t, root, "users/user2/mail")
+		mustBeEmpty(t, root, "users/user2/media")
 		// The archive still holds the message and the image the scenario
 		// deleted afterwards, which is the point of staging then cleaning up.
-		data := read(t, root, "users/bob/bundles/bundle.zip")
+		data := read(t, root, "users/user2/bundles/bundle.zip")
 		zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 		if err != nil {
 			t.Fatalf("bundle.zip: %v", err)
@@ -240,7 +246,7 @@ var exampleChecks = map[string]func(t *testing.T, root string, fsys *sandbox.FS)
 		}
 	},
 	"playbook-adversary-data-theft": func(t *testing.T, root string, _ *sandbox.FS) {
-		data := read(t, root, "users/alice/staging/data.zip")
+		data := read(t, root, "users/user1/staging/data.zip")
 		zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 		if err != nil {
 			t.Fatalf("data.zip: %v", err)
@@ -253,7 +259,7 @@ var exampleChecks = map[string]func(t *testing.T, root string, fsys *sandbox.FS)
 			b.ReadFrom(r)
 			r.Close()
 			// The member is the file as it stood, byte for byte.
-			if want := read(t, root, "users/alice/staging/"+f.Name); !bytes.Equal(b.Bytes(), want) {
+			if want := read(t, root, "users/user1/staging/"+f.Name); !bytes.Equal(b.Bytes(), want) {
 				t.Errorf("%s in the archive differs from the file on disk", f.Name)
 			}
 		}
@@ -305,16 +311,16 @@ var exampleChecks = map[string]func(t *testing.T, root string, fsys *sandbox.FS)
 		}
 	},
 	"playbook-insider-threat-exfil": func(t *testing.T, root string, _ *sandbox.FS) {
-		left, _ := filepath.Glob(filepath.Join(root, "users", "jsmith", "Downloads", "attachment-*.zip"))
+		left, _ := filepath.Glob(filepath.Join(root, "users", "insider", "Downloads", "attachment-*.zip"))
 		if len(left) != 0 {
 			t.Errorf("the final cleanup left %d attachments behind", len(left))
 		}
 	},
 	"playbook-malware-lifecycle": func(t *testing.T, root string, fsys *sandbox.FS) {
-		mustExist(t, root, "users/alice/AppData/Local/Temp/wupdmgr32.exe")
+		mustExist(t, root, "users/user1/AppData/Local/Temp/wupdmgr32.exe")
 		// The dropper is a PE a tool can read, with the imports an imphash is
 		// built from and the version resource Explorer shows.
-		dropper := read(t, root, "users/alice/AppData/Local/Temp/wupdmgr32.exe")
+		dropper := read(t, root, "users/user1/AppData/Local/Temp/wupdmgr32.exe")
 		pf, err := pe.NewFile(bytes.NewReader(dropper))
 		if err != nil {
 			t.Fatalf("the dropper is not a PE: %v", err)
@@ -327,13 +333,13 @@ var exampleChecks = map[string]func(t *testing.T, root string, fsys *sandbox.FS)
 		if !bytes.Contains(dropper, utf16of("Windows Update Manager")) {
 			t.Error("no version resource in the dropper")
 		}
-		if zipped := read(t, root, "users/alice/AppData/Local/Temp/exfil-ready.zip"); !bytes.HasPrefix(zipped, []byte("PK\x03\x04")) {
+		if zipped := read(t, root, "users/user1/AppData/Local/Temp/exfil-ready.zip"); !bytes.HasPrefix(zipped, []byte("PK\x03\x04")) {
 			t.Error("exfil-ready.zip is not a zip archive")
 		}
-		if reg := string(read(t, root, "users/alice/AppData/Roaming/.persistence.reg")); !strings.Contains(reg, `Temp\\wupdmgr32.exe`) {
+		if reg := string(read(t, root, "users/user1/AppData/Roaming/.persistence.reg")); !strings.Contains(reg, `Temp\\wupdmgr32.exe`) {
 			t.Errorf("the Run key does not name the dropper:\n%s", reg)
 		}
-		mustHaveStream(t, fsys, "users/alice/AppData/Local/Temp/wupdmgr32.exe", "Zone.Identifier", "ZoneId=3")
+		mustHaveStream(t, fsys, "users/user1/AppData/Local/Temp/wupdmgr32.exe", "Zone.Identifier", "ZoneId=3")
 	},
 	"playbook-windows-ads-motw": func(t *testing.T, _ string, fsys *sandbox.FS) {
 		mustHaveStream(t, fsys, "users/winuser/downloads/installer.exe", "Zone.Identifier", "HostUrl=")
@@ -361,7 +367,7 @@ var exampleChecks = map[string]func(t *testing.T, root string, fsys *sandbox.FS)
 		}
 	},
 	"playbook-email-thread": func(t *testing.T, root string, _ *sandbox.FS) {
-		base := "Users/priyan.nair/AppData/Local/Microsoft/Outlook"
+		base := "Users/employee/AppData/Local/Microsoft/Outlook"
 		emls, _ := filepath.Glob(filepath.Join(root, filepath.FromSlash(base), "*", "*.eml"))
 		if len(emls) != 4 {
 			t.Fatalf("found %d .eml files, want 4", len(emls))

@@ -1,0 +1,18 @@
+# input-sha256 b20e01e04a6069b2c697846997f6d130331b4d0f5aad28297d316b4a46a9ece2
+d Users/
+d Users/employee/
+d Users/employee/AppData/
+d Users/employee/AppData/Local/
+d Users/employee/AppData/Local/Temp/
+d Users/employee/AppData/Local/Temp/stage/
+f cd2c4a0ee0c32d7cb654f6c6a405a7308140eb4c9c88b64e79c7f49a31b7ad5c 467 Users/employee/AppData/Local/Temp/stage/update.tmp
+d Users/employee/Documents/
+d Users/employee/Documents/Finance/
+f 2c22ae9f805ce61bdc3be82646f293db0e53f826c482213d1bd438f3a3757243 160 Users/employee/Documents/Finance/Q1-budget.csv
+f f510c91186afdc5122842695d732826920e53c5df84dd82f66b535da7edd53d7 1643 Users/employee/Documents/Finance/board-summary.pdf
+f 3bca64f5ccb537df7344d09eda28e1e66ee284ac8d2f8dca1bb0cf4780ea0f7c 244 Users/employee/Documents/Finance/customers.csv
+f e1d021e316616fcea342375654a9480f511880f794611d0b1fc06133209629c6 6967 Users/employee/Documents/Finance/vendor-contract.docx
+f e5952bfa136898bd0457b9f26b969af6d718dab1b8c3da9854b3dc4f4af87b0a 120 Users/employee/Documents/todo.txt
+d Users/employee/Mail/
+d Users/employee/Mail/Inbox/
+f 20393003512ec6c8d7153c01ee97ec535c1ed5ab72eebe6b2f8e82385f46387a 422 Users/employee/Mail/Inbox/0001.eml

@@ -1,5 +1,123 @@
 # Changelog
 
+## Unreleased
+
+Generator version **8**. One change moves bytes for an unchanged input, and
+it is the reason for the bump: bulk mode's messages no longer name people (see
+_No one is named_). The new history fields, the cookie jar and the image test
+only add; before the bump every v7 golden for an untouched input stayed
+byte-identical with them.
+
+### No one is named
+
+Nothing fsagen writes, ships or tests names a person or an organisation any
+more. A bulk-mode message went from `alice@example.com` to `bob@example.com`;
+it now goes from `sender@example.com` to `recipient@example.com`, which changes
+every bulk `.eml` and `.mbox`. Hence generator version 8.
+
+The examples, the acceptance scenario, the tests and the README changed too:
+- People are roles: `user1`, `user2`, `employee`, `recruiter`, `insider`,
+  `staff1` to `staff3`.
+- Organisations are placeholders on reserved domains: Example Corp
+  (`corp.example`), Vendor A to D, Talent Agency, Billing Services Co.
+- Hostnames lost their company prefix (`WS042`, `WKS-0417`).
+- A USB device is `Generic` `Storage Unit`.
+
+Real software stays where an artefact's own path or format names it, for
+example `Software\Microsoft\Windows`, `Google/Chrome` and `kernel32.dll`, and
+so does the Windows masquerade a PE's version resource imitates.
+
+These inputs changed, so their goldens were re-recorded. The goldens now live
+under `testdata/golden/v8/` on Windows 11 and on Linux (WSL Ubuntu 24.04,
+go1.27.0). They are 36 golden subtests: 17 examples × 2, plus 2 bulk. The
+frozen `testdata/golden/v5/`, `v6/` and `v7/` are gone; the history below
+describes them as they were.
+
+### Workshop datasets
+
+`workshops/` holds three playbooks, one per hands-on exercise. Each is built
+into an NTFS image:
+- `timestomp`: a tool whose `$STANDARD_INFORMATION` creation time is months
+  before its `$FILE_NAME` one, and an archive backdated by its modification
+  time alone.
+- `malvertising`: an ad click redirected twice by servers, the cookies the
+  chain set, a tracker's cookie with no visit behind it, and a download with
+  its Mark-of-the-Web.
+- `registry-persistence`: a Run value, a RunOnce and a service, among ordinary
+  entries, with the 7045 and 4688 events that go with them.
+
+`workshops/README.md` gives the command for each, what a learner should find,
+and how to check it with The Sleuth Kit, SQLite and Windows' own parsers.
+`TestWorkshopTimestomp`, `TestWorkshopMalvertising` and
+`TestWorkshopRegistryPersistence` read each image back through libntfs and
+SQLite, and check that the finding is there and the decoys are not findings.
+
+### The acceptance scenario is no longer tied to one consumer
+
+`testdata/acceptance/quilldrop-lite.playbook.yaml` is now
+`testdata/acceptance/invoice-lure.playbook.yaml`. The scenario and its checks
+(CR-1 to CR-11) are unchanged in substance. Its implant, its staging folder
+and its named stream got neutral names. The stream's marker keeps its 29 bytes,
+so CR-5 still checks the same size. The test-only stream name `quill` is now
+`extra`, and the shortcut machine id `DESKTOP-QUILL` is now `DESKTOP-LAB01`.
+Two tests were renamed: `TestStreamsNamedAndSpaceNameWithSizes` and
+`TestAcceptanceStompCount`.
+
+### Redirect chains in browser history
+
+A history visit can say it was redirected to rather than navigated to:
+`redirect: server` (an HTTP 3xx) or `redirect: client` (a meta refresh or a
+script), from the visit its `from_visit` names.
+- **Chrome** marks a chain's first visit `CHAIN_START`, its last `CHAIN_END`
+  and each later hop `SERVER_REDIRECT` (`0x80000000`) or `CLIENT_REDIRECT`
+  (`0x40000000`).
+- **Firefox** records a server redirect as `visit_type` 6.
+- A visit outside any chain is written exactly as before, with both chain bits.
+- A redirect with no `from_visit` is refused, and so is a visit redirected
+  onward twice.
+
+A Chrome download can give its whole `url_chain`, first URL to last (ending at
+its `url`), and its `referrer`, `tab_url` and `tab_referrer_url`. With none of
+these it records its own URL, as before.
+
+Tests: `TestRedirectChainTransitions`, `TestDownloadURLChain`,
+`TestRedirectsRefused`, `TestHistoryRedirectRules`, `TestAdChainFromScenario`.
+
+### Chrome cookie jars (`format: chrome_cookies`)
+
+A new format builds a Chromium profile's `Cookies` database: the cookie store
+at version 24, with Chromium's own twenty columns and unique index.
+- Each cookie gives its host, name, value, path, creation, expiry and
+  last-access times, `secure`, `httponly` and `samesite`.
+- **Values are stored encrypted, as Chrome stores them.** `value` is empty, and
+  `encrypted_value` holds seeded bytes shaped as Chrome's `v10` AES-GCM output,
+  with no key behind them. `plaintext: true` writes the values in the clear.
+- The query Mutant's `browser_cookies` runs reads every cookie back.
+- A cookie Chrome could not have stored is refused: no host or name, a URL for
+  a host, an expiry before its creation, or a repeat its unique index forbids.
+
+Tests: `TestCookieJarSchema`, `TestCookieJarReadsAsAToolReadsIt`,
+`TestCookieJarDeterministic`, `TestCookiesRefused`, `TestCookieBlockRules`,
+`TestAdChainFromScenario`.
+
+### Mark-of-the-Web read back from an NTFS image
+
+`TestNTFSImageCarriesMarkOfTheWeb` writes `examples/playbook-windows-ads-motw.yaml`
+into an NTFS image and reads the download's streams back through libntfs. It
+checks `Zone.Identifier` byte for byte against what Windows writes, and checks
+that the other named stream sits beside it. Before this, a Mark-of-the-Web in
+an image was covered only by comparing SHA256SUMS with a run in memory. The
+README no longer calls `ads` and `motw` Windows-only: an NTFS image takes both.
+
+### `examples/scene.yaml` is read as the manifest it is
+
+`scene.yaml` (`3a80b7c`) is a manifest, but the example tests treated only
+`manifest-*` files as manifests. Seven tests failed on it, each only on its
+`scene` subtest. `exampleMode` now also recognises a top-level `operations:`
+key, so the file keeps the name the README's `--manifest scene.yaml` uses. Its
+goldens were recorded on Windows and Linux, so the golden subtests are now
+36: 17 examples × 2, plus 2 bulk.
+
 ## v0.3.0 — disk images, and a tool scored against them (2026-10-11)
 
 Generator version **7**. fsagen now writes FAT32, ext4 and NTFS disk images
@@ -1597,8 +1715,8 @@ been leaving to the reader.
 
 ### An acceptance scenario for the consumer
 
-`testdata/acceptance/quilldrop-lite.playbook.yaml` is a compressed stand-in
-for the evidence playbook of the Mutant QUILLDROP workshop, whose audit brief
+`testdata/acceptance/invoice-lure.playbook.yaml` is a compressed stand-in
+for the evidence playbook of a downstream DFIR workshop, whose audit brief
 is `plan.json`. `TestConsumerAcceptance` runs it once and checks eleven
 things against the one corpus, a subtest per requirement:
 
@@ -1615,7 +1733,7 @@ things against the one corpus, a subtest per requirement:
 - **CR-4** the mark of the web holds the rendered `HostUrl` and
   `ReferrerUrl`, and the dropper's four times are still those of the create a
   minute earlier.
-- **CR-5** the implant's `quill` stream has its own bodyfile record, with its
+- **CR-5** the implant's `extra` stream has its own bodyfile record, with its
   size.
 - **CR-6** exactly four objects end with a modification time before their
   creation time, in the answer key and on disk.
@@ -1638,7 +1756,7 @@ CR-12 (`go install github.com/aoiflux/fsagen@latest`) has no test; it is the
 owner's check after pushing.
 
 Two deviations from the requirement as written, both recorded in
-`docs/testing.md`. The first: the implant is called `quilld.exe`, with a
+`docs/testing.md`. The first: the implant is called `agentd.exe`, with a
 version resource naming its own vendor and `content_kind: zeros` for its
 filler, where the requirement asks for `svchost.exe`. Defender's
 machine-learning detection refused that write on each count on its own —
@@ -2176,8 +2294,8 @@ seconds, and was killed by the test aimed at it.
 | F-TL-2 | Linux birth time copied from the change time | Fedora btrfs | TestLinuxBtimeFromStatxOrZero |
 | F-TL-2 | Linux birth time invented where statx has none | Fedora ext4 | TestLinuxBtimeFromStatxOrZero |
 | F-TL-2 | crtime column filled from ctime (the old bug) | Windows | TestBodyfileGolden |
-| F-TL-4 | streams left out | Windows | TestStreamsQuillAndSpaceNameWithSizes |
-| F-TL-4 | a stream given its file's size | Windows | TestStreamsQuillAndSpaceNameWithSizes |
+| F-TL-4 | streams left out | Windows | TestStreamsNamedAndSpaceNameWithSizes |
+| F-TL-4 | a stream given its file's size | Windows | TestStreamsNamedAndSpaceNameWithSizes |
 | F-TIME-4 | stream digests move the access time | Windows | TestTimelinePassKeepsAtime |
 | F-TL-6 | names without the leading slash | Windows | TestBodyfileGolden, TestBodyfileStrictParserRoundTrip |
 | F-TL-6 | an uncomputed MD5 written empty | Windows | TestBodyfileGolden, TestBodyfileStrictParserRoundTrip |
@@ -2344,7 +2462,7 @@ moved to the fix itself (the creation time never being set).
 | F-TIME-2 | change time not set | TestChangeTimeSticks, TestMaceSetsFourTimes |
 | F-TIME-1 | creation time never set | TestCreateSetsCreationTime |
 | F-TIME-1 | create over an existing file keeps its birth | TestCreateSetsCreationTime |
-| CR-6 | a stomp also moves crtime | TestQuilldropLiteStompCount |
+| CR-6 | a stomp also moves crtime | TestAcceptanceStompCount |
 | F-TIME-3 | a stream write counts as a write | TestAdsAndMotwKeepTimes |
 | F-TIME-3 | entries do not touch their directory | TestDirTimesFollowLastChildEvent |
 | settle | settle pass skipped | TestExamples |
@@ -2532,7 +2650,7 @@ catches a counter shared across token kinds.
 Generator version: **1** (unchanged bytes for valid inputs; see below).
 
 This is the first phase of the correctness overhaul planned from the Mutant
-QUILLDROP audit (`plan.json`). Its rule: every input mistake becomes an error
+workshop audit (`plan.json`). Its rule: every input mistake becomes an error
 reported before anything is written; nothing is written or read outside its
 root; timeline format and exit codes are honest.
 

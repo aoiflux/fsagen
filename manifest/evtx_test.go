@@ -14,7 +14,7 @@ func TestEvtxThroughManifest(t *testing.T) {
 	root, _ := runManifest(t, `
 start: 2024-03-15T09:00:00Z
 variables:
-  user: alice
+  user: user1
 operations:
   - action: create
     path: Windows/System32/winevt/Logs/Security.evtx
@@ -46,7 +46,7 @@ operations:
 	if first, last := le.Uint64(chunk[24:]), le.Uint64(chunk[32:]); first != 7000 || last != 7001 {
 		t.Errorf("chunk records %d to %d, want 7000 to 7001", first, last)
 	}
-	for _, s := range []string{"WS01", "alice", "203.0.113.7", "Security", "LogFileCleared"} {
+	for _, s := range []string{"WS01", "user1", "203.0.113.7", "Security", "LogFileCleared"} {
 		if !bytes.Contains(sec, utf16le(s)) {
 			t.Errorf("%q is not in the log", s)
 		}

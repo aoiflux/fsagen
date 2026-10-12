@@ -2,7 +2,7 @@ start: "2024-03-15T02:00:00Z"
 
 variables:
   campaign_id: "RW2024-A"
-  target_org: "ACME Corp"
+  target_org: "Example Corp"
 
 actors:
   - name: attacker
@@ -139,11 +139,11 @@ steps:
         path: winevt/Logs/Security.evtx
         mtime: "2024-03-01T00:00:00Z"
         evtx:
-          computer: ACME-WS042
+          computer: WS042
           events:
             - event_id: 1102
               data:
                 SubjectUserSid: S-1-5-21-1004336348-1177238915-682003330-1001
                 SubjectUserName: victim
-                SubjectDomainName: ACME-WS042
+                SubjectDomainName: WS042
                 SubjectLogonId: "0x3e7a2c1"

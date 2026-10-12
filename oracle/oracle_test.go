@@ -9,7 +9,7 @@ import (
 
 // goldenDir holds the recorded ledgers and modelled bodyfiles of every
 // example, for both platforms.
-const goldenDir = "../testdata/golden/v7"
+const goldenDir = "../testdata/golden/v8"
 
 // goldenExpected folds a recorded ledger, as LoadExpected would without the
 // sidecar files the goldens do not keep.

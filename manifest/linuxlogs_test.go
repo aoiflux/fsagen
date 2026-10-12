@@ -17,10 +17,10 @@ func TestLinuxLogsThroughPlaybook(t *testing.T) {
 	root, _ := runRes(t, `
 start: 2024-03-15T09:00:00Z
 actors:
-  - name: alice
+  - name: user1
     base: var/log
 steps:
-  - actor: alice
+  - actor: user1
     offset: 10m
     actions:
       - action: create
@@ -49,7 +49,7 @@ steps:
 	}
 	le := binary.LittleEndian
 	login, logout := wtmp[384:768], wtmp[768:]
-	if le.Uint16(login) != 7 || !bytes.HasPrefix(login[44:], []byte("alice\x00")) || !bytes.HasPrefix(login[8:], []byte("pts/0\x00")) {
+	if le.Uint16(login) != 7 || !bytes.HasPrefix(login[44:], []byte("user1\x00")) || !bytes.HasPrefix(login[8:], []byte("pts/0\x00")) {
 		t.Errorf("login record: type %d user %q line %q; want the actor on pts/0", le.Uint16(login), bytes.TrimRight(login[44:76], "\x00"), bytes.TrimRight(login[8:40], "\x00"))
 	}
 	if le.Uint16(logout) != 8 || le.Uint32(logout[4:]) != le.Uint32(login[4:]) || le.Uint32(login[4:]) == 0 {
@@ -60,10 +60,10 @@ steps:
 	}
 
 	audit := string(readOut(t, root, "var/log/audit/audit.log"))
-	if !strings.Contains(audit, `acct="alice" exe="/usr/sbin/sshd" hostname=203.0.113.7 addr=203.0.113.7 terminal=ssh res=success`) {
+	if !strings.Contains(audit, `acct="user1" exe="/usr/sbin/sshd" hostname=203.0.113.7 addr=203.0.113.7 terminal=ssh res=success`) {
 		t.Errorf("no USER_AUTH for the actor:\n%s", audit)
 	}
-	if !strings.Contains(audit, `comm="curl" exe="/usr/bin/curl" key="exec"`) || !strings.Contains(audit, `cwd="/home/alice"`) {
+	if !strings.Contains(audit, `comm="curl" exe="/usr/bin/curl" key="exec"`) || !strings.Contains(audit, `cwd="/home/user1"`) {
 		t.Errorf("no execve of curl by the actor:\n%s", audit)
 	}
 	serials := regexp.MustCompile(`:(\d+)\): `).FindAllStringSubmatch(audit, -1)

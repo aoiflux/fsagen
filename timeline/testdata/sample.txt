@@ -11,7 +11,7 @@ Entries: 8
     size 5 | mode r/rrw-r--r-- | uid 0 | gid 0 | inode 3 | md5 5d41402abc4b2a76b9719d911017c592
     accessed 2021-03-01 09:00:01.000000000 | modified 2021-03-01 09:00:02.000000000 | changed 2021-03-01 09:00:03.000000000 | born 2021-03-01 09:00:01.000000000
 
-2021-03-01 09:00:02.000000000 [stream] /docs/a.txt:quill
+2021-03-01 09:00:02.000000000 [stream] /docs/a.txt:extra
     size 7 | mode r/rrw-r--r-- | uid 0 | gid 0 | inode 3 | md5 321c3cf486ed509164edec1e1981fec8
     accessed 2021-03-01 09:00:01.000000000 | modified 2021-03-01 09:00:02.000000000 | changed 2021-03-01 09:00:03.000000000 | born 2021-03-01 09:00:01.000000000
 

@@ -32,7 +32,7 @@ func sampleHiveSpec() HiveSpec {
 	}
 	keys := []RegKey{
 		{Path: `Software\Microsoft\Windows\CurrentVersion\Run`, LastWritten: when.Add(time.Hour), Values: []RegValue{
-			val("Updater", "REG_SZ", `C:\Users\alice\AppData\Local\Temp\wupdmgr32.exe /silent`),
+			val("Updater", "REG_SZ", `C:\Users\user1\AppData\Local\Temp\wupdmgr32.exe /silent`),
 			val("Count", "REG_DWORD", "7"),
 			val("Big", "REG_QWORD", "0x1122334455667788"),
 			val("Bin", "REG_BINARY", "01 02 03"),
@@ -41,7 +41,7 @@ func sampleHiveSpec() HiveSpec {
 			val("EmptySz", "REG_SZ", ""),
 			val("Multi", "REG_MULTI_SZ", "", "a", "bc"),
 			val("Exp", "REG_EXPAND_SZ", `%TEMP%\x.exe`),
-			val("Motorola", "REG_DWORD_BIG_ENDIAN", "0x01020304"),
+			val("BigEndian", "REG_DWORD_BIG_ENDIAN", "0x01020304"),
 			val("Nothing", "REG_NONE", "ff"),
 			{Name: "Large", Type: 3, Data: large},
 			val("", "REG_SZ", "default"),
@@ -59,15 +59,15 @@ func sampleHiveSpec() HiveSpec {
 	}
 	keys = append(keys, UserAssistKeys([]UserAssist{
 		{Path: `C:\Windows\System32\cmd.exe`, RunCount: 4, FocusCount: 2, FocusTimeMs: 61000, LastRun: when},
-		{Path: `C:\Users\alice\Desktop\tool.lnk`, RunCount: 1, LastRun: when},
+		{Path: `C:\Users\user1\Desktop\tool.lnk`, RunCount: 1, LastRun: when},
 	}, when)...)
-	usb, err := USBStorKeys([]USBDevice{{Vendor: "SanDisk", Product: "Cruzer Blade", Revision: "1.00", Serial: "4C530001231117116491",
+	usb, err := USBStorKeys([]USBDevice{{Vendor: "Generic", Product: "Storage Unit", Revision: "1.00", Serial: "4C530001231117116491",
 		FirstInstall: when.Add(-24 * time.Hour), LastArrival: when, LastRemoval: when.Add(time.Hour)}}, when)
 	if err != nil {
 		panic(err)
 	}
 	keys = append(keys, usb...)
-	return HiveSpec{FileName: `\??\C:\Users\alice\ntuser.dat`, Modified: when, Keys: keys}
+	return HiveSpec{FileName: `\??\C:\Users\user1\ntuser.dat`, Modified: when, Keys: keys}
 }
 
 type regReadKey struct {

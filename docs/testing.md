@@ -1,6 +1,6 @@
 # What each finding is tested by
 
-`plan.json` is the audit brief the Mutant QUILLDROP workshop wrote against
+`plan.json` is the audit brief a downstream DFIR workshop wrote against
 fsagen at 62d759c, after four of its six exercises broke on output that was
 silently not what the scenario asked for. This document exists because one
 of those findings (F-PLAT-6) was that the code had almost no tests: every
@@ -82,7 +82,7 @@ file and in the README is a test that still exists.
 |---|---|---|
 | F-TL-1 | An unrecognised --timeline extension silently writes CSV | `TestTimelineFormats` |
 | F-TL-2 | The bodyfile writes the same value for ctime and crtime, and that value means different things per OS | `TestBodyfileCrtimeNotCtime`, `TestLinuxBtimeFromStatxOrZero`, `TestBodyfileGolden` |
-| F-TL-4 | ADS detection only checks three hard-coded names | `TestStreamsQuillAndSpaceNameWithSizes` |
+| F-TL-4 | ADS detection only checks three hard-coded names | `TestStreamsNamedAndSpaceNameWithSizes` |
 | F-TL-6 | The bodyfile does not follow Sleuth Kit conventions | `TestBodyfileGolden`, `TestBodyfileStrictParserRoundTrip`, `TestUnsafeNameRefused`, `TestHashLimit` |
 | F-TL-7 | The MACB writer is not a MACB timeline | `TestMACBSixteenCombinations` |
 | F-TL-9 | Ties in the mtime sort have no defined order | `TestTimelineTieOrder` |
@@ -246,7 +246,7 @@ name.
 ## What the consumer asked for
 
 The twelve requirements `plan.json` records. Each of the first eleven is
-checked against `testdata/acceptance/quilldrop-lite.playbook.yaml` by its own
+checked against `testdata/acceptance/invoice-lure.playbook.yaml` by its own
 subtest of `TestConsumerAcceptance`, named for the requirement, and again by a
 narrower test of the mechanism behind it; CR-12 has no test, as its row says.
 
@@ -254,10 +254,10 @@ narrower test of the mechanism behind it; CR-12 has no test, as its row says.
 |---|---|---|
 | CR-1 | A Sleuth Kit bodyfile from --timeline with a .body or .bodyfile name, or an explicit --timeline-format bodyfile. | `TestConsumerAcceptance`, `TestTimelineFormats` |
 | CR-2 | The phishing email exactly as written in the playbook, CRLF line endings, parseable by net/mail. | `TestConsumerAcceptance`, `TestMailTemplateIsRFC5322` |
-| CR-3 | The dropper (Invoice_MRD-88412.pdf.exe) and implant (svchost.exe) as valid PEs whose TimeDateStamp the playbook sets (0 for the 'scrubbed build time' lesson), sized to the requested length. | `TestConsumerAcceptance`, `TestPEHeaderFieldsEqualInputs`; two deviations: the acceptance scenario calls the implant quilld.exe with its own vendor in the version resource and zero filler, because Defender refused the write under the name svchost.exe even with zero filler and under a neutral name with the default filler and a Microsoft version resource; and `content_len` is the size of the overlay rather than of the whole file |
+| CR-3 | The dropper (Invoice_88412.pdf.exe) and implant (svchost.exe) as valid PEs whose TimeDateStamp the playbook sets (0 for the 'scrubbed build time' lesson), sized to the requested length. | `TestConsumerAcceptance`, `TestPEHeaderFieldsEqualInputs`; two deviations: the acceptance scenario calls the implant agentd.exe with its own vendor in the version resource and zero filler, because Defender refused the write under the name svchost.exe even with zero filler and under a neutral name with the default filler and a Microsoft version resource; and `content_len` is the size of the overlay rather than of the whole file |
 | CR-4 | Mark-of-the-Web on the dropper with templated HostUrl/ReferrerUrl, written without disturbing the file's times. | `TestConsumerAcceptance`, `TestAdsAndMotwKeepTimes` |
-| CR-5 | The implant's 'quill' stream visible in the timeline. | `TestConsumerAcceptance`, `TestStreamsQuillAndSpaceNameWithSizes` |
-| CR-6 | Creation times equal to scenario time, so that after the 12 March stomp exactly four files show mtime < crtime. | `TestConsumerAcceptance`, `TestQuilldropLiteStompCount`; where the file system cannot be told a creation time the same subtest checks the refusal instead, that no stomp is claimed and that the ledger calls crtime uncontrolled for those four files |
+| CR-5 | The implant's 'extra' stream visible in the timeline. | `TestConsumerAcceptance`, `TestStreamsNamedAndSpaceNameWithSizes` |
+| CR-6 | Creation times equal to scenario time, so that after the 12 March stomp exactly four files show mtime < crtime. | `TestConsumerAcceptance`, `TestAcceptanceStompCount`; where the file system cannot be told a creation time the same subtest checks the refusal instead, that no stomp is claimed and that the ledger calls crtime uncontrolled for those four files |
 | CR-7 | bkp_20260311.zip as a real zip whose members are the staged documents, CRC-32 and size matching the originals. | `TestConsumerAcceptance`, `TestArchiveMembersMatchSources` |
 | CR-8 | The 24 staging files actually deleted, and their deletion recorded in the ground truth. | `TestConsumerAcceptance`, `TestRefsDeleteAllStagingOnDisk` |
 | CR-9 | A real gap in the beacon log's sequence numbers after the anti-forensics step. | `TestConsumerAcceptance`, `TestEditDeleteLines40to60` |

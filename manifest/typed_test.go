@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"debug/pe"
 	"encoding/binary"
+	"fmt"
 	"image/jpeg"
 	"image/png"
 	"net/mail"
@@ -286,6 +287,86 @@ operations:
 	}
 }
 
+// TestAdChainFromScenario: an ad click redirected by two servers to a lure,
+// the download it ends in and the cookies the hosts on the way set all reach
+// the profile, with the hosts a variable names expanded.
+func TestAdChainFromScenario(t *testing.T) {
+	root, _ := runManifest(t, `
+start: 2026-03-11T09:00:00Z
+variables:
+  lure: lure.example
+operations:
+  - action: create
+    path: Chrome/Default/History
+    format: chrome_history
+    history:
+      visits:
+        - { url: 'https://search.example/?q=invoice', time: '2026-03-11T09:15:00Z', transition: typed }
+        - { url: 'https://clk.adnet.test/c', time: '2026-03-11T09:16:00Z', from_visit: 1 }
+        - { url: 'https://rtb.adnet.test/r', time: '2026-03-11T09:16:01Z', from_visit: 2, redirect: server }
+        - { url: 'https://${VAR:lure}/inv', time: '2026-03-11T09:16:02Z', from_visit: 3, redirect: server }
+      downloads:
+        - url: https://${VAR:lure}/inv/f.exe
+          target_path: C:\Users\u\Downloads\f.exe
+          start: 2026-03-11T09:17:00Z
+          url_chain: ['https://${VAR:lure}/inv/d', 'https://${VAR:lure}/inv/f.exe']
+          referrer: https://${VAR:lure}/inv
+          tab_url: https://${VAR:lure}/inv
+  - action: create
+    path: Chrome/Default/Cookies
+    format: chrome_cookies
+    cookies:
+      entries:
+        - { host: .adnet.test, name: uid, value: a1, created: '2026-03-11T09:16:00Z', expires: '2027-03-11T09:16:00Z', secure: true, samesite: none }
+        - { host: '${VAR:lure}', name: session, value: s1, created: '2026-03-11T09:16:02Z', secure: true, httponly: true }
+        - { host: .trackco.test, name: px, value: '1', created: '2026-03-11T09:16:02Z' }
+`, nil)
+
+	history := openDB(t, readOut(t, root, "Chrome/Default/History"))
+	rows, err := history.Query(`SELECT u.url, v.from_visit, v.transition FROM visits v JOIN urls u ON u.id = v.url ORDER BY v.id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for rows.Next() {
+		var u string
+		var from, tr int64
+		if err := rows.Scan(&u, &from, &tr); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, fmt.Sprintf("%s<-%d %#x", u, from, tr))
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	rows.Close()
+	want := []string{
+		"https://search.example/?q=invoice<-0 0x30000001",
+		"https://clk.adnet.test/c<-1 0x10000000",
+		"https://rtb.adnet.test/r<-2 0x80000000",
+		"https://lure.example/inv<-3 0xa0000000",
+	}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("visits:\n got %v\nwant %v", got, want)
+	}
+	var chain, referrer string
+	if err := history.QueryRow(`SELECT group_concat(url, ' '), (SELECT referrer FROM downloads) FROM (SELECT url FROM downloads_url_chains ORDER BY chain_index)`).Scan(&chain, &referrer); err != nil {
+		t.Fatal(err)
+	}
+	if chain != "https://lure.example/inv/d https://lure.example/inv/f.exe" || referrer != "https://lure.example/inv" {
+		t.Errorf("download chain %q, referrer %q", chain, referrer)
+	}
+
+	jar := openDB(t, readOut(t, root, "Chrome/Default/Cookies"))
+	var hosts string
+	if err := jar.QueryRow(`SELECT group_concat(host_key || '/' || name || '/' || length(value), ' ') FROM cookies`).Scan(&hosts); err != nil {
+		t.Fatal(err)
+	}
+	if hosts != ".adnet.test/uid/0 lure.example/session/0 .trackco.test/px/0" {
+		t.Errorf("cookies %q", hosts)
+	}
+}
+
 func openDB(t *testing.T, data []byte) *sql.DB {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "x.db")
@@ -547,10 +628,10 @@ func TestMailTemplateIsRFC5322(t *testing.T) {
 	p := writeFile(t, dir, "pb.yaml", `
 start: 2024-03-15T09:00:00Z
 actors:
-  - name: alice
-    base: users/alice
+  - name: user1
+    base: users/user1
 steps:
-  - actor: alice
+  - actor: user1
     offset: 0s
     actions:
       - action: create
@@ -560,7 +641,7 @@ steps:
 	if _, err := ExecuteFile(compile.ModePlaybook, root, p, compile.Options{}); err != nil {
 		t.Fatal(err)
 	}
-	data := readOut(t, root, "users/alice/mail/note.eml")
+	data := readOut(t, root, "users/user1/mail/note.eml")
 	msg, err := mail.ReadMessage(bytes.NewReader(data))
 	if err != nil {
 		t.Fatalf("net/mail cannot read the template: %v", err)
@@ -571,7 +652,7 @@ steps:
 	if !bytes.Contains(data, []byte("\r\n")) || bytes.Contains(bytes.ReplaceAll(data, []byte("\r\n"), nil), []byte("\n")) {
 		t.Error("the template is not CRLF throughout")
 	}
-	if got := msg.Header.Get("From"); got != "alice@example.com" {
+	if got := msg.Header.Get("From"); got != "user1@example.com" {
 		t.Errorf("From %q", got)
 	}
 }

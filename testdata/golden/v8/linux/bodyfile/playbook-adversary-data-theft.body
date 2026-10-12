@@ -1,0 +1,10 @@
+# input-sha256 1daa94b98bb57d2bed7e32cbf7216f9198c0838bb8ab7e9929f5c9b080c5631b
+0|/users/user1/staging|6|d/drwxr-xr-x|0|0|0|1619863200|1619863200|0|0
+0|/users|1|d/drwxr-xr-x|0|0|0|1622538000|1622538000|0|0
+f73fca18106b34334fe75dccd111c9c9|/users/user1/staging/customers.csv|5|r/rrw-r--r--|0|0|512|1622538000|1622538000|0|0
+60e3d2f8dd6db449e18bd1c6862d59e6|/users/user1/staging/quarterly.csv|4|r/rrw-r--r--|0|0|512|1622538000|1622538000|0|0
+0|/users/user1/docs|3|d/drwxr-xr-x|0|0|0|1622538000|1622538600|0|0
+8b90c917c4e0c993566847993cb76991|/users/user1/staging/data.zip|7|r/rrw-r--r--|0|0|1250|1622538600|1622538600|0|0
+0|/users/user1|2|d/drwxr-xr-x|0|0|0|1622538000|1622538900|0|0
+0|/users/user1/logs|8|d/drwxr-xr-x|0|0|0|1622538900|1622538900|0|0
+477133c2ab900bc5278513f869d29315|/users/user1/logs/exfil.log|9|r/rrw-r--r--|0|0|138|1622539140|1622539140|0|0

@@ -6,9 +6,9 @@ variables:
 
 actors:
   - name: insider
-    base: users/jsmith
+    base: users/insider
     variables:
-      email: "jsmith@company.com"
+      email: "insider@corp.example"
       workstation: "WS-1234"
 
 steps:
