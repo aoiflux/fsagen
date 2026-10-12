@@ -14,8 +14,10 @@ Each file's header says what a learner should find and which items are decoys.
 
 ## Build
 
-Run these from the repository root. They need fsagen v0.4.0 or later: the
-malvertising history's redirect hops and its cookie jar are new in v0.4.0.
+Run these from the repository root. They need fsagen v0.4.0 or later, which
+added the malvertising history's redirect hops and its cookie jar, the
+timestomp image's third clock and the change journal. Any release at generator
+version 8 gives the same image bytes for the same command, on every platform.
 
 ```sh
 fsagen --seed 2902 --playbook workshops/timestomp.playbook.yaml \

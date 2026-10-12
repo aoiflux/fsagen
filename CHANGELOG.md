@@ -1,9 +1,19 @@
 # Changelog
 
-## Unreleased
+## v0.4.0 — redirect chains, cookie jars, the change journal and GPT (2026-10-12)
 
-Generator version **8**. Three changes move bytes for an unchanged input, and
-they are the reason for the bump:
+Generator version **8**. This release adds what workshop evidence for
+timestomping and malvertising needs:
+- Chrome histories with redirect chains, and Chrome cookie jars.
+- A stomp that leaves a third clock behind.
+- An NTFS change journal.
+- Windows' GPT disk layout.
+- `fsagen features`, so a script checks for a capability rather than pin a
+  version.
+- Three workshop playbooks.
+
+Three changes move bytes for an unchanged input, and they are the reason for
+the bump:
 - Bulk mode's messages no longer name people (see _No one is named_).
 - A scheduled `mace` or `timestomp` moves the change time to when it ran (see
   _A stomp moves the change time_). Four examples' ledgers, answer keys, dry
@@ -211,6 +221,39 @@ Tests: `TestFeatures`, `TestFeatureFieldsAreAccepted`,
 key, so the file keeps the name the README's `--manifest scene.yaml` uses. Its
 goldens were recorded on Windows and Linux, so the golden subtests are now
 36: 17 examples × 2, plus 2 bulk.
+
+### Upgrading
+
+- **A corpus made under v0.3.0 does not reproduce.** Generator version 8
+  writes other bytes for bulk messages, stomped files and every NTFS image.
+  Regenerate it, or keep v0.3.0 to reproduce it.
+- **`--no-usn-journal` gives back an NTFS image without a change journal.**
+  It does not give back v0.3.0's bytes, because a stomp now moves the change
+  time.
+- **`features` is a command now.** In v0.3.0, `fsagen features` wrote a bulk
+  corpus into a directory named `features`. To do that now, write
+  `fsagen ./features`.
+- **Nothing v0.3.0 accepted is refused.** The new keys, the new format and the
+  new flags only add. Their own misuse is refused: a redirect with no
+  `from_visit`, an impossible cookie, `--partition gpt` with no NTFS volume,
+  and a disk too small for it.
+
+### Verified on
+
+Windows 11 (26300) and Ubuntu 24.04/ext4 under WSL2, at the tree committed as
+`4a1b864`.
+
+- **Both hosts.** `go test ./...` passed, and so did `go test -race ./...`.
+  The goldens ran at 36 subtests and 0 skips for
+  `TestExampleContentGoldens|TestDryRunGoldens`, and 2 and 0 for
+  `TestBulkGoldens`.
+- **Windows.** `go run ./tools/gate` passed: vet, gofmt, tidy, `-race`, the
+  conformance module, and all eight cross-compiled targets.
+- **Ubuntu.** The Sleuth Kit 4.12.1 read the change journal (`usnjls`), the
+  third clock (`istat`) and the GPT image (`mmls`, `fsstat`, `fls`).
+  `fdisk` read the partition table, and `sgdisk -v` found no problems.
+- **Across hosts.** The three workshop images and a GPT image are
+  byte-identical when built on Windows and on Ubuntu.
 
 ## v0.3.0 — disk images, and a tool scored against them (2026-10-11)
 

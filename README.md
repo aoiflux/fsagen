@@ -161,7 +161,7 @@ for your shell with the version to build. Both write to `dist/` and produce the
 same `SHA256SUMS` for the same version and toolchain:
 
 ```sh
-./build.sh v0.3.0       # POSIX
+./build.sh v0.4.0       # POSIX
 .\build.ps1 v0.3.0      # Windows
 ```
 
