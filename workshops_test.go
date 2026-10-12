@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -139,6 +140,27 @@ func TestWorkshopTimestomp(t *testing.T) {
 	}
 	if si.CreateTime.Nanosecond() != 0 || fn.CreateTime.Nanosecond() == 0 {
 		t.Errorf("tool $SI fraction %d, $FN fraction %d: want the stomped time whole and the real one jittered", si.CreateTime.Nanosecond(), fn.CreateTime.Nanosecond())
+	}
+	// The third clock: setting the times changed the record at 09:21.
+	if got := si.MFTChangeTime.Format("2006-01-02 15:04"); got != "2026-03-11 09:21" || si.MFTChangeTime.Nanosecond() == 0 {
+		t.Errorf("tool $SI changed %v, want 09:21 on 2026-03-11, when the stomp ran", si.MFTChangeTime)
+	}
+
+	// The change journal saw the tool made at 09:20 and its times set at
+	// 09:21, and the archive's at 09:45, whatever times they claim.
+	var journal []string
+	if err := vol.EachUSNRecord(func(r *libntfs.USNRecord) error {
+		if r.Name == "sync-helper.exe" || r.Name == "collect.zip" {
+			journal = append(journal, fmt.Sprintf("%s %s %s", r.Timestamp.Format("15:04"), r.Name, strings.Join(r.ReasonNames(), "|")))
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"09:20 sync-helper.exe FileCreate", "09:21 sync-helper.exe BasicInfoChange|Close", "09:40 collect.zip FileCreate", "09:45 collect.zip BasicInfoChange|Close"} {
+		if !slices.Contains(journal, want) {
+			t.Errorf("the journal has no %q:\n%s", want, strings.Join(journal, "\n"))
+		}
 	}
 
 	for _, path := range []string{"Users/user1/AppData/Local/Temp/collect.zip", "Users/user1/Documents/policy-2023.txt"} {

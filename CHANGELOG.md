@@ -2,10 +2,17 @@
 
 ## Unreleased
 
-Generator version **8**. One change moves bytes for an unchanged input, and
-it is the reason for the bump: bulk mode's messages no longer name people (see
-_No one is named_). The new history fields, the cookie jar and the image test
-only add; before the bump every v7 golden for an untouched input stayed
+Generator version **8**. Three changes move bytes for an unchanged input, and
+they are the reason for the bump:
+- Bulk mode's messages no longer name people (see _No one is named_).
+- A scheduled `mace` or `timestomp` moves the change time to when it ran (see
+  _A stomp moves the change time_). Four examples' ledgers, answer keys, dry
+  runs and modelled bodyfiles changed with it.
+- An NTFS image keeps a change journal (see _The NTFS change journal_), which
+  moves where later clusters land.
+
+The new history fields, the cookie jar, GPT, `fsagen features` and the image
+test only add. Before the bump, every v7 golden for an untouched input stayed
 byte-identical with them.
 
 ### No one is named
@@ -108,6 +115,93 @@ checks `Zone.Identifier` byte for byte against what Windows writes, and checks
 that the other named stream sits beside it. Before this, a Mark-of-the-Web in
 an image was covered only by comparing SHA256SUMS with a run in memory. The
 README no longer calls `ads` and `motw` Windows-only: an NTFS image takes both.
+
+### A stomp moves the change time
+
+Setting a file's times changes its record, and `SetFileTime` and `utimensat`
+leave the change time ("MFT modified" on NTFS) at the moment they ran. In a
+playbook, a `mace` or `timestomp` that sets a `$STANDARD_INFORMATION` time
+now does the same. Its change time becomes the time it runs, jitter included,
+unless it names `ctime`, which models the tools that set all four through
+`NtSetInformationFile`.
+
+The stomped times then sit before a change time they cannot explain: the
+third clock. Two cases change only the times they name, as before:
+- A `timestomp` of `$FILE_NAME` alone, a raw write to the MFT.
+- A manifest's `mace`, whose time is one of the times it sets.
+
+Four examples stomp, so their goldens changed in the change time of one
+record each: adversary-data-theft, macro-phish, malware-lifecycle and
+persistence-artifacts. `fsagen features` lists the behaviour as
+`model.stomp_changes_ctime`.
+
+Tests: `TestStompMovesChangeTime`, `TestMaceLeavesUnnamedTimes`,
+`TestWorkshopTimestomp`.
+
+### The NTFS change journal
+
+An NTFS image now keeps `$Extend\$UsnJrnl`, as every Windows system volume
+does. `--no-usn-journal` leaves it out, as on a volume where it is off or was
+deleted, and the run manifest's `usn_journal` says which.
+- **Layout.** The journal is made with the volume, in record 27. `$Max` holds
+  Windows' limits (32 MiB, growing by 8 MiB) and the journal's ID. `$J` is a
+  sparse stream of version 2 records, none crossing a 4 KiB page.
+- **Records.** Each operation journals each file it changes as Windows
+  journals a handle: a record the first time each reason appears, then one
+  that adds `CLOSE`. A delete shows only in that last record.
+- **Times.** Every record carries the time the operation ran, never a time
+  the scenario sets. A timestomp therefore shows as `BASIC_INFO_CHANGE` at
+  the moment it happened.
+- **USN.** A file's `$STANDARD_INFORMATION` keeps the USN of its last record.
+
+The settle pass after the last operation is not journaled. The Sleuth Kit's
+`usnjls` reads every record of the workshop images. libntfs reads them too,
+opened strict.
+
+Because `$J` takes clusters as it grows, later files land elsewhere. In the
+NTFS fixture, one freed log file's clusters now hold journal records, so its
+residue is partial. `testdata/golden/image/ntfs.txt` was re-recorded. An
+empty volume without the journal is still mkntfs's, byte for byte.
+
+Tests: `TestChangeJournal`, `TestChangeJournalPages`, `TestNoChangeJournal`,
+`TestNTFSImageChangeJournal`, `TestWorkshopTimestomp`.
+
+### Windows' GPT layout (`--partition gpt`)
+
+`--partition gpt` lays an NTFS image out as Windows Setup lays out a system
+disk, so a tool has to find the volume rather than assume sector 2048:
+- a protective MBR, then the primary GPT and its backup, with valid CRCs;
+- an EFI system partition holding an empty FAT32 volume;
+- a Microsoft reserved partition, left unformatted;
+- the Windows partition (basic data), which holds the scenario;
+- a recovery partition at the end, holding an empty NTFS volume.
+
+The partitions are on MiB boundaries, named as diskpart names them, and their
+GUIDs are drawn from the seed. On a disk of 64 GiB or more they take Windows
+Setup's sizes. A smaller disk shrinks them, to no less than 33, 1 and 4 MiB.
+A disk too small for the layout is refused, and so is GPT around FAT32 or
+ext4. The run manifest lists the partitions under `partitions`. libtable, The
+Sleuth Kit's `mmls`, `fdisk` and `sgdisk -v` read the table. MBR stays the
+default.
+
+Tests: `TestGPT`, `TestNTFSImageGPT`, `TestImageFlagErrors`.
+
+### `fsagen features`
+
+`fsagen features [--json]` lists what the build can do, by names that stay
+stable, so a script can check for a feature rather than pin a version.
+- The names cover actions, the fields of an action as dotted paths
+  (`field:history.visits.redirect`), `format:` values, playbook and manifest
+  keys, image and timeline options (`image.partition:gpt`,
+  `image.ntfs.usn_journal`) and behaviours (`model.stomp_changes_ctime`).
+- They come from the tables the build checks its input against, so the list
+  cannot claim what a run would refuse.
+- `--json` adds the version and the generator version.
+- A listed name stays listed. `testdata/golden/features.txt` records them,
+  and a name that goes missing fails the tests as the breaking change it is.
+
+Tests: `TestFeatures`, `TestFeatureFieldsAreAccepted`,
+`TestFeaturesKeepEveryName`.
 
 ### `examples/scene.yaml` is read as the manifest it is
 

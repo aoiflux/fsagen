@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +23,7 @@ import (
 	"github.com/aoiflux/fsagen/volume/container"
 	imagepkg "github.com/aoiflux/fsagen/volume/image"
 	"github.com/aoiflux/libntfs"
+	"github.com/aoiflux/libtable"
 )
 
 // ntfsFixture is the scenario TestNTFSImageGolden pins.
@@ -81,6 +85,126 @@ func TestNTFSImageGolden(t *testing.T) {
 			if !strings.Contains(got, want) {
 				t.Errorf("the golden lacks %s:\n%s", want, got)
 			}
+		}
+	}
+}
+
+// --partition gpt lays the disk out as Windows Setup does: libtable lists
+// the EFI system, Microsoft reserved, basic data and recovery partitions
+// with their type GUIDs, the scenario's NTFS volume opens in the basic data
+// partition, the EFI system partition is an empty FAT32 volume and the
+// recovery partition an empty NTFS one, and the run manifest says where
+// each one is.
+func TestNTFSImageGPT(t *testing.T) {
+	img := ntfsImage(t, "--partition", "gpt")
+	rm := readManifest(t, img+metaDirSuffix)
+	f, err := os.Open(img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tab, err := libtable.Parse(f, uint64(info.Size()), libtable.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tab.Type != libtable.TypeGPT || tab.GPTBackup != libtable.GPTBackupOK || len(tab.Warnings) != 0 {
+		t.Fatalf("table %v, backup %v, warnings %v", tab.Type, tab.GPTBackup, tab.Warnings)
+	}
+	var types []string
+	var parts []libtable.Partition
+	for _, p := range tab.Partitions {
+		if p.SlotNumber >= 0 {
+			types, parts = append(types, p.GUIDType), append(parts, p)
+		}
+	}
+	if want := []string{container.TypeEFISystem, container.TypeMSReserved, container.TypeBasicData, container.TypeWinRecovery}; !slices.Equal(types, want) {
+		t.Fatalf("partitions: %s", strings.Join(types, ", "))
+	}
+	if rm.Image.Partition != "gpt" || len(rm.Image.Partitions) != 4 {
+		t.Fatalf("run manifest image %+v", rm.Image)
+	}
+	for i, p := range parts {
+		r := rm.Image.Partitions[i]
+		if r.Type != p.GUIDType || r.Name != p.Name || r.Offset != int64(tab.ByteOffset(p)) || r.Size != int64(tab.ByteSize(p)) {
+			t.Errorf("run manifest partition %d %+v, the table's %s %q at %d", i, r, p.GUIDType, p.Name, tab.ByteOffset(p))
+		}
+	}
+	at := func(p libtable.Partition) *io.SectionReader {
+		return io.NewSectionReader(f, int64(tab.ByteOffset(p)), int64(tab.ByteSize(p)))
+	}
+	if rm.Image.PartitionOffset != int64(tab.ByteOffset(parts[2])) {
+		t.Errorf("partition_offset %d, the basic data partition's %d", rm.Image.PartitionOffset, tab.ByteOffset(parts[2]))
+	}
+	vol, err := libntfs.OpenWithOptions(at(parts[2]), libntfs.Options{ReadOnly: true, Strict: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer vol.Close()
+	if _, err := vol.OpenPath("/Documents/ReadMe.txt"); err != nil {
+		t.Errorf("the scenario's volume: %v", err)
+	}
+	rec, err := libntfs.OpenWithOptions(at(parts[3]), libntfs.Options{ReadOnly: true, Strict: true})
+	if err != nil {
+		t.Fatalf("the recovery partition: %v", err)
+	}
+	rec.Close()
+	esp := make([]byte, 512)
+	if _, err := at(parts[0]).ReadAt(esp, 0); err != nil || string(esp[0x52:0x5A]) != "FAT32   " || esp[0x1FE] != 0x55 {
+		t.Errorf("the EFI system partition's boot sector: %q, %v", esp[0x52:0x5A], err)
+	}
+	if b := make([]byte, 4096); func() bool {
+		_, err := at(parts[1]).ReadAt(b, 0)
+		return err != nil || !bytes.Equal(b, make([]byte, 4096))
+	}() {
+		t.Error("the Microsoft reserved partition is not left unformatted")
+	}
+}
+
+// An NTFS image keeps a change journal unless --no-usn-journal says not to,
+// and the run manifest says which. The fixture's every operation is in it,
+// read back through libntfs.
+func TestNTFSImageChangeJournal(t *testing.T) {
+	for _, off := range []bool{false, true} {
+		var extra []string
+		if off {
+			extra = append(extra, "--no-usn-journal")
+		}
+		img := ntfsImage(t, extra...)
+		rm := readManifest(t, img+metaDirSuffix)
+		if rm.Image.USNJournal == nil || *rm.Image.USNJournal == off {
+			t.Errorf("--no-usn-journal %v: run manifest usn_journal %v", off, rm.Image.USNJournal)
+		}
+		f, err := os.Open(img)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		info, err := f.Stat()
+		if err != nil {
+			t.Fatal(err)
+		}
+		start := int64(container.MBRStart) * 512
+		vol, err := libntfs.OpenWithOptions(io.NewSectionReader(f, start, info.Size()-start), libntfs.Options{ReadOnly: true, Strict: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer vol.Close()
+		names := map[string]bool{}
+		err = vol.EachUSNRecord(func(r *libntfs.USNRecord) error {
+			names[r.Name] = true
+			return nil
+		})
+		switch {
+		case off && !errors.Is(err, libntfs.ErrFileNotFound):
+			t.Errorf("--no-usn-journal: reading the journal gave %v, want none there", err)
+		case !off && err != nil:
+			t.Fatal(err)
+		case !off && (!names["twice.log"] || !names["streamed.bin"] || len(names) < 20):
+			t.Errorf("the journal names %d files, without the fixture's: %v", len(names), names)
 		}
 	}
 }

@@ -32,8 +32,8 @@ func TestFileNameTimeRules(t *testing.T) {
 	if want := (model.Times{Atime: at(1), Mtime: at(1), Ctime: at(1), Btime: y2017}); stomp.FN != want {
 		t.Errorf("$FILE_NAME times after the timestomp = %+v, want %+v (born at 09:01, only fn_crtime set)", stomp.FN, want)
 	}
-	if want := (model.Times{Atime: at(2), Mtime: y2018, Ctime: at(2), Btime: y2018}); stomp.Times != want {
-		t.Errorf("times after a timestomp with no $STANDARD_INFORMATION fields = %+v, want %+v", stomp.Times, want)
+	if want := (model.Times{Atime: at(2), Mtime: y2018, Ctime: at(3), Btime: y2018}); stomp.Times != want {
+		t.Errorf("times after a timestomp with no $STANDARD_INFORMATION fields = %+v, want %+v (changed by the mace at 09:03)", stomp.Times, want)
 	}
 
 	renamed := p.Model.Name("home/b.txt")
@@ -42,6 +42,52 @@ func TestFileNameTimeRules(t *testing.T) {
 	}
 	if c := p.Model.Name("home/c.txt"); c.FN != model.All(at(6)) {
 		t.Errorf("a copy's $FILE_NAME times = %+v, want all 09:06", c.FN)
+	}
+}
+
+// Setting a time changes the record: a scheduled mace or timestomp leaves
+// the change time at the moment it ran, jitter and all, unless it names
+// ctime, while $FILE_NAME keeps the birth. A stomp of $FILE_NAME alone and
+// a manifest's mace move no change time.
+func TestStompMovesChangeTime(t *testing.T) {
+	p, err := load(t, ModePlaybook, "subsecond_jitter: true\n"+pbHead+`  - { actor: u, offset: 1m, actions: [ { action: create, path: a.txt, content: x }, { action: create, path: b.txt, content: x }, { action: create, path: c.txt, content: x } ] }
+  - { actor: u, offset: 5m, actions: [ { action: mace, path: a.txt, mtime: "2024-07-02T11:00:00Z" } ] }
+  - { actor: u, offset: 6m, actions: [ { action: timestomp, path: b.txt, crtime: "2025-11-04T10:12:00Z" } ] }
+  - { actor: u, offset: 7m, actions: [ { action: timestomp, path: c.txt, crtime: "2025-11-04T10:12:00Z", ctime: "2025-11-04T10:12:00Z" } ] }
+  - { actor: u, offset: 8m, actions: [ { action: timestomp, path: c.txt, fn_crtime: "2025-11-04T10:12:00Z" } ] }
+`, Options{Seed: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	born := p.Ops[0].When
+	stomp := time.Date(2025, 11, 4, 10, 12, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		op           int
+		ctime, btime time.Time
+	}{
+		{3, p.Ops[3].When, born},
+		{4, p.Ops[4].When, stomp},
+		{5, stomp, stomp},
+		{6, stomp, stomp},
+	} {
+		op := p.Ops[tc.op]
+		if op.Times.Ctime != tc.ctime || op.Times.Btime != tc.btime {
+			t.Errorf("op %d (%s %s): change %s, birth %s; want %s and %s", tc.op, op.Action, op.Path, op.Times.Ctime, op.Times.Btime, tc.ctime, tc.btime)
+		}
+	}
+	if p.Ops[3].When.Nanosecond() == 0 {
+		t.Error("the mace's time carries no jitter, so the test proves nothing about it")
+	}
+	if b := p.Model.Name("home/b.txt"); b.FN != model.All(p.Ops[1].When) || !b.Obj.Times.Btime.Before(b.Obj.Times.Ctime) {
+		t.Errorf("b.txt: $FILE_NAME %+v, want all at its birth; created %s, changed %s, want created first", b.FN, b.Obj.Times.Btime, b.Obj.Times.Ctime)
+	}
+
+	m, err := load(t, ModeManifest, "start: 2026-03-11T09:00:00Z\noperations:\n  - { action: create, path: a.txt, content: x }\n  - { action: mace, path: a.txt, mtime: \"2024-07-02T11:00:00Z\" }\n", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := m.Ops[1].Times.Ctime, time.Date(2026, 3, 11, 9, 0, 0, 0, time.UTC); got != want {
+		t.Errorf("a manifest's mace: change %s, want %s, its creation", got, want)
 	}
 }
 

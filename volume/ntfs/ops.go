@@ -1,6 +1,7 @@
 package ntfs
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -268,11 +269,18 @@ func (f *FS) Create(parent *volume.Node, leaf string, vn *volume.Node) error {
 	if err := f.indexAdd(p, n.entry(nm)); err != nil {
 		return err
 	}
+	f.before[n] = times{}
+	if err := f.journal(n, nm, libntfs.USNReasonFileCreate, false); err != nil {
+		return err
+	}
 	if link {
 		if err := f.indexAdd(f.reparse, reparseEntry(n)); err != nil {
 			return err
 		}
 		if err := f.writeIndex(f.reparse); err != nil {
+			return err
+		}
+		if err := f.journal(n, nm, libntfs.USNReasonReparsePointChange, false); err != nil {
 			return err
 		}
 	}
@@ -294,6 +302,7 @@ func reparseEntry(n *node) entry {
 // link has changed its record.
 func (f *FS) Link(parent *volume.Node, leaf string, vn *volume.Node) error {
 	p, n := nodeOf(parent), nodeOf(vn)
+	f.snap(n)
 	n.si.changed = f.clock()
 	f.putStdInfo(n)
 	first := n.names[0].fn
@@ -311,6 +320,9 @@ func (f *FS) Link(parent *volume.Node, leaf string, vn *volume.Node) error {
 	if err := f.putFileNames(n); err != nil {
 		return err
 	}
+	if err := f.journal(n, nm, libntfs.USNReasonHardLinkChange, false); err != nil {
+		return err
+	}
 	if err := f.writeRecord(n.rec); err != nil {
 		return err
 	}
@@ -323,6 +335,7 @@ func (f *FS) Link(parent *volume.Node, leaf string, vn *volume.Node) error {
 // touchDir stamps a directory's entries changed now and writes its index
 // and record.
 func (f *FS) touchDir(d *node) error {
+	f.snap(d)
 	now := f.clock()
 	d.si.modified, d.si.changed = now, now
 	f.putStdInfo(d)
@@ -457,15 +470,72 @@ func (f *FS) fit(r *record) error {
 // Commit writes n's content (see store), and the sizes in its names.
 func (f *FS) Commit(vn *volume.Node, truncated bool) error {
 	n := nodeOf(vn)
-	if err := f.store(n.rec, n.rec.find(libntfs.AttrTypeData, ""), vn.Data, truncated); err != nil {
+	a := n.rec.find(libntfs.AttrTypeData, "")
+	old, err := f.journaled(a)
+	if err != nil {
 		return err
 	}
-	return f.changed(n)
+	if err := f.store(n.rec, a, vn.Data, truncated); err != nil {
+		return err
+	}
+	if err := f.changed(n); err != nil {
+		return err
+	}
+	return f.journalData(n, old, vn.Data, truncated, false)
+}
+
+// journaled is a $DATA attribute's content as it is before a write, when
+// the change journal is to say what the write did to it.
+func (f *FS) journaled(a *attr) ([]byte, error) {
+	switch {
+	case f.jrnl == nil || !f.journaling || a == nil:
+		return nil, nil
+	case a.resident:
+		return a.value, nil
+	}
+	data, _, err := f.readRuns(a.runs, 0, a.size)
+	return data, err
+}
+
+// journalData journals what writing data over old did to n's content, or
+// to a named stream (named): cut to nothing first (truncated), shortened,
+// changed where it was, or made longer, each reason in that order, as a
+// program truncating and then writing is journaled.
+func (f *FS) journalData(n *node, old, data []byte, truncated, named bool) error {
+	over, ext, cut := uint32(libntfs.USNReasonDataOverwrite), uint32(libntfs.USNReasonDataExtend), uint32(libntfs.USNReasonDataTruncation)
+	if named {
+		over, ext, cut = libntfs.USNReasonNamedDataOverwrite, libntfs.USNReasonNamedDataExtend, libntfs.USNReasonNamedDataTruncation
+	}
+	base := old
+	var reasons []uint32
+	if truncated {
+		if len(old) > 0 {
+			reasons = append(reasons, cut)
+		}
+		base = nil
+	}
+	k := min(len(data), len(base))
+	switch {
+	case len(data) < len(base):
+		reasons = append(reasons, cut)
+	case !bytes.Equal(data[:k], base[:k]):
+		reasons = append(reasons, over)
+	}
+	if len(data) > len(base) {
+		reasons = append(reasons, ext)
+	}
+	for _, r := range reasons {
+		if err := f.journal(n, nil, r, false); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // changed stamps n's content changed now and writes its record and its
 // names, whose sizes follow the content.
 func (f *FS) changed(n *node) error {
+	f.snap(n)
 	f.setSizes(n)
 	now := f.clock()
 	n.si.modified, n.si.changed = now, now
@@ -485,13 +555,26 @@ func (f *FS) changed(n *node) error {
 func (f *FS) WriteStream(vn *volume.Node, stream string) error {
 	n := nodeOf(vn)
 	a := n.rec.find(libntfs.AttrTypeData, stream)
-	if a == nil {
+	created := a == nil
+	old, err := f.journaled(a)
+	if err != nil {
+		return err
+	}
+	if created {
 		a = n.rec.add(&attr{typ: libntfs.AttrTypeData, name: stream, resident: true})
 	}
 	if err := f.store(n.rec, a, vn.Streams[stream], true); err != nil {
 		return err
 	}
-	return f.changed(n)
+	if err := f.changed(n); err != nil {
+		return err
+	}
+	if created {
+		if err := f.journal(n, nil, libntfs.USNReasonStreamChange, false); err != nil {
+			return err
+		}
+	}
+	return f.journalData(n, old, vn.Streams[stream], true, true)
 }
 
 // cut frees d's clusters from the keep-th on, recording what they held, up
@@ -542,6 +625,7 @@ func (f *FS) Remove(parent *volume.Node, leaf string, vn *volume.Node) error {
 	if nm == nil {
 		return fmt.Errorf("record %d has no name %q in record %d", n.rec.num, leaf, p.rec.num)
 	}
+	f.snap(n)
 	f.forget(p, n, nm, target.ResidueDelete)
 	if err := f.indexRemove(p, n.entry(nm)); err != nil {
 		return err
@@ -551,12 +635,20 @@ func (f *FS) Remove(parent *volume.Node, leaf string, vn *volume.Node) error {
 	}
 	r := n.rec
 	if vn.Names > 0 {
+		if err := f.journal(n, nm, libntfs.USNReasonHardLinkChange, false); err != nil {
+			return err
+		}
 		r.drop(nm.a)
 		n.names = slices.DeleteFunc(n.names, func(x *name) bool { return x == nm })
 		r.links--
 		n.si.changed = f.clock()
 		f.putStdInfo(n)
 		return f.writeRecord(r)
+	}
+	// The file is still its own until it is closed, which journals the
+	// delete under the reference it had.
+	if err := f.journal(n, nm, libntfs.USNReasonFileDelete, true); err != nil {
+		return err
 	}
 	if n.tag != 0 {
 		if err := f.indexRemove(f.reparse, reparseEntry(n)); err != nil {
@@ -624,6 +716,10 @@ func (f *FS) Rename(from *volume.Node, oldName string, to *volume.Node, newName 
 	if nm == nil {
 		return fmt.Errorf("record %d has no name %q in record %d", n.rec.num, oldName, src.rec.num)
 	}
+	f.snap(n)
+	if err := f.journal(n, nm, libntfs.USNReasonRenameOldName, false); err != nil {
+		return err
+	}
 	f.forget(src, n, nm, target.ResidueRename)
 	if err := f.indexRemove(src, n.entry(nm)); err != nil {
 		return err
@@ -636,6 +732,9 @@ func (f *FS) Rename(from *volume.Node, oldName string, to *volume.Node, newName 
 	n.rec.drop(nm.a)
 	nm.a.value = nm.fn.encode()
 	n.rec.put(nm.a)
+	if err := f.journal(n, nm, libntfs.USNReasonRenameNewName, false); err != nil {
+		return err
+	}
 	if err := f.writeRecord(n.rec); err != nil {
 		return err
 	}
@@ -651,11 +750,19 @@ func (f *FS) Rename(from *volume.Node, oldName string, to *volume.Node, newName 
 	return nil
 }
 
-// SetTimes stores t's non-zero times in n's $STANDARD_INFORMATION.
+// SetTimes stores t's non-zero times in n's $STANDARD_INFORMATION; setting
+// one the way a program does is a basic-info change to the journal.
 func (f *FS) SetTimes(vn *volume.Node, t target.Times) error {
 	n := nodeOf(vn)
+	f.snap(n)
+	basic := f.changedTimes(n, t)
 	n.si = setTimes(n.si, t)
 	f.putStdInfo(n)
+	if basic {
+		if err := f.journal(n, nil, libntfs.USNReasonBasicInfoChange, false); err != nil {
+			return err
+		}
+	}
 	return f.writeRecord(n.rec)
 }
 
@@ -702,6 +809,8 @@ func (f *FS) Chmod(vn *volume.Node) error {
 	if n.dir != nil || n.tag != 0 {
 		return nil
 	}
+	f.snap(n)
+	was := n.attrs
 	if vn.Mode&0o200 == 0 {
 		n.attrs |= libntfs.FileAttrReadOnly
 	} else {
@@ -709,6 +818,11 @@ func (f *FS) Chmod(vn *volume.Node) error {
 	}
 	n.si.changed = f.clock()
 	f.putStdInfo(n)
+	if n.attrs != was {
+		if err := f.journal(n, nil, libntfs.USNReasonBasicInfoChange, false); err != nil {
+			return err
+		}
+	}
 	return f.writeRecord(n.rec)
 }
 

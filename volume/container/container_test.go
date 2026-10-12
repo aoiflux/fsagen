@@ -2,8 +2,10 @@ package container
 
 import (
 	"encoding/binary"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -103,5 +105,86 @@ func TestFormatFor(t *testing.T) {
 	}
 	if _, err := FormatFor("e.vhdx"); err == nil {
 		t.Error(".vhdx was accepted")
+	}
+}
+
+// A GPT disk as Windows Setup lays one out, read back by libtable: the
+// protective MBR, both headers and both entry arrays with their CRCs, a
+// backup that agrees, and the four partitions in Windows' order, each on a
+// MiB, the Windows partition the file system's.
+func TestGPT(t *testing.T) {
+	for _, tc := range []struct {
+		disk          int64
+		esp, msr, rec int64
+		formatVHD     bool
+	}{
+		{64 << 20, 33 << 20, 1 << 20, 4 << 20, true},
+		{1 << 30, 33 << 20, 1 << 20, 8 << 20, false},
+	} {
+		format := FormatRaw
+		if tc.formatVHD {
+			format = FormatVHD
+		}
+		l, err := Plan(format, PartitionGPT, tc.disk)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f, err := os.Create(filepath.Join(t.TempDir(), "d.img"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		if err := f.Truncate(l.File()); err != nil {
+			t.Fatal(err)
+		}
+		if err := WriteGPT(f, l, prng.Root(1)); err != nil {
+			t.Fatal(err)
+		}
+		tab, err := libtable.Parse(f, uint64(l.Disk), libtable.Options{Type: libtable.TypeGPT})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tab.GPTBackup != libtable.GPTBackupOK || len(tab.Warnings) != 0 {
+			t.Errorf("%d bytes: backup %v, warnings %v", tc.disk, tab.GPTBackup, tab.Warnings)
+		}
+		var got []string
+		for _, p := range tab.Partitions {
+			if p.SlotNumber < 0 {
+				continue
+			}
+			off, size := int64(tab.ByteOffset(p)), int64(tab.ByteSize(p))
+			got = append(got, fmt.Sprintf("%s %q %#x", p.GUIDType, p.Name, p.Attributes))
+			if off%(1<<20) != 0 || size%(1<<20) != 0 || p.GUIDUnique == "" || p.GUIDUnique[14] != '4' {
+				t.Errorf("%d bytes: %q at %d, %d bytes, GUID %s: want a MiB boundary and a random GUID", tc.disk, p.Name, off, size, p.GUIDUnique)
+			}
+			want := map[string]int64{TypeEFISystem: tc.esp, TypeMSReserved: tc.msr, TypeWinRecovery: tc.rec, TypeBasicData: l.Size}[p.GUIDType]
+			if size != want || p.GUIDType == TypeBasicData && off != l.Offset {
+				t.Errorf("%d bytes: %q at %d, %d bytes; want %d bytes (the file system's partition at %d)", tc.disk, p.Name, off, size, want, l.Offset)
+			}
+		}
+		want := []string{
+			TypeEFISystem + ` "EFI system partition" 0x8000000000000000`,
+			TypeMSReserved + ` "Microsoft reserved partition" 0x8000000000000000`,
+			TypeBasicData + ` "Basic data partition" 0x0`,
+			TypeWinRecovery + ` "Basic data partition" 0x8000000000000001`,
+		}
+		if strings.Join(got, "\n") != strings.Join(want, "\n") {
+			t.Errorf("%d bytes: partitions\n%s\nwant\n%s", tc.disk, strings.Join(got, "\n"), strings.Join(want, "\n"))
+		}
+	}
+	// From 64 GiB on, the partitions are Windows Setup's own size.
+	l, err := Plan(FormatRaw, PartitionGPT, 80<<30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sizes []int64
+	for _, p := range l.Parts {
+		sizes = append(sizes, p.Size>>20)
+	}
+	if fmt.Sprint(sizes) != fmt.Sprint([]int64{100, 16, 80<<10 - 1 - 100 - 16 - 512 - 1, 512}) {
+		t.Errorf("an 80 GiB disk's partitions are %v MiB", sizes)
+	}
+	if _, err := Plan(FormatRaw, PartitionGPT, 40<<20); err == nil || !strings.Contains(err.Error(), "too small for Windows' GPT layout") {
+		t.Errorf("a 40 MiB GPT disk: %v", err)
 	}
 }

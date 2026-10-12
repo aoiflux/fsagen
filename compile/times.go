@@ -18,9 +18,9 @@ import (
 //	update, append, truncate     written: access, modification, change T;
 //	                             birth kept (append to a missing file and a
 //	                             first mbox message are born instead)
-//	mace                         only the explicit times
-//	timestomp                    only the explicit times, and the explicit
-//	                             $FILE_NAME times
+//	mace                         the explicit times; in a playbook change T
+//	                             too, as setting a time changes the record
+//	timestomp                    as mace, and the explicit $FILE_NAME times
 //	ads, motw                    the file's times unchanged
 //	rename                       the object keeps its times, change T
 //	rotate                       the rotated file as rename; the new empty

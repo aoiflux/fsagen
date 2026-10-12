@@ -38,6 +38,7 @@ func imageOnly(c *config) []struct {
 		{"--image-label", c.imageLabel != ""},
 		{"--image-time", c.imageTime != ""},
 		{"--alloc", c.alloc != volume.NextFit},
+		{"--no-usn-journal", c.noJournal},
 	}
 }
 
@@ -63,6 +64,8 @@ func validateImageFlags(c *config) error {
 		return usagef("--image needs --image-size")
 	case !c.checkOnly() && inputModes(c) == 0:
 		return usagef("--image needs --manifest, --playbook or --bulk")
+	case c.noJournal && c.imageFS != imagepkg.FSNTFS:
+		return usagef("--no-usn-journal is for an NTFS image; %s keeps no change journal", c.imageFS)
 	}
 	if c.imageTime != "" {
 		if _, err := time.Parse(time.RFC3339Nano, c.imageTime); err != nil {
@@ -91,7 +94,7 @@ func imagePlan(c *config) (imagepkg.Plan, error) {
 	}
 	p, err := imagepkg.NewPlan(imagepkg.Options{
 		Path: abs, FS: c.imageFS, Size: size, ClusterSize: c.clusterSize, Partition: c.partition,
-		Label: c.imageLabel, Time: when.UTC(), Alloc: c.alloc, Seed: c.seed,
+		Label: c.imageLabel, Time: when.UTC(), Alloc: c.alloc, Seed: c.seed, Journal: !c.noJournal,
 	})
 	if err != nil {
 		return imagepkg.Plan{}, usageError{err.Error()}

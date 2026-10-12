@@ -124,13 +124,14 @@ func TestMaceSetsFourTimes(t *testing.T) {
 	expect(t, fsys, "a.txt", sandbox.Times{Atime: ts(1), Mtime: ts(2), Ctime: ts(3), Btime: ts(4)})
 }
 
-// A mace that names one time leaves the others as the scenario had them.
+// A mace that names one time leaves the others as the scenario had them,
+// but for the change time, which moves to when it ran.
 func TestMaceLeavesUnnamedTimes(t *testing.T) {
 	fsys, _ := runPB(t, pb+`  - { actor: u, actions: [ { action: create, path: a.txt, content: x } ] }
   - { actor: u, offset: 10m, actions: [ { action: mace, path: a.txt, mtime: "2019-01-01T00:00:00Z" } ] }
 `)
 	want := all(t0)
-	want.Mtime = time.Date(2019, 1, 1, 0, 0, 0, 0, time.UTC)
+	want.Mtime, want.Ctime = time.Date(2019, 1, 1, 0, 0, 0, 0, time.UTC), at(10)
 	expect(t, fsys, "a.txt", want)
 }
 
@@ -172,7 +173,7 @@ func TestAdsAndMotwKeepTimes(t *testing.T) {
       - { action: motw, path: a.exe, zone_id: 3, host_url: "https://evil.test/a.exe" }
 `)
 	old := time.Date(2019, 1, 1, 0, 0, 0, 0, time.UTC)
-	expect(t, fsys, "a.exe", sandbox.Times{Atime: t0, Mtime: old, Ctime: t0, Btime: old})
+	expect(t, fsys, "a.exe", sandbox.Times{Atime: t0, Mtime: old, Ctime: at(10), Btime: old})
 	if b, err := fsys.ReadStream("a.exe", "extra"); err != nil || string(b) != "payload" {
 		t.Errorf("stream = %q, %v", b, err)
 	}
@@ -199,7 +200,7 @@ func TestDirTimesFollowLastChildEvent(t *testing.T) {
 	// e: the mace at 6m is overtaken by the child added at 7m.
 	expect(t, fsys, "e", sandbox.Times{Atime: at(5), Mtime: at(7), Ctime: at(7), Btime: at(5)})
 	// f: the mace at 10m comes after its last child event, so it holds.
-	expect(t, fsys, "f", sandbox.Times{Atime: at(8), Mtime: time.Date(2018, 1, 1, 0, 0, 0, 0, time.UTC), Ctime: at(9), Btime: at(8)})
+	expect(t, fsys, "f", sandbox.Times{Atime: at(8), Mtime: time.Date(2018, 1, 1, 0, 0, 0, 0, time.UTC), Ctime: at(10), Btime: at(8)})
 }
 
 // N-7: rotating keeps the rotated file's own times (with the change time of

@@ -27,6 +27,9 @@ type Options struct {
 	Clock time.Time
 	// Alloc is the cluster allocation policy.
 	Alloc string
+	// Journal keeps a change journal, $Extend\$UsnJrnl, as Windows keeps
+	// one on every system volume.
+	Journal bool
 }
 
 // FS is an NTFS volume being written.
@@ -55,8 +58,18 @@ type FS struct {
 	// reparse is $Extend\$Reparse, whose $R index files every reparse
 	// point by its tag and record.
 	reparse *node
-	res     *volume.Tracker
-	now     time.Time
+	// extEntries are $Extend's index entries.
+	extEntries []entry
+	// jrnl is the change journal, nil without one; journaling says the
+	// scenario's operations are running, and jerr is the first error writing
+	// it, which Flush returns. before holds the times of what the running
+	// operation changed, as they were before it.
+	jrnl       *journal
+	journaling bool
+	jerr       error
+	before     map[*node]times
+	res        *volume.Tracker
+	now        time.Time
 	// gone are the index entries removed from directories, to look for in
 	// what their indexes leave behind once the volume is finished.
 	gone []goneEntry
@@ -119,9 +132,14 @@ func Format(dev *volume.Device, o Options, res *volume.Tracker) (*FS, error) {
 	if err != nil {
 		return nil, err
 	}
-	f := &FS{dev: dev, g: g, o: o, zone: zone, data: data, recs: map[uint32]*record{}, res: res, records: g.MFTRecords, nextSec: 0x102}
+	f := &FS{dev: dev, g: g, o: o, zone: zone, data: data, recs: map[uint32]*record{}, res: res, records: g.MFTRecords, nextSec: 0x102, journaling: true, before: map[*node]times{}}
 	if err := f.format(); err != nil {
 		return nil, err
+	}
+	if o.Journal {
+		if err := f.startJournal(); err != nil {
+			return nil, err
+		}
 	}
 	return f, nil
 }
@@ -379,6 +397,7 @@ func (f *FS) format() error {
 	view(recObjID, "$ObjId", libntfs.CollationULongs, "$O")
 	f.reparse = &node{rec: view(recReparse, "$Reparse", libntfs.CollationULongs, "$R"), dir: newIndex("$R", 0, libntfs.CollationULongs, byULongs)}
 	slices.SortFunc(extEntries, func(a, b entry) int { return collate(a.name, b.name) })
+	f.extEntries = extEntries
 	ext.put(resident(libntfs.AttrTypeIndexRoot, "$I30", 2, indexRoot(libntfs.AttrTypeFileName, libntfs.CollationFileName, g, entries(extEntries, -1), false)))
 	for i := uint32(systemRecords); i < uint32(g.MFTRecords); i++ {
 		r := newRecord(i, uint16(i), nil)
@@ -736,9 +755,15 @@ func (f *FS) writeBitmaps() error {
 	return f.writeRuns(ba.runs, 0, mb)
 }
 
-// Flush writes the bitmaps, and records what the index entries taken out
-// left behind.
+// Flush closes what the last operation left open in the change journal,
+// writes the bitmaps, and records what the index entries taken out left
+// behind.
 func (f *FS) Flush() error {
+	f.endOp()
+	f.journaling = false
+	if f.jerr != nil {
+		return fmt.Errorf("the change journal: %w", f.jerr)
+	}
 	if err := f.writeBitmaps(); err != nil {
 		return err
 	}
@@ -751,6 +776,7 @@ func (f *FS) Open() (target.Reader, error) { return Open(f.dev) }
 var (
 	_ volume.Driver         = (*FS)(nil)
 	_ volume.Clocked        = (*FS)(nil)
+	_ volume.Sequenced      = (*FS)(nil)
 	_ volume.LinkDriver     = (*FS)(nil)
 	_ volume.StreamDriver   = (*FS)(nil)
 	_ volume.FileNameDriver = (*FS)(nil)

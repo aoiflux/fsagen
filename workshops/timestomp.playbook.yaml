@@ -15,7 +15,12 @@
 #   $FILE_NAME times say 2026-03-11 09:20, when the name was really made. A
 #   file created before it was given its name has been timestomped (T1070.006).
 #   The stomped times also sit on a whole second, where every scheduled time
-#   in this scenario carries a fraction (subsecond_jitter).
+#   in this scenario carries a fraction (subsecond_jitter). The third clock,
+#   $STANDARD_INFORMATION's "MFT changed" time, is 09:21: setting the times
+#   changed the record, so it is later than every time the file claims.
+# - The change journal ($Extend\$UsnJrnl:$J) records sync-helper.exe's
+#   FILE_CREATE at 09:20 and a BASIC_INFO_CHANGE at 09:21, the moment the
+#   times were set, and collect.zip's BASIC_INFO_CHANGE at 09:45.
 # - collect.zip: modified in 2024, created in 2026. Only its modification time
 #   was moved, so both clocks agree on its birth; the contradiction is between
 #   its own times.

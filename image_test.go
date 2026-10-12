@@ -54,6 +54,10 @@ func TestImageFlagErrors(t *testing.T) {
 		{"--manifest", m, "--image", img, "--image-fs", "ntfs", "--image-size", "64M", "--cluster-size", "3000"},
 		{"--manifest", m, "--image", img, "--image-fs", "ntfs", "--image-size", "512K"},
 		{"--manifest", m, "--image", img, "--image-fs", "ntfs", "--image-size", "64M", "--image-time", "1600-12-31T00:00:00Z"},
+		{"--manifest", m, "--no-usn-journal", filepath.Join(dir, "out")},
+		{"--manifest", m, "--image", img, "--image-fs", "ext4", "--image-size", "64M", "--partition", "gpt"},
+		{"--manifest", m, "--image", img, "--image-fs", "ntfs", "--image-size", "40M", "--partition", "gpt"},
+		{"--manifest", m, "--image", img, "--image-fs", "ext4", "--image-size", "64M", "--no-usn-journal"},
 	} {
 		if code, _, stderr := runCLI(t, args...); code != exitUsage {
 			t.Errorf("%q: exit %d, want %d (%s)", args, code, exitUsage, stderr)

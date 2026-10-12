@@ -41,6 +41,12 @@ Each run writes the following:
 - **`<image>.fsagen/`:** the run's records. `answer-key.jsonl` holds every
   planted fact, with its ATT&CK technique where the playbook tags one.
 
+For a disk laid out as a Windows system disk, add `--partition gpt` and give
+it room (`--image-size 128M`): the NTFS volume is then the third of four
+partitions, after the EFI system and Microsoft reserved partitions and
+before recovery, and learners find it with `mmls` rather than assume sector
+2048. The checks below then take its start from `mmls` in place of `2048`.
+
 The same seed, playbook and fsagen version give the same bytes on every
 platform. `run-manifest.json` records the image's SHA-256, so you can compare
 yours against it.
@@ -72,8 +78,21 @@ istat -o 2048 timestomp.img <inode>
 
 The `$STANDARD_INFORMATION` "Created" time is 2025-11-04 10:12:00.000000000.
 The `$FILE_NAME` "Created" time is 2026-03-11 09:20, with a fraction of a
-second. `collect.zip` and `policy-2023.txt` both show a modification time
-before their creation, but their two creation times agree.
+second. The `$STANDARD_INFORMATION` "MFT Modified" time is 09:21, when the
+times were set. `collect.zip` and `policy-2023.txt` both show a modification
+time before their creation, but their two creation times agree.
+
+The change journal tells the same story from outside the file's record:
+
+```sh
+fls -o 2048 timestomp.img 11 | grep UsnJrnl                  # $Extend's entries
+usnjls -o 2048 timestomp.img 27 | grep -E 'sync-helper|collect'
+```
+
+`$UsnJrnl` is record 27. `usnjls` prints times as Unix seconds; `-l` prints
+each record in full. `sync-helper.exe` has a `FILE_CREATE` record at 09:20
+and a `BASIC_INFO_CHANGE` at 09:21; `collect.zip` one at 09:45. The images of all
+three exercises keep the journal; `--no-usn-journal` builds one without it.
 
 **Malvertising, with The Sleuth Kit and SQLite:**
 

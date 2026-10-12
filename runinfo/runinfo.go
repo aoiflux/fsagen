@@ -109,8 +109,22 @@ type Image struct {
 	// scenario sets its times.
 	Time  string `json:"time"`
 	Alloc string `json:"alloc"`
+	// USNJournal says whether an NTFS volume has a change journal.
+	USNJournal *bool `json:"usn_journal,omitempty"`
+	// Partitions are a GPT disk's partitions, in table order; the file
+	// system is in the one at PartitionOffset.
+	Partitions []Partition `json:"partitions,omitempty"`
 	// TimeZone is the zone FAT's local times are written in.
 	TimeZone string `json:"fat_time_zone,omitempty"`
+}
+
+// Partition is one partition of a GPT disk: its type GUID, its name, and
+// where it is in the image file, in bytes.
+type Partition struct {
+	Type   string `json:"type"`
+	Name   string `json:"name"`
+	Offset int64  `json:"offset"`
+	Size   int64  `json:"size"`
 }
 
 // Resolution is how finely each time is kept, as Go durations ("24h",

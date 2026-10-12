@@ -335,9 +335,11 @@ func applyDelete(s *simulation) error {
 }
 
 func applyMace(s *simulation) error {
-	if s.tree.Get(s.op.Path) == nil {
+	o := s.tree.Get(s.op.Path)
+	if o == nil {
 		return fmt.Errorf("mace: %s does not exist", s.op.Path)
 	}
+	stompChanged(o, s.op)
 	return nil
 }
 
@@ -348,9 +350,24 @@ func applyTimestomp(s *simulation) error {
 	if n == nil {
 		return fmt.Errorf("timestomp: %s does not exist", s.op.Path)
 	}
+	stompChanged(s.tree.Get(s.op.Path), s.op)
 	overlay(&n.FN, explicitFileNameTimes(s.op))
 	s.op.FN = n.FN
 	return nil
+}
+
+// stompChanged moves the change time of what a scheduled mace or timestomp
+// sets times on to the time it runs: setting a time changes the record, and
+// SetFileTime and utimensat leave the change time at the moment they ran.
+// An explicit ctime, which the tools that set all four write, overlays it
+// afterwards. A timestomp of $FILE_NAME alone is a raw write to the MFT,
+// which moves no $STANDARD_INFORMATION time. A manifest's operation has no
+// schedule (its T is one of the times it sets), so it changes only the
+// times it names.
+func stompChanged(o *model.Object, op *Op) {
+	if !op.At.IsZero() && explicitTimes(op) != (model.Times{}) {
+		o.Times.Ctime = opTime(op)
+	}
 }
 
 func applyRename(s *simulation) error {

@@ -269,8 +269,8 @@ fsagen [OPTIONS] --image FILE --image-fs FS --image-size SIZE
   (`--schema-out DIR`, default `schemas`)
 - `--image FILE`, `--image-fs fat32|ext4|ntfs`, `--image-size SIZE` - Write
   into a disk image instead of a directory, with `--partition`,
-  `--cluster-size`, `--image-label`, `--image-time` and `--alloc` to shape it;
-  see _Disk images_
+  `--cluster-size`, `--image-label`, `--image-time`, `--alloc` and
+  `--no-usn-journal` to shape it; see _Disk images_
 - `--version` - Print the module version, generator version and build
 
 **Exit status:** 0 success, 1 generation failed, 2 command-line error.
@@ -280,6 +280,34 @@ Diagnostics go to stderr.
 tool's report of the output instead of generating; see _Scoring a tool_. It is
 a subcommand only as the first argument, so an output directory named
 `diff-oracle` is written `./diff-oracle`.
+
+`fsagen features [--json]` lists what the build can do, one name a line, so a
+script can check for a feature rather than pin a version. `--json` prints
+`{"version", "generator_version", "features"}`. The names come from the tables
+the build checks its input against, so the list cannot claim what a run would
+refuse (`TestFeatureFieldsAreAccepted`):
+
+| Name                         | Means                                                    |
+| ---------------------------- | -------------------------------------------------------- |
+| `action:NAME`                | an action (`action:timestomp`)                           |
+| `field:PATH`                 | a key of an action, nested keys joined by dots (`field:history.visits.redirect`) |
+| `format:NAME`                | a value of `format:` (`format:chrome_cookies`)           |
+| `content_kind:K`, `archive.method:M` | a value of `content_kind:` or `archive.method:`  |
+| `playbook:PATH`, `manifest:PATH` | a key of a playbook or manifest outside its actions (`playbook:subsecond_jitter`) |
+| `image.fs:FS`, `image.format:F`, `image.partition:P`, `image.alloc:A` | an image option's value (`image.partition:gpt`) |
+| `image.ntfs.usn_journal`     | NTFS images keep a change journal (`--no-usn-journal`)   |
+| `timeline.format:F`, `timeline.source:S` | a timeline option's value                    |
+| `command:NAME`               | a subcommand                                             |
+| `model.stomp_changes_ctime`  | a scheduled `mace` or `timestomp` moves the change time  |
+
+```sh
+fsagen features | grep -qx 'field:history.visits.redirect' || echo "fsagen is too old"
+```
+
+A name, once listed, stays: removing one is a breaking change, and
+`TestFeaturesKeepEveryName` fails if one goes missing from the list recorded in
+`testdata/golden/features.txt`. As with `diff-oracle`, an output directory
+named `features` is written `./features`.
 
 **Output directory:** must be a directory or not exist. A non-empty one is
 refused unless `--clean` or `--into-existing` is given.
@@ -841,6 +869,12 @@ steps:
 beside them, which only a raw read of the MFT shows. It needs at least one of
 the eight.
 
+Setting a time changes the file's record, so in a playbook a `timestomp` (and
+a `mace`) that names no `ctime` leaves the `$STANDARD_INFORMATION` change time
+at the moment it ran, as `SetFileTime` does: a third clock that the stomped
+times cannot explain. Name `ctime` to model the tools that set all four through
+`NtSetInformationFile` (`TestStompMovesChangeTime`).
+
 ```yaml
 - action: timestomp
   path: Users/victim/AppData/Local/Temp/payload.exe
@@ -1035,6 +1069,24 @@ part of the answer key.
   MiB in, as Windows' and Linux's disk tools align it: type `0x0C` for
   FAT32, `0x83` for ext4, `0x07` for NTFS. `--partition none` writes the
   file system alone.
+- `--partition gpt` lays an NTFS image out as Windows Setup lays out a
+  system disk, so a tool has to find the volume rather than assume it: a
+  protective MBR, the primary GPT at sector 1 and its backup at the end,
+  each with its CRCs, and four partitions on MiB boundaries, named as
+  diskpart names them, with GUIDs drawn from the seed
+  (`TestGPT`, `TestNTFSImageGPT`):
+  - the EFI system partition, an empty FAT32 volume (no drive letter);
+  - the Microsoft reserved partition, unformatted (no drive letter);
+  - the Windows partition (basic data), which holds the scenario;
+  - the recovery partition at the end of the disk, an empty NTFS volume
+    (required, no drive letter).
+
+  From 64 GiB on they are Windows Setup's sizes, 100 MiB and 16 MiB for the
+  first two and 512 MiB for recovery. A smaller disk shrinks them in
+  proportion, to no less than 33 MiB (FAT32's least), 1 MiB and 4 MiB; a
+  disk too small for that and a Windows partition is refused. The run
+  manifest lists each partition's `type`, `name`, `offset` and `size`
+  under `partitions`, and `partition_offset` is the Windows partition's.
 - `--image-size` takes bytes or `K`, `M`, `G`, `T` (powers of 1024). A VHD's
   disk is rounded down to a whole number of its cylinders, so the footer's
   size and its geometry agree.
@@ -1054,7 +1106,8 @@ part of the answer key.
 - The run's records go to `<image>.fsagen`. `run-manifest.json` says
   `"target": "image"`, describes the image (`fs`, `format`, `partition`,
   `partition_offset`, `size`, `cluster_size`, `serial` or `uuid`, `label`,
-  `time`, `alloc`, and for FAT `fat_time_zone`) and gives its `image_sha256`.
+  `time`, `alloc`, for FAT `fat_time_zone`, for NTFS `usn_journal`, and for
+  GPT `partitions`) and gives its `image_sha256`.
 
 **FAT32** (`--image-fs fat32`) is laid out as Windows formats and writes it:
 - **Format.** A 32-sector reserved area holds the boot sector, FSInfo and
@@ -1147,8 +1200,9 @@ junctions, a time outside its range, and a name longer than 255 bytes.
 
 **NTFS** (`--image-fs ntfs`) is laid out as mkntfs 2022.10.3 formats it and
 Windows writes it:
-- **Format.** An empty volume is mkntfs's byte for byte, given the same
-  serial number, partition start and time (`TestFormatMatchesMkntfs`, nine
+- **Format.** An empty volume without the change journal is mkntfs's byte
+  for byte, given the same serial number, partition start and time
+  (`TestFormatMatchesMkntfs`, nine
   geometries from 3 MiB to 64 MiB and from 512-byte to 64 KiB clusters).
   Only the boot code, which fsagen leaves out, and the padding mkntfs leaves
   holding whatever its buffers held, are masked.
@@ -1216,6 +1270,33 @@ Windows writes it:
   own, and again when it is renamed or gets a hard link, as the model has
   them (`TestNTFSSetsFileNameTimesAsTheModel`). A timestomp's `fn_` times
   are written into the record and the directory's index alike.
+- **Change journal.** `$Extend\$UsnJrnl` keeps one, as every Windows system
+  volume does; `--no-usn-journal` leaves it out, as on a volume where it is
+  off or was deleted. The run manifest's `usn_journal` says which.
+  - It is made with the volume, stamped with `--image-time`, in record 27,
+    the first after mkntfs's own. `$Max` holds Windows' limits for a system
+    volume (32 MiB, growing by 8 MiB) and the journal's ID, the time it was
+    made.
+  - `$J` is a sparse stream of version 2 records, 8-byte aligned, none
+    crossing a 4 KiB page; one that would starts the next page.
+  - Each operation journals each file it changes as Windows journals a
+    handle: a record the first time each reason appears, then one more
+    adding `CLOSE`. A delete shows only in that last record, under the
+    reference the file had. A directory whose entries change is not
+    journaled for it.
+  - Every record is stamped with the time the operation ran, never with a
+    time the scenario sets, so a `timestomp` shows as `BASIC_INFO_CHANGE`
+    at the moment it ran, whatever it wrote. The file's
+    `$STANDARD_INFORMATION` keeps the USN of its last record.
+  - The reasons: `FILE_CREATE`; `DATA_TRUNCATION`, `DATA_OVERWRITE` and
+    `DATA_EXTEND` for content, and their `NAMED_DATA_` forms for a stream,
+    with `STREAM_CHANGE` when the stream is new; `BASIC_INFO_CHANGE` when a
+    time is set to anything but the operation's own time or what it was
+    before, or the read-only flag changes; `RENAME_OLD_NAME` and
+    `RENAME_NEW_NAME`; `HARD_LINK_CHANGE`; `REPARSE_POINT_CHANGE`; and
+    `FILE_DELETE` (`TestChangeJournal`).
+  - The settle pass after the last operation, which only makes sure every
+    time is the scenario's, is not journaled.
 - **Slack** is written into the rest of the last cluster, on a file of more
   than 1 KiB, which never stays in its record.
 - **What a write leaves behind,** as Windows leaves it:
@@ -1377,8 +1458,8 @@ always wins:
 | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `create`, `archive`, `ansible-vault`, `email` to an `.eml`                     | born at T: all four times are T (creating a file that exists makes it anew)                                                                                                                                                        |
 | `update`, `append`, `edit`, `truncate`, a later message appended to an `.mbox` | access, modification and change become T; creation is kept                                                                                                                                                                         |
-| `mace`                                                                         | only the times it names (at least one)                                                                                                                                                                                             |
-| `timestomp`                                                                    | only the times it names, as `mace`, and the `$FILE_NAME` times it names (see _Timestomp_)                                                                                                                                         |
+| `mace`                                                                         | the times it names (at least one); in a playbook its change time also becomes T, as setting a time with `SetFileTime` or `utimensat` changes the record then, unless it names `ctime` (a manifest's `mace` changes only the times it names) |
+| `timestomp`                                                                    | as `mace`, and the `$FILE_NAME` times it names (see _Timestomp_)                                                                                                                                                                  |
 | `ads`, `motw`                                                                  | the file's times do not change                                                                                                                                                                                                     |
 | `rename`                                                                       | the object keeps its times; its change time becomes T                                                                                                                                                                              |
 | `rotate`                                                                       | the rotated file is renamed (keeps its times); the empty file left at the old path is born at T                                                                                                                                    |

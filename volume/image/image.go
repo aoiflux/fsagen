@@ -56,6 +56,8 @@ type Options struct {
 	Time time.Time
 	// Alloc is the allocation policy (volume.NextFit by default).
 	Alloc string
+	// Journal gives an NTFS volume its change journal.
+	Journal bool
 	// Seed draws the volume serial or UUID, disk signature and VHD ID.
 	Seed int64
 }
@@ -139,9 +141,24 @@ func NewPlan(o Options) (Plan, error) {
 	if lo, hi, name := timeRange(o.FS); o.Time.Before(lo) || o.Time.After(hi) {
 		return Plan{}, fmt.Errorf("image time %s is outside what %s can store (%d to %d)", o.Time.Format(time.RFC3339), name, lo.Year(), hi.Year())
 	}
+	if o.Partition == container.PartitionGPT && o.FS != FSNTFS {
+		return Plan{}, fmt.Errorf("--partition gpt lays a disk out as Windows does, around an NTFS volume; %s goes in an MBR partition or none", o.FS)
+	}
 	l, err := container.Plan(format, o.Partition, o.Size)
 	if err != nil {
 		return Plan{}, err
+	}
+	for _, part := range l.Parts {
+		var what string
+		switch part.Type {
+		case container.TypeEFISystem:
+			what, err = "EFI system partition", fatPlan(part.Size)
+		case container.TypeWinRecovery:
+			what, err = "recovery partition", ntfsPlan(part.Size)
+		}
+		if err != nil {
+			return Plan{}, fmt.Errorf("the %s: %w", what, err)
+		}
 	}
 	p := Plan{Options: o, Format: format, Layout: l}
 	switch o.FS {
@@ -221,6 +238,12 @@ func (img *Image) start() error {
 	if err := container.WriteMBR(img.f, p.Layout, kind, p.key()); err != nil {
 		return err
 	}
+	if err := container.WriteGPT(img.f, p.Layout, p.key()); err != nil {
+		return err
+	}
+	if err := img.formatOthers(); err != nil {
+		return err
+	}
 	dev := volume.NewDevice(img.f, p.Layout.Offset, p.Layout.Size)
 	res := &volume.Tracker{}
 	var d volume.Driver
@@ -234,7 +257,7 @@ func (img *Image) start() error {
 	case FSNTFS:
 		d, err = ntfs.Format(dev, ntfs.Options{
 			ClusterSize: p.NTFS.ClusterSize, Label: p.Label, Serial: img.serial64,
-			Hidden: uint32(p.Layout.Offset / volume.SectorSize), Clock: p.Time, Alloc: p.Alloc,
+			Hidden: uint32(p.Layout.Offset / volume.SectorSize), Clock: p.Time, Alloc: p.Alloc, Journal: p.Journal,
 		}, res)
 	default:
 		d, err = fat.Format(dev, fat.Options{
@@ -246,6 +269,52 @@ func (img *Image) start() error {
 		return err
 	}
 	img.Volume = volume.New(d, res, img.f)
+	return nil
+}
+
+// fatPlan and ntfsPlan check that a partition of size bytes holds FAT32 or
+// NTFS at its default cluster size.
+func fatPlan(size int64) error {
+	_, err := fat.Plan(size, 0)
+	return err
+}
+
+func ntfsPlan(size int64) error {
+	_, err := ntfs.Plan(size, 0)
+	return err
+}
+
+// formatOthers formats a GPT disk's partitions besides the scenario's, as
+// Windows Setup leaves them before anything is installed: the EFI system
+// partition FAT32 and the recovery partition NTFS, both empty, and the
+// Microsoft reserved partition unformatted. Their serials are drawn from
+// the image's key.
+func (img *Image) formatOthers() error {
+	p := img.p
+	for i, part := range p.Layout.Parts {
+		dev := volume.NewDevice(img.f, part.Offset, part.Size)
+		k := p.key().Derive("partition", strconv.Itoa(i), "serial").Stream()
+		var d volume.Driver
+		var err error
+		switch part.Type {
+		case container.TypeEFISystem:
+			d, err = fat.Format(dev, fat.Options{
+				Serial: binary.LittleEndian.Uint32(k.Bytes(4)), Hidden: uint32(part.Offset / volume.SectorSize), Clock: p.Time, Alloc: volume.NextFit,
+			}, &volume.Tracker{})
+		case container.TypeWinRecovery:
+			d, err = ntfs.Format(dev, ntfs.Options{
+				Serial: binary.LittleEndian.Uint64(k.Bytes(8)), Hidden: uint32(part.Offset / volume.SectorSize), Clock: p.Time, Alloc: volume.NextFit,
+			}, &volume.Tracker{})
+		default:
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("partition %d: %w", i+1, err)
+		}
+		if err := d.Flush(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -307,6 +376,10 @@ func (img *Image) Record() *runinfo.Image {
 		r.UUID = fmt.Sprintf("%x-%x-%x-%x-%x", u[0:4], u[4:6], u[6:8], u[8:10], u[10:16])
 	case FSNTFS:
 		r.Serial = fmt.Sprintf("%016X", img.serial64)
+		r.USNJournal = &p.Journal
+		for _, part := range p.Layout.Parts {
+			r.Partitions = append(r.Partitions, runinfo.Partition{Type: part.Type, Name: part.Name, Offset: part.Offset, Size: part.Size})
+		}
 	default:
 		r.Serial, r.TimeZone = fmt.Sprintf("%04X-%04X", img.serial>>16, img.serial&0xFFFF), "UTC"
 	}

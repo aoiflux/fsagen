@@ -31,6 +31,9 @@ type attr struct {
 	// was ever written.
 	runs              []run
 	alloc, size, init int64
+	// sparse marks a non-resident attribute NTFS keeps sparse, whose header
+	// carries the bytes its clusters hold besides what it maps.
+	sparse bool
 }
 
 func align8(n int) int { return (n + 7) &^ 7 }
@@ -53,16 +56,29 @@ func (a *attr) encode() []byte {
 		copy(b[vo:], a.value)
 	} else {
 		mp := runlist(a.runs)
-		mo := 64 + align8(len(name))
+		head := 64
+		if a.sparse {
+			head = 72
+		}
+		mo := head + align8(len(name))
 		b = make([]byte, align8(mo+len(mp)))
 		b[8] = 1
-		le.PutUint16(b[10:], 64)
+		le.PutUint16(b[10:], uint16(head))
+		if a.sparse {
+			// The clusters it holds: those its runs map, holes left out.
+			var held int64
+			if n := clusters(a.runs); n > 0 {
+				held = int64(len(lcns(a.runs))) * (a.alloc / n)
+			}
+			le.PutUint16(b[12:], libntfs.AttrFlagSparse)
+			le.PutUint64(b[64:], uint64(held))
+		}
 		le.PutUint64(b[24:], uint64(clusters(a.runs)-1))
 		le.PutUint16(b[32:], uint16(mo))
 		le.PutUint64(b[40:], uint64(a.alloc))
 		le.PutUint64(b[48:], uint64(a.size))
 		le.PutUint64(b[56:], uint64(a.init))
-		copy(b[64:], name)
+		copy(b[head:], name)
 		copy(b[mo:], mp)
 	}
 	le.PutUint32(b[0:], a.typ)

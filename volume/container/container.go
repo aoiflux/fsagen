@@ -1,6 +1,7 @@
 // Package container wraps a file system in what holds it on disk: nothing
-// (a raw volume image), an MBR partition table, and optionally a fixed VHD
-// footer, which is a raw disk with 512 bytes after it.
+// (a raw volume image), an MBR partition table, or a GPT laid out as
+// Windows Setup lays out a system disk; and optionally a fixed VHD footer,
+// which is a raw disk with 512 bytes after it.
 package container
 
 import (
@@ -45,10 +46,11 @@ func FormatFor(name string) (string, error) {
 const (
 	PartitionMBR  = "mbr"
 	PartitionNone = "none"
+	PartitionGPT  = "gpt"
 )
 
 // Partitions lists the partitioning schemes.
-var Partitions = []string{PartitionMBR, PartitionNone}
+var Partitions = []string{PartitionMBR, PartitionGPT, PartitionNone}
 
 const sector = 512
 
@@ -63,6 +65,8 @@ type Layout struct {
 	Disk int64
 	// Offset and Size are the file system's partition.
 	Offset, Size int64
+	// Parts are a GPT disk's partitions, in table order.
+	Parts []Part
 	// Geometry is the VHD's cylinders, heads and sectors per track.
 	Geometry [3]int
 }
@@ -87,9 +91,17 @@ func Plan(format, partition string, size int64) (Layout, error) {
 		if l.Disk/sector-MBRStart > 0xFFFFFFFF {
 			return Layout{}, fmt.Errorf("an MBR partition holds at most 2 TiB")
 		}
+	case PartitionGPT:
+		parts, data, err := gptParts(l.Disk)
+		if err != nil {
+			return Layout{}, err
+		}
+		l.Parts = parts
+		l.Offset, l.Size = parts[data].Offset, parts[data].Size
+		return l, nil
 	case PartitionNone:
 	default:
-		return Layout{}, fmt.Errorf("unknown partitioning %q (want %s)", partition, strings.Join(Partitions, " or "))
+		return Layout{}, fmt.Errorf("unknown partitioning %q (want %s)", partition, strings.Join(Partitions, ", "))
 	}
 	l.Size = l.Disk - l.Offset
 	if l.Size <= 0 {

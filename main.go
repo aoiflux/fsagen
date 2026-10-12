@@ -102,6 +102,8 @@ type config struct {
 	imageLabel  string
 	imageTime   string
 	alloc       string
+	// noJournal leaves an NTFS image without a change journal.
+	noJournal bool
 	// capsFor reports what the volume under a root can do. The command uses the
 	// real detection; a test injects a fixed set to exercise a platform it is
 	// not running on.
@@ -124,6 +126,9 @@ const diffOracle = "diff-oracle"
 // runWithCaps is run with capability detection injected, so a test can exercise
 // a platform it is not running on without a package-level switch.
 func runWithCaps(args []string, stdout, stderr io.Writer, capsFor func(target.Target) compile.Caps) int {
+	if len(args) > 0 && args[0] == featuresCmd {
+		return runFeatures(args[1:], stdout, stderr)
+	}
 	cfg, err := parseFlags(args)
 	if cfg != nil {
 		cfg.capsFor = capsFor
@@ -179,10 +184,11 @@ func parseFlags(args []string) (*config, error) {
 	fl.StringVar(&c.imageFS, "image-fs", "", "image file system: "+strings.Join(imagepkg.FileSystems, ", "))
 	fl.StringVar(&c.imageSize, "image-size", "", "image size in bytes, or with K, M, G or T (powers of 1024)")
 	fl.IntVar(&c.clusterSize, "cluster-size", 0, "image cluster size in bytes (default: what Windows formats that size with)")
-	fl.StringVar(&c.partition, "partition", container.PartitionMBR, "image partitioning: mbr (one partition 1 MiB in) or none (the file system alone)")
+	fl.StringVar(&c.partition, "partition", container.PartitionMBR, "image partitioning: mbr (one partition 1 MiB in), gpt (Windows' system disk layout, NTFS only) or none (the file system alone)")
 	fl.StringVar(&c.imageLabel, "image-label", "", "image volume label")
 	fl.StringVar(&c.imageTime, "image-time", "", "RFC 3339 time the image's own structures are stamped with (default "+libgenpkg.DefaultStart.Format(time.RFC3339)+")")
 	fl.StringVar(&c.alloc, "alloc", volume.NextFit, "image cluster allocation: next-fit (as Windows does) or first-fit")
+	fl.BoolVar(&c.noJournal, "no-usn-journal", false, `write an NTFS image with no change journal ($Extend\$UsnJrnl), as a volume where it is off or was deleted`)
 
 	if err := fl.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -986,9 +992,11 @@ func printUsage(w io.Writer) {
 	fmt.Fprintf(w, `Usage: fsagen [OPTIONS] <output-path>
        fsagen [OPTIONS] --image FILE --image-fs FS --image-size SIZE
        fsagen diff-oracle --meta DIR [OPTIONS] <tool-output>
+       fsagen features [--json]
 
 Generate deterministic filesystem artifacts for forensic testing, and score
-what a forensic tool reports about them (fsagen diff-oracle -h).
+what a forensic tool reports about them (fsagen diff-oracle -h). fsagen
+features lists what this build can do, by names that stay stable.
 
 Input (give one):
   --manifest FILE           YAML manifest of operations
@@ -1019,12 +1027,17 @@ Disk image (instead of <output-path>):
   --image-size SIZE         bytes, or with K, M, G or T (powers of 1024)
   --cluster-size N          cluster or block size in bytes (default: what
                             Windows' format, mke2fs or mkntfs gives the size)
-  --partition P             mbr (default: one partition 1 MiB in) or none
+  --partition P             mbr (default: one partition 1 MiB in), gpt (an
+                            NTFS volume among the EFI system, Microsoft
+                            reserved and recovery partitions, as Windows
+                            Setup lays a disk out) or none
   --image-label L           volume label
   --image-time T            RFC 3339 time the image's own structures are
                             stamped with (default 2021-01-01T00:00:00Z)
   --alloc A                 next-fit (default, as Windows allocates) or
                             first-fit (freed space is reused at once)
+  --no-usn-journal          an NTFS image without the change journal
+                            ($Extend\$UsnJrnl) Windows keeps by default
 
 Checking without writing:
   --validate                check the input and exit

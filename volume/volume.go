@@ -129,6 +129,14 @@ type Clocked interface {
 	SetNow(t time.Time)
 }
 
+// Sequenced is a driver that keeps a record of each operation's changes, as
+// NTFS's change journal does. The Volume tells it where each operation
+// starts, before it tells a Clocked driver the time; n is 0 once the
+// scenario's operations are over.
+type Sequenced interface {
+	BeginOp(n int)
+}
+
 // Volume is a target built on a Driver.
 type Volume struct {
 	mu       sync.Mutex
@@ -177,12 +185,15 @@ func (v *Volume) Caps() target.Caps { return v.caps }
 // Granularity is how finely the file system stores each time.
 func (v *Volume) Granularity() target.Granularity { return v.d.Granularity() }
 
-// BeginOp names the operation the following writes belong to, and tells a
-// Clocked driver when it happens.
+// BeginOp names the operation the following writes belong to, tells a
+// Sequenced driver it starts, and tells a Clocked driver when it happens.
 func (v *Volume) BeginOp(n int, when time.Time) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	v.op = n
+	if s, ok := v.d.(Sequenced); ok {
+		s.BeginOp(n)
+	}
 	if c, ok := v.d.(Clocked); ok {
 		c.SetNow(when)
 	}
