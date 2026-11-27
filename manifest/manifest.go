@@ -12,6 +12,7 @@
 package manifest
 
 import (
+	"cmp"
 	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
@@ -19,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -46,6 +48,8 @@ type ExecContext struct {
 	Read target.Reader
 	// Sources reads email bodies and attachments from the YAML's directory.
 	Sources *sandbox.Sources
+	// op is the ledger number of the operation running, set by Execute.
+	op int
 	// Caps is the capability set the program was checked against. Times it
 	// says cannot be set are left to the file system, even where the volume
 	// could set them, so a run with an injected capability set behaves as
@@ -217,6 +221,7 @@ func Execute(ctx ExecContext, ops []compile.Op) ([]ledger.Entry, error) {
 		if observer != nil {
 			observer.BeginOp(e.N, op.Clock())
 		}
+		ctx.op = e.N
 		if err := recordOutcome(ctx, op, &e, digests); err != nil {
 			// The entry for a failed operation is left out: the ledger says how
 			// far the run got, and a half-finished operation did not get there.
@@ -328,6 +333,9 @@ func newEntry(i int, op compile.Op, caps compile.Caps) ledger.Entry {
 	}
 	if op.Links > 1 || op.Action == spec.ActionDelete {
 		e.Links = op.Links
+	}
+	if op.Wipe != nil {
+		e.Wipe = &ledger.Wipe{Pattern: cmp.Or(op.Wipe.Pattern, "zeros"), Renames: compile.WipeNames(path.Base(op.Path), op.Wipe)}
 	}
 	if op.Action == spec.ActionTimestomp {
 		if t := compile.TimesOf(op.FN); t != nil {
@@ -752,7 +760,72 @@ func execAppend(ctx ExecContext, c compile.Op) error {
 	return appendTo(ctx.FS, c.Operation, c.Path, contentOf(c))
 }
 
-func execDelete(ctx ExecContext, c compile.Op) error { return ctx.FS.Remove(c.Path) }
+func execDelete(ctx ExecContext, c compile.Op) error {
+	p := c.Path
+	if c.Wipe != nil {
+		var err error
+		if p, err = wipe(ctx, c); err != nil {
+			return err
+		}
+	}
+	return ctx.FS.Remove(p)
+}
+
+// wipe does what SDelete does before it deletes a file: it overwrites the
+// content in place, so the clusters the file had now hold the pattern, and
+// renames it through compile.WipeNames, so the last name it had says nothing.
+// It returns the name it left the file under. Writing without truncating is
+// what keeps the overwrite on the file's own clusters on a disk image; a live
+// file system on flash or copy-on-write storage may still put it elsewhere.
+func wipe(ctx ExecContext, c compile.Op) (string, error) {
+	t := ctx.FS
+	// SDelete opens the file afresh for the overwrite and for each rename,
+	// so a change journal has records for every one of them, which is what
+	// gives it away. Starting the operation over closes what the step
+	// before left open, as closing the file would.
+	reopen := func() {
+		if o, ok := t.(target.OpObserver); ok {
+			o.BeginOp(ctx.op, c.Clock())
+		}
+	}
+	data, err := t.ReadFile(c.Path)
+	if err != nil {
+		return "", err
+	}
+	if len(data) > 0 {
+		fill := make([]byte, len(data))
+		if c.Wipe.Pattern == "random" {
+			fill = c.Rand.Derive("wipe").Stream().Bytes(len(data))
+		}
+		f, err := t.OpenFile(c.Path, os.O_WRONLY, 0)
+		if err != nil {
+			return "", err
+		}
+		if _, err := f.Write(fill); err != nil {
+			f.Close()
+			return "", err
+		}
+		if err := f.Close(); err != nil {
+			return "", err
+		}
+		reopen()
+	}
+	p := c.Path
+	for _, name := range compile.WipeNames(path.Base(p), c.Wipe) {
+		next := path.Join(path.Dir(p), name)
+		// A rename replaces what is at its new name, and a wipe must never
+		// take a file the scenario made with it.
+		if _, err := t.Meta(next); err == nil {
+			return "", fmt.Errorf("wipe: cannot rename %s to %s, which already exists", p, next)
+		}
+		if err := t.Rename(p, next); err != nil {
+			return "", err
+		}
+		p = next
+		reopen()
+	}
+	return p, nil
+}
 
 // execMace changes no content: the times are stamped from the model after every
 // operation, so a mace has only an explicit mode left to apply.

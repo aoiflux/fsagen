@@ -318,6 +318,12 @@ func applyDelete(s *simulation) error {
 		}
 		return fmt.Errorf("delete: %s does not exist (set missing_ok: true if that is expected)", p)
 	}
+	if op.Wipe != nil && o.Kind != model.File {
+		return fmt.Errorf("delete: %s is not a file; wipe overwrites a file's content, and a directory or link has none", p)
+	}
+	if op.Wipe != nil && len(o.Names) > 1 {
+		return fmt.Errorf("delete: %s has %d names; wiping it would overwrite the content its other names keep", p, len(o.Names))
+	}
 	op.Pre = []Stamp{{Path: p, Times: o.Times}}
 	op.Object, op.Kind, op.Times = o.Serial, o.Kind, o.Times
 	if err := s.tree.Remove(p); err != nil {

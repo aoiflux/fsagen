@@ -228,6 +228,11 @@ field:prefetch.volumes
 field:prefetch.volumes.created
 field:prefetch.volumes.drive
 field:prefetch.volumes.serial
+field:recycle
+field:recycle.deleted
+field:recycle.original_path
+field:recycle.size
+field:recycle.version
 field:ref
 field:referrer_url
 field:refs
@@ -284,6 +289,9 @@ field:vba
 field:vba.entry_point
 field:vba.marker
 field:vba.module_name
+field:wipe
+field:wipe.pattern
+field:wipe.renames
 field:xlsx
 field:xlsx.author
 field:xlsx.created
@@ -307,6 +315,7 @@ format:pe
 format:png
 format:prefetch
 format:raw
+format:recycle_bin
 format:regf
 format:text
 format:utmp

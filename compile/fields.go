@@ -16,11 +16,11 @@ import (
 // also takes "mitre", which annotates it without changing what it does; see
 // allowed.
 var Fields = map[spec.ActionName][]string{
-	spec.ActionCreate:    {"path", "id", "type", "ext", "content", "content_len", "content_kind", "content_file", "render", "template", "mode", "format", "pdf", "docx", "xlsx", "vba", "pe", "history", "cookies", "lnk", "prefetch", "evtx", "registry", "utmp", "auditd", "slack", "atime", "mtime", "ctime", "crtime"},
-	spec.ActionUpdate:    {"path", "ref", "content", "content_len", "content_kind", "content_file", "render", "template", "mode", "format", "pdf", "docx", "xlsx", "vba", "pe", "history", "cookies", "lnk", "prefetch", "evtx", "registry", "utmp", "auditd", "slack", "atime", "mtime", "ctime", "crtime"},
+	spec.ActionCreate:    {"path", "id", "type", "ext", "content", "content_len", "content_kind", "content_file", "render", "template", "mode", "format", "pdf", "docx", "xlsx", "vba", "pe", "history", "cookies", "lnk", "prefetch", "evtx", "registry", "utmp", "auditd", "recycle", "slack", "atime", "mtime", "ctime", "crtime"},
+	spec.ActionUpdate:    {"path", "ref", "content", "content_len", "content_kind", "content_file", "render", "template", "mode", "format", "pdf", "docx", "xlsx", "vba", "pe", "history", "cookies", "lnk", "prefetch", "evtx", "registry", "utmp", "auditd", "recycle", "slack", "atime", "mtime", "ctime", "crtime"},
 	spec.ActionAppend:    {"path", "ref", "id", "content", "content_len", "content_kind", "content_file", "render", "template", "mode", "atime", "mtime", "ctime", "crtime"},
 	spec.ActionEdit:      {"path", "ref", "refs", "edit", "mode", "atime", "mtime", "ctime", "crtime"},
-	spec.ActionDelete:    {"path", "ref", "refs", "missing_ok", "atime", "mtime"},
+	spec.ActionDelete:    {"path", "ref", "refs", "missing_ok", "wipe", "atime", "mtime"},
 	spec.ActionMACE:      {"path", "ref", "refs", "mode", "atime", "mtime", "ctime", "crtime"},
 	spec.ActionTimestomp: {"path", "ref", "refs", "atime", "mtime", "ctime", "crtime", "fn_atime", "fn_mtime", "fn_ctime", "fn_crtime"},
 	spec.ActionRename:    {"path", "ref", "new_path", "id"},
@@ -102,7 +102,7 @@ var (
 		spec.FormatPE, spec.FormatZip, spec.FormatPNG, spec.FormatJPEG,
 		spec.FormatMP4, spec.FormatChromeHistory, spec.FormatFirefoxPlaces, spec.FormatChromeCookies,
 		spec.FormatLNK, spec.FormatPrefetch, spec.FormatEvtx, spec.FormatRegistry,
-		spec.FormatUtmp, spec.FormatAuditd,
+		spec.FormatUtmp, spec.FormatAuditd, spec.FormatRecycleBin,
 	}
 )
 

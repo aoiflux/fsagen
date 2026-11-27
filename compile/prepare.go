@@ -202,6 +202,7 @@ func settleContent(op *Op, r reporter) {
 	inferFormatFromExtension(op, r)
 	op.Random = randomLength(op)
 	checkPrefetchName(op, r)
+	checkRecycleName(op, r)
 }
 
 // checkClosedSets rejects a value outside the closed set its key allows.

@@ -295,7 +295,16 @@ func (x *Expected) foldLedger(entries []ledger.Entry) {
 			}
 			gone := *o
 			gone.kind, gone.times, gone.op = e.Kind, entryTimes(e), e.N
-			x.deleted[e.Path] = append(x.deleted[e.Path], &gone)
+			at := e.Path
+			if e.Wipe != nil {
+				// A wiped file is deleted under the last name it was renamed
+				// to, holding the pattern rather than what it had.
+				if n := len(e.Wipe.Renames); n > 0 {
+					at = path.Join(path.Dir(e.Path), e.Wipe.Renames[n-1])
+				}
+				gone.sha256, gone.md5 = "", ""
+			}
+			x.deleted[at] = append(x.deleted[at], &gone)
 			continue
 		case spec.ActionCopy:
 			x.add(e.NewPath, o)

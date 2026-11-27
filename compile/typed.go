@@ -90,6 +90,7 @@ var blockFormats = map[string][]spec.Format{
 	"registry": {spec.FormatRegistry},
 	"utmp":     {spec.FormatUtmp},
 	"auditd":   {spec.FormatAuditd},
+	"recycle":  {spec.FormatRecycleBin},
 }
 
 // checkTyped validates the typed blocks and the rules that tie a block to the
@@ -167,6 +168,18 @@ func checkTyped(op *Op, at func(field, format string, args ...any)) {
 	}
 	if op.Slack != nil {
 		checkSlack(op, at)
+	}
+	if k.has("content_len") && op.Format == spec.FormatRecycleBin {
+		at("content_len", "a Recycle Bin index file has no region for filler; it is as big as the path it records")
+	}
+	if op.Format == spec.FormatRecycleBin && op.Recycle == nil {
+		at("format", "recycle_bin needs a recycle block saying which file was deleted, at least its original_path")
+	}
+	if op.Recycle != nil {
+		checkRecycle(op, at)
+	}
+	if op.Wipe != nil {
+		checkWipe(op, at)
 	}
 
 	if (op.Format == spec.FormatChromeHistory || op.Format == spec.FormatFirefoxPlaces) && op.History == nil {
@@ -520,6 +533,18 @@ func cloneTyped(op *spec.Operation) {
 	}
 	if op.Auditd != nil {
 		op.Auditd = cloneAuditd(op.Auditd)
+	}
+	if op.Recycle != nil {
+		v := *op.Recycle
+		op.Recycle = &v
+	}
+	if op.Wipe != nil {
+		v := *op.Wipe
+		if op.Wipe.Renames != nil {
+			n := *op.Wipe.Renames
+			v.Renames = &n
+		}
+		op.Wipe = &v
 	}
 }
 
