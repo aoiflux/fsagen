@@ -338,6 +338,20 @@ func nestedDefs(defs map[string]any) {
 		prop("referenced_files", map[string]any{"type": "array", "items": map[string]any{"type": "string", "pattern": `^[A-Za-z]:\\`}}).
 		prop("harddisk_volume", map[string]any{"type": "integer", "minimum": 0, "description": `The number N of the executable's volume, \Device\HarddiskVolumeN, which the prefetch hash is computed over; 3 by default.`})
 
+	register(defs, "RecycleSpec", spec.RecycleSpec{}, "original_path").
+		prop("original_path", map[string]any{
+			"type":        "string",
+			"pattern":     `^[A-Za-z]:\\`,
+			"description": `The Windows path the file had before it was deleted: C:\Users\user1\Documents\report.docx.`,
+		}).
+		prop("size", nonNegative()).
+		prop("deleted", rfc3339()).
+		prop("version", enumOf(libgen.RecycleVersions))
+
+	register(defs, "WipeSpec", spec.WipeSpec{}).
+		prop("pattern", enumOf(compile.WipePatterns)).
+		prop("renames", map[string]any{"type": "integer", "minimum": 0, "maximum": compile.MaxWipeRenames})
+
 	register(defs, "PrefetchVolume", spec.PrefetchVolume{}, "drive").
 		prop("drive", map[string]any{"type": "string", "pattern": "^[A-Za-z]:?$"}).
 		prop("serial", map[string]any{"type": "string", "pattern": "^[0-9A-Fa-f]{4}-?[0-9A-Fa-f]{4}$"}).

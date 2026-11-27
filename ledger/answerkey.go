@@ -106,6 +106,9 @@ type Fact struct {
 	// Residue is, for a residue fact, what was left and how much of it the
 	// finished image still holds.
 	Residue *target.Residue `json:"residue,omitempty"`
+	// Wipe is, for a deleted file that was wiped first, how: no tool should
+	// recover its content, and the renames are what a change journal shows.
+	Wipe *Wipe `json:"wipe,omitempty"`
 }
 
 // Delta is, per time, the $STANDARD_INFORMATION time minus the $FILE_NAME
@@ -193,7 +196,7 @@ func effectFact(e Entry, base Fact) []Fact {
 	f := base
 	switch e.Action {
 	case spec.ActionDelete:
-		f.Event, f.SHA256 = Deleted, e.SHA256Before
+		f.Event, f.SHA256, f.Wipe = Deleted, e.SHA256Before, e.Wipe
 		if e.Links > 0 {
 			f.Event, f.Links = Unlinked, e.Links
 		}

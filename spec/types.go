@@ -93,6 +93,7 @@ const (
 	FormatAuditd        Format = "auditd"
 	FormatEML           Format = "eml"
 	FormatMbox          Format = "mbox"
+	FormatRecycleBin    Format = "recycle_bin"
 )
 
 // FormatNames is a list of formats as plain strings, for a message or a schema
@@ -163,6 +164,12 @@ type Operation struct {
 	Utmp *UtmpSpec `yaml:"utmp" json:"utmp"`
 	// Auditd is for format: auditd, a Linux audit log.
 	Auditd *AuditdSpec `yaml:"auditd" json:"auditd"`
+	// Recycle is for format: recycle_bin, the $I index file Windows writes
+	// beside a file it moves to the Recycle Bin.
+	Recycle *RecycleSpec `yaml:"recycle" json:"recycle"`
+	// Wipe makes a delete a secure delete: the content is overwritten in
+	// place and the name renamed over, as SDelete does, before it goes.
+	Wipe *WipeSpec `yaml:"wipe" json:"wipe"`
 	// Slack asks for bytes past the end of the file, in the rest of its last
 	// cluster, where a carver looks and a file read never does.
 	Slack   *SlackSpec   `yaml:"slack" json:"slack"`
@@ -307,6 +314,26 @@ type PrefetchSpec struct {
 	// Volumes say what the file records about the volumes its files are on;
 	// a drive not listed gets a serial and creation time from the seed.
 	Volumes []PrefetchVolume `yaml:"volumes" json:"volumes"`
+}
+
+// RecycleSpec describes a Recycle Bin index file ($I...): where the deleted
+// file was, how big it was and when it was deleted. Its content, renamed to
+// the matching $R... name, is moved there by a rename.
+type RecycleSpec struct {
+	OriginalPath string `yaml:"original_path" json:"original_path"` // the file's Windows path before deletion, C:\Users\user1\report.docx; required
+	Size         int64  `yaml:"size" json:"size"`                   // the deleted file's size in bytes, as the $R file holds it
+	Deleted      string `yaml:"deleted" json:"deleted"`             // RFC3339, when it was deleted; default the operation time
+	Version      string `yaml:"version" json:"version"`             // win10 (default, also Windows 11) or vista (Vista to 8.1)
+}
+
+// WipeSpec describes a secure delete, modelled on SDelete: the content is
+// overwritten once in place, the name is renamed to names of one repeated
+// letter (A..., then B..., up to renames of them), and then it is deleted.
+type WipeSpec struct {
+	Pattern string `yaml:"pattern" json:"pattern"` // zeros (default) or random
+	// Renames is how many times the name is renamed over before the delete,
+	// 0 to 26; nil means 26, as SDelete does.
+	Renames *int `yaml:"renames" json:"renames"`
 }
 
 // PrefetchVolume is a volume as a prefetch file records it.

@@ -99,6 +99,8 @@ func (v testVolume) finish(t *testing.T) (target.Reader, []target.Residue) {
 		if err != nil {
 			t.Fatalf("fls: %v\n%s", err, out)
 		}
+		// fls on Windows ends its lines \r\n.
+		out = bytes.ReplaceAll(out, []byte("\r\n"), []byte("\n"))
 		must(t, r.WalkDir(func(name string, d os.DirEntry, err error) error {
 			if err == nil && name != "." && !strings.Contains(string(out), ":\t"+name+"\n") {
 				t.Errorf("fls does not list %s:\n%s", name, out)

@@ -794,7 +794,8 @@
                   "evtx",
                   "regf",
                   "utmp",
-                  "auditd"
+                  "auditd",
+                  "recycle_bin"
                 ]
               }
             },
@@ -824,6 +825,7 @@
                 "pdf",
                 "pe",
                 "prefetch",
+                "recycle",
                 "registry",
                 "render",
                 "slack",
@@ -885,7 +887,8 @@
                   "evtx",
                   "regf",
                   "utmp",
-                  "auditd"
+                  "auditd",
+                  "recycle_bin"
                 ]
               }
             },
@@ -913,6 +916,7 @@
                 "pdf",
                 "pe",
                 "prefetch",
+                "recycle",
                 "ref",
                 "registry",
                 "render",
@@ -1056,7 +1060,8 @@
                 "mtime",
                 "path",
                 "ref",
-                "refs"
+                "refs",
+                "wipe"
               ]
             }
           }
@@ -1815,6 +1820,7 @@
             "regf",
             "utmp",
             "auditd",
+            "recycle_bin",
             "eml",
             "mbox"
           ],
@@ -1862,6 +1868,9 @@
         },
         "prefetch": {
           "$ref": "#/$defs/PrefetchSpec"
+        },
+        "recycle": {
+          "$ref": "#/$defs/RecycleSpec"
         },
         "ref": {
           "description": "Instead of path: the one live path created under this id.",
@@ -1913,6 +1922,9 @@
         },
         "vba": {
           "$ref": "#/$defs/VbaSpec"
+        },
+        "wipe": {
+          "$ref": "#/$defs/WipeSpec"
         },
         "xlsx": {
           "$ref": "#/$defs/DocxSpec"
@@ -2170,6 +2182,34 @@
       },
       "required": [
         "drive"
+      ],
+      "type": "object"
+    },
+    "RecycleSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "deleted": {
+          "$ref": "#/$defs/Rfc3339Time"
+        },
+        "original_path": {
+          "description": "The Windows path the file had before it was deleted: C:\\Users\\user1\\Documents\\report.docx.",
+          "pattern": "^[A-Za-z]:\\\\",
+          "type": "string"
+        },
+        "size": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "version": {
+          "enum": [
+            "win10",
+            "vista"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "original_path"
       ],
       "type": "object"
     },
@@ -2475,6 +2515,24 @@
         "module_name": {
           "pattern": "^[A-Za-z][A-Za-z0-9_]{0,30}$",
           "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "WipeSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "pattern": {
+          "enum": [
+            "zeros",
+            "random"
+          ],
+          "type": "string"
+        },
+        "renames": {
+          "maximum": 26,
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "type": "object"

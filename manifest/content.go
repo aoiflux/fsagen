@@ -109,6 +109,14 @@ func buildContent(c compile.Op) ([]byte, error) {
 	case spec.FormatAuditd:
 		return buildAuditd(c)
 
+	case spec.FormatRecycleBin:
+		in := c.Recycle
+		deleted, err := timeOr(in.Deleted, "recycle.deleted", c.When)
+		if err != nil {
+			return nil, err
+		}
+		return libgen.BuildRecycle(libgen.RecycleSpec{Version: in.Version, OriginalPath: in.OriginalPath, Size: in.Size, Deleted: deleted})
+
 	case spec.FormatChromeCookies:
 		jar, err := cookiesOf(c)
 		if err != nil {

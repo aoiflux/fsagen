@@ -163,6 +163,8 @@ func TestNestedDefsRefineRealFields(t *testing.T) {
 		"SlackSpec":          spec.SlackSpec{},
 		"PrefetchSpec":       spec.PrefetchSpec{},
 		"PrefetchVolume":     spec.PrefetchVolume{},
+		"RecycleSpec":        spec.RecycleSpec{},
+		"WipeSpec":           spec.WipeSpec{},
 		"EvtxSpec":           spec.EvtxSpec{},
 		"EvtxEvent":          spec.EvtxEvent{},
 		"RegistrySpec":       spec.RegistrySpec{},

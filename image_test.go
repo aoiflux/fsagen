@@ -415,7 +415,8 @@ func TestImageListedByTSK(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fls: %v\n%s", err, out)
 	}
-	listing := string(out)
+	// fls on Windows ends its lines \r\n.
+	listing := strings.ReplaceAll(string(out), "\r\n", "\n")
 	sums, err := os.ReadFile(filepath.Join(img+metaDirSuffix, runinfo.SumsFileName))
 	if err != nil {
 		t.Fatal(err)

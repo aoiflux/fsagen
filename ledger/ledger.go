@@ -80,6 +80,16 @@ type Entry struct {
 	// Slack is what the operation wrote past the end of the file, in the
 	// rest of its last cluster.
 	Slack *Slack `json:"slack,omitempty"`
+	// Wipe is, for a delete that wiped the file first, how.
+	Wipe *Wipe `json:"wipe,omitempty"`
+}
+
+// Wipe is how a delete wiped a file before it went: what its content was
+// overwritten with in place, and the names it was renamed through, in
+// order, the last of them the name it was deleted under.
+type Wipe struct {
+	Pattern string   `json:"pattern"`
+	Renames []string `json:"renames,omitempty"`
 }
 
 // Slack is the bytes an operation left in a file's slack. Offset is where

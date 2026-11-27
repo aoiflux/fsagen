@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased — the Recycle Bin and secure deletion
+
+Two additions for anti-forensics scenarios. Neither moves a byte for an
+input that does not use them, so the generator version stays **8**.
+
+- **`format: recycle_bin`** writes a Recycle Bin index file (`$I`), version 2
+  (Windows 10 and 11) or 1 (Vista to 8.1), from a `recycle` block: the
+  original path, size and deletion time. A `rename` moves the file itself to
+  its `$R` name. The README no longer lists `$Recycle.Bin` as not generated.
+  `TestRecycleLayout`, `TestRecycleBlockRules`.
+- **`wipe` on `delete`** deletes as SDelete does: one overwrite in place
+  (`zeros` or `random`), up to 26 renames to one repeated letter, then the
+  delete. The ledger and the answer key's `deleted` fact record the pattern
+  and the names; diff-oracle expects the deleted entry under the last of them
+  and no content digest. A directory, a link or a hard-linked file is refused.
+  `TestWipeRules`, `TestWipeNames`.
+- The JSON schemas and the `fsagen features` list gain the new format, the
+  `recycle` and `wipe` fields and their definitions.
+
 ## v0.4.0 — redirect chains, cookie jars, the change journal and GPT (2026-10-12)
 
 Generator version **8**. This release adds what workshop evidence for

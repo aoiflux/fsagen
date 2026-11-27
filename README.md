@@ -435,6 +435,7 @@ YAML with an optional `start` and a sequence of operations:
 | `type`         | `file` or `dir` (for `create`)                                                                                                       |
 | `ext`          | file extension to append if `path` has no extension                                                                                  |
 | `missing_ok`   | for `delete`, a path that does not exist is a recorded no-op instead of an error                                                     |
+| `wipe`         | for `delete`, overwrite the file in place and rename it over before it goes, as SDelete does — see _Secure deletion: `wipe:`_       |
 | `mitre`        | ATT&CK technique IDs the action exhibits (`[T1070.006, T1564.004]`); any action takes it, and it changes nothing written — see _ATT&CK tags_ |
 
 **Content**
@@ -1669,7 +1670,7 @@ What fsagen does not control, and what can change its output after it finishes:
 - A generated PE is a container for a parser, not a program: its sections hold
   filler, its entry point is inside that filler, and running one does nothing.
   fsagen has no way to produce, and no intention of producing, working code.
-- Not generated at all: `$Recycle.Bin`, SRUM, Amcache and ESE databases.
+- Not generated at all: SRUM, Amcache and ESE databases.
 - On a FAT32 image, a deleted entry keeps the high word of its start
   cluster, which some Windows versions clear. The `.` and `..` entries keep
   the times their directory was made with.
@@ -1724,6 +1725,7 @@ type whose extension is ambiguous.
 | `regf`           | `.hve`, and the names `NTUSER.DAT` `USRCLASS.DAT` `SYSTEM` `SOFTWARE` `SAM` `SECURITY` `DEFAULT` | a registry hive, version 1.5                                    | not accepted                        | Windows' own registry and regparser (see _`registry:`_)                  |
 | `utmp`           | the names `utmp` `wtmp` `btmp` | glibc's `struct utmp` records                                                                                     | not accepted                        | util-linux (see _`utmp:` and `auditd:`_)                                 |
 | `auditd`         | the name `audit.log`        | auditd's raw log format                                                                                              | not accepted                        | see _`utmp:` and `auditd:`_                                              |
+| `recycle_bin`    | _(explicit only)_           | a Recycle Bin index file (`$I`), version 2 (Windows 10 and 11) or 1 (Vista to 8.1)                                   | not accepted                        | see _`recycle:` — the Recycle Bin_                                       |
 | `pdf`            | _(explicit only)_           | a paginated PDF from a Markdown subset                                                                               | the document's text                 | see _`format: pdf`_                                                      |
 | `chrome_history` | _(explicit only)_           | Chrome's `meta`, `urls`, `visits`, `downloads`, `downloads_url_chains` and `keyword_search_terms`, with its indexes  | not accepted                        | SQLite + the queries a tool runs (`TestStandardHistorySQLReturnsVisits`) |
 | `firefox_places` | _(explicit only)_           | Firefox's `moz_origins`, `moz_places` (with `rev_host`) and `moz_historyvisits`, `user_version = 77`                 | not accepted                        | as above                                                                 |
@@ -2210,6 +2212,72 @@ same on amd64 and arm64. Its times are 32-bit, so nothing after
   (`TestAuditLogLines`). Serials start from the seed and rise. `ausearch` reads
   the log where it is installed (`TestAuditLogReadByAusearch`); it was not on
   any machine this was tested on.
+
+### `recycle:` — the Recycle Bin
+
+When Windows sends a file to the Recycle Bin it moves it to
+`$Recycle.Bin\<SID>\$R<six characters><extension>` and writes an index file
+beside it, `$I` with the same six characters and extension, saying where the
+file was, how big it was and when it went. `format: recycle_bin` writes that
+index; a `rename` moves the file itself, so its times and clusters stay its
+own, as they do when Windows moves it.
+
+```yaml
+- action: rename
+  path: Users/user1/Documents/invoice.docx
+  new_path: $Recycle.Bin/S-1-5-21-1004336348-1177238915-682003330-1001/$RA1B2C3.docx
+- action: create
+  path: $Recycle.Bin/S-1-5-21-1004336348-1177238915-682003330-1001/$IA1B2C3.docx
+  format: recycle_bin
+  recycle:
+    original_path: 'C:\Users\user1\Documents\invoice.docx' # required
+    size: 24576 # the $R file's size, in bytes; default 0
+    deleted: "2026-03-11T09:30:00Z" # default the action's time
+    version: win10 # win10 (default, also Windows 11) or vista (Vista to 8.1)
+```
+
+- Version 2 holds the path's length and then the path, NUL-terminated;
+  version 1 holds it in a fixed 260-unit field, so a longer path is refused.
+  `TestRecycleLayout` checks both layouts and reads them back.
+- The name must be one Windows gives an index, `$I`, six letters or digits and
+  the deleted file's own extension, which is how RBCmd, rifiuti2 and Autopsy
+  pair it with its `$R` file (`TestRecycleBlockRules`).
+- fsagen does not know a file's size while it compiles the scenario, so `size`
+  is given, not read off the `$R` file. Give the size the file has.
+
+### Secure deletion: `wipe:`
+
+A `delete` with a `wipe` block deletes the way SDelete does: it overwrites the
+content once in place, renames the file to a name of the same length made of
+one repeated letter (every character but a dot: `secret.txt` becomes
+`AAAAAA.AAA`, then `BBBBBB.BBB`, up to `ZZZZZZ.ZZZ`), and deletes it under
+the last of them.
+
+```yaml
+- action: delete
+  path: tools/stage.exe
+  wipe:
+    pattern: zeros # zeros (default) or random, drawn from the seed
+    renames: 26 # 0 to 26; default 26, as SDelete does
+  mitre: [T1070.004]
+```
+
+- On a disk image the overwrite lands on the file's own clusters, so the
+  residue its deletion leaves holds the pattern, and the answer key's residue
+  facts say so. On NTFS the change journal has records under every name the
+  file went through, since SDelete opens it afresh for the overwrite and for
+  each rename: that run of names is what gives SDelete away
+  (`TestWipeJournalsEveryRename`).
+- The ledger and the answer key's `deleted` fact carry `wipe`: the pattern and
+  the names it went through, the last of them the name it was deleted under,
+  which is where diff-oracle expects a tool to find the deleted entry. Its
+  content digest is not expected, since the content is gone.
+- Only a file with one name is wiped: a directory or a link has no content, and
+  a hard-linked file's other names keep the same bytes (`TestWipeRules`). A
+  rename that would land on a name already there is an error, never a
+  replacement. `TestWipeNames` checks the names.
+- A live file system on flash or copy-on-write storage may write the overwrite
+  somewhere else, so only a disk image is sure to have no copy of the content.
 
 ### `archive` action
 
